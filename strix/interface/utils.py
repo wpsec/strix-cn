@@ -66,41 +66,41 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
 
     title = report.get("title", "")
     if title:
-        text.append("Vulnerability Report", style="bold #ea580c")
+        text.append("漏洞报告", style="bold #ea580c")
         text.append("\n\n")
-        text.append("Title: ", style=field_style)
+        text.append("标题：", style=field_style)
         text.append(title)
 
     severity = report.get("severity", "")
     if severity:
         text.append("\n\n")
-        text.append("Severity: ", style=field_style)
+        text.append("严重度：", style=field_style)
         severity_color = get_severity_color(severity.lower())
         text.append(severity.upper(), style=f"bold {severity_color}")
 
     cvss = report.get("cvss")
     if cvss is not None:
         text.append("\n\n")
-        text.append("CVSS Score: ", style=field_style)
+        text.append("CVSS 分数：", style=field_style)
         cvss_color = get_cvss_color(cvss)
         text.append(f"{cvss:.1f}", style=f"bold {cvss_color}")
 
     target = report.get("target")
     if target:
         text.append("\n\n")
-        text.append("Target: ", style=field_style)
+        text.append("目标：", style=field_style)
         text.append(target)
 
     endpoint = report.get("endpoint")
     if endpoint:
         text.append("\n\n")
-        text.append("Endpoint: ", style=field_style)
+        text.append("接口：", style=field_style)
         text.append(endpoint)
 
     method = report.get("method")
     if method:
         text.append("\n\n")
-        text.append("Method: ", style=field_style)
+        text.append("方法：", style=field_style)
         text.append(method)
 
     cve = report.get("cve")
@@ -130,51 +130,51 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
         if cvss_breakdown.get("availability"):
             cvss_parts.append(f"A:{cvss_breakdown['availability']}")
         if cvss_parts:
-            text.append("CVSS Vector: ", style=field_style)
+            text.append("CVSS 向量：", style=field_style)
             text.append("/".join(cvss_parts), style="dim")
 
     description = report.get("description")
     if description:
         text.append("\n\n")
-        text.append("Description", style=field_style)
+        text.append("漏洞描述", style=field_style)
         text.append("\n")
         text.append(description)
 
     impact = report.get("impact")
     if impact:
         text.append("\n\n")
-        text.append("Impact", style=field_style)
+        text.append("影响", style=field_style)
         text.append("\n")
         text.append(impact)
 
     technical_analysis = report.get("technical_analysis")
     if technical_analysis:
         text.append("\n\n")
-        text.append("Technical Analysis", style=field_style)
+        text.append("技术分析", style=field_style)
         text.append("\n")
         text.append(technical_analysis)
 
     poc_description = report.get("poc_description")
     if poc_description:
         text.append("\n\n")
-        text.append("PoC Description", style=field_style)
+        text.append("PoC 说明", style=field_style)
         text.append("\n")
         text.append(poc_description)
 
     poc_script_code = report.get("poc_script_code")
     if poc_script_code:
         text.append("\n\n")
-        text.append("PoC Code", style=field_style)
+        text.append("PoC 代码", style=field_style)
         text.append("\n")
         text.append(poc_script_code, style="dim")
 
     code_locations = report.get("code_locations")
     if code_locations:
         text.append("\n\n")
-        text.append("Code Locations", style=field_style)
+        text.append("代码位置", style=field_style)
         for i, loc in enumerate(code_locations):
             text.append("\n\n")
-            text.append(f"  Location {i + 1}: ", style="dim")
+            text.append(f"  位置 {i + 1}：", style="dim")
             text.append(loc.get("file", "unknown"), style="bold")
             start = loc.get("start_line")
             end = loc.get("end_line")
@@ -189,7 +189,7 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
                 text.append("\n  ")
                 text.append(loc["snippet"], style="dim")
             if loc.get("fix_before") or loc.get("fix_after"):
-                text.append("\n  Fix:")
+                text.append("\n  修复建议：")
                 if loc.get("fix_before"):
                     text.append("\n  - ", style="dim")
                     text.append(loc["fix_before"], style="dim")
@@ -200,7 +200,7 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
     remediation_steps = report.get("remediation_steps")
     if remediation_steps:
         text.append("\n\n")
-        text.append("Remediation", style=field_style)
+        text.append("修复建议", style=field_style)
         text.append("\n")
         text.append(remediation_steps)
 
@@ -217,7 +217,7 @@ def _build_vulnerability_stats(stats_text: Text, report_state: Any) -> None:
             if severity in severity_counts:
                 severity_counts[severity] += 1
 
-        stats_text.append("Vulnerabilities  ", style="bold red")
+        stats_text.append("漏洞  ", style="bold red")
 
         severity_parts = []
         for severity in ["critical", "high", "medium", "low", "info"]:
@@ -234,14 +234,14 @@ def _build_vulnerability_stats(stats_text: Text, report_state: Any) -> None:
             if i < len(severity_parts) - 1:
                 stats_text.append(" | ", style="dim white")
 
-        stats_text.append(" (Total: ", style="dim white")
+        stats_text.append("（总计：", style="dim white")
         stats_text.append(str(vuln_count), style="bold yellow")
-        stats_text.append(")", style="dim white")
+        stats_text.append("）", style="dim white")
         stats_text.append("\n")
     else:
-        stats_text.append("Vulnerabilities  ", style="bold #22c55e")
+        stats_text.append("漏洞  ", style="bold #22c55e")
         stats_text.append("0", style="bold white")
-        stats_text.append(" (No exploitable vulnerabilities detected)", style="dim green")
+        stats_text.append("（未发现可利用漏洞）", style="dim green")
         stats_text.append("\n")
 
 
@@ -286,7 +286,7 @@ def _build_llm_usage_stats(
     usage = _llm_usage(report_state)
     if not usage or _int_stat(usage, "requests") <= 0:
         stats_text.append("\n")
-        stats_text.append("Cost ", style="dim")
+        stats_text.append("成本 ", style="dim")
         stats_text.append("$0.0000 ", style="#fbbf24")
         stats_text.append("· ", style="dim white")
         stats_text.append("Tokens ", style="dim")
@@ -299,22 +299,22 @@ def _build_llm_usage_stats(
     cost = _float_stat(usage, "cost")
 
     stats_text.append("\n")
-    stats_text.append("Input Tokens ", style="dim")
+    stats_text.append("输入 Tokens ", style="dim")
     stats_text.append(format_token_count(input_tokens), style="white")
 
     if live or cached_tokens > 0:
         stats_text.append("  ·  ", style="dim white")
-        stats_text.append("Cached Tokens ", style="dim")
+        stats_text.append("缓存 Tokens ", style="dim")
         stats_text.append(format_token_count(cached_tokens), style="white")
 
     separator = "\n" if live else "  ·  "
     stats_text.append(separator, style="dim white")
-    stats_text.append("Output Tokens ", style="dim")
+    stats_text.append("输出 Tokens ", style="dim")
     stats_text.append(format_token_count(output_tokens), style="white")
 
     if live or cost > 0:
         stats_text.append("  ·  ", style="dim white")
-        stats_text.append("Cost ", style="dim")
+        stats_text.append("成本 ", style="dim")
         stats_text.append(f"${cost:.4f}", style="#fbbf24")
 
 
@@ -335,12 +335,12 @@ def build_live_stats_text(report_state: Any) -> Text:
         return stats_text
 
     model = load_settings().llm.model or "unknown"
-    stats_text.append("Model ", style="dim")
+    stats_text.append("模型 ", style="dim")
     stats_text.append(str(model), style="white")
     stats_text.append("\n")
 
     vuln_count = len(report_state.vulnerability_reports)
-    stats_text.append("Vulnerabilities ", style="dim")
+    stats_text.append("漏洞 ", style="dim")
     stats_text.append(f"{vuln_count}", style="white")
     stats_text.append("\n")
     if vuln_count > 0:
@@ -674,8 +674,8 @@ def _resolve_base_ref(repo_path: Path, diff_base: str | None, env: dict[str, str
         return "refs/remotes/origin/master"
 
     raise ValueError(
-        "Unable to resolve a base ref for diff-scope. Pass --diff-base explicitly "
-        "(for example: --diff-base origin/main)."
+        "无法为 diff-scope 解析基准引用。请显式传入 --diff-base "
+        "（例如：--diff-base origin/main）。"
     )
 
 
@@ -806,48 +806,45 @@ def _truncate_file_list(
 
 def build_diff_scope_instruction(scopes: list[RepoDiffScope]) -> str:
     lines = [
-        "The user is requesting a review of a Pull Request.",
-        "Instruction: Direct your analysis primarily at the changes in the listed files. "
-        "You may reference other files in the repository for context (imports, definitions, "
-        "usage), but report findings only if they relate to the listed changes.",
-        "For Added files, review the entire file content.",
-        "For Modified files, focus primarily on the changed areas.",
+        "用户当前请求的是一次 Pull Request 变更审查。",
+        "指令：请优先围绕下列变更文件开展分析。你可以为获取上下文而参考仓库中的其他文件"
+        "（如 import、定义、调用点），但只有与这些变更直接相关的问题才应纳入报告。",
+        "对于新增文件，请审阅整个文件内容。",
+        "对于修改文件，请优先关注发生变更的区域。",
     ]
 
     for scope in scopes:
         repo_name = scope.workspace_subdir or Path(scope.source_path).name or "repository"
         lines.append("")
-        lines.append(f"Repository Scope: {repo_name}")
-        lines.append(f"Base reference: {scope.base_ref}")
-        lines.append(f"Merge base: {scope.merge_base}")
+        lines.append(f"仓库范围：{repo_name}")
+        lines.append(f"基准引用：{scope.base_ref}")
+        lines.append(f"Merge base：{scope.merge_base}")
 
         focus_files, focus_truncated = _truncate_file_list(scope.analyzable_files)
         scope.truncated_sections["analyzable_files"] = focus_truncated
         if focus_files:
-            lines.append("Primary Focus (changed files to analyze):")
+            lines.append("主要关注（需要分析的变更文件）：")
             lines.extend(f"- {path}" for path in focus_files)
             if focus_truncated:
-                lines.append(f"- ... ({len(scope.analyzable_files) - len(focus_files)} more files)")
+                lines.append(f"- ...（还有 {len(scope.analyzable_files) - len(focus_files)} 个文件）")
         else:
-            lines.append("Primary Focus: No analyzable changed files detected.")
+            lines.append("主要关注：未检测到可分析的变更文件。")
 
         added_files, added_truncated = _truncate_file_list(scope.added_files)
         scope.truncated_sections["added_files"] = added_truncated
         if added_files:
-            lines.append("Added files (review entire file):")
+            lines.append("新增文件（请审阅整个文件）：")
             lines.extend(f"- {path}" for path in added_files)
             if added_truncated:
-                lines.append(f"- ... ({len(scope.added_files) - len(added_files)} more files)")
+                lines.append(f"- ...（还有 {len(scope.added_files) - len(added_files)} 个文件）")
 
         modified_files, modified_truncated = _truncate_file_list(scope.modified_files)
         scope.truncated_sections["modified_files"] = modified_truncated
         if modified_files:
-            lines.append("Modified files (focus on changes):")
+            lines.append("修改文件（请重点关注变更区域）：")
             lines.extend(f"- {path}" for path in modified_files)
             if modified_truncated:
-                lines.append(
-                    f"- ... ({len(scope.modified_files) - len(modified_files)} more files)"
-                )
+                lines.append(f"- ...（还有 {len(scope.modified_files) - len(modified_files)} 个文件）")
 
         if scope.renamed_files:
             rename_lines = []
@@ -856,19 +853,19 @@ def build_diff_scope_instruction(scopes: list[RepoDiffScope]) -> str:
                 new_path = rename.get("new_path") or "unknown"
                 similarity = rename.get("similarity")
                 if isinstance(similarity, int):
-                    rename_lines.append(f"- {old_path} -> {new_path} (similarity {similarity}%)")
+                    rename_lines.append(f"- {old_path} -> {new_path}（相似度 {similarity}%）")
                 else:
                     rename_lines.append(f"- {old_path} -> {new_path}")
-            lines.append("Renamed files:")
+            lines.append("重命名文件：")
             lines.extend(rename_lines)
 
         deleted_files, deleted_truncated = _truncate_file_list(scope.deleted_files)
         scope.truncated_sections["deleted_files"] = deleted_truncated
         if deleted_files:
-            lines.append("Note: These files were deleted (context only, not analyzable):")
+            lines.append("注意：以下文件已删除（仅供上下文参考，不作为分析对象）：")
             lines.extend(f"- {path}" for path in deleted_files)
             if deleted_truncated:
-                lines.append(f"- ... ({len(scope.deleted_files) - len(deleted_files)} more files)")
+                lines.append(f"- ...（还有 {len(scope.deleted_files) - len(deleted_files)} 个文件）")
 
     return "\n".join(lines).strip()
 
@@ -907,12 +904,11 @@ def _resolve_repo_diff_scope(
     repo_path = Path(source_path)
 
     if not _is_git_repo(repo_path):
-        raise ValueError(f"Source is not a git repository: {source_path}")
+        raise ValueError(f"源码路径不是 Git 仓库：{source_path}")
 
     if _is_repo_shallow(repo_path):
         raise ValueError(
-            "Strix requires full git history for diff-scope. Please set fetch-depth: 0 "
-            "in your CI config."
+            "diff-scope 需要完整 Git 历史。请在 CI 配置中设置 `fetch-depth: 0`。"
         )
 
     base_ref = _resolve_base_ref(repo_path, diff_base, env)
@@ -920,15 +916,15 @@ def _resolve_repo_diff_scope(
     if merge_base_result.returncode != 0:
         stderr = merge_base_result.stderr.strip()
         raise ValueError(
-            f"Unable to compute merge-base against '{base_ref}' for '{source_path}'. "
-            f"{stderr or 'Ensure the base branch history is fetched and reachable.'}"
+            f"无法为 '{source_path}' 与 '{base_ref}' 计算 merge-base。"
+            f"{stderr or '请确认已拉取并可访问基准分支历史。'}"
         )
 
     merge_base = merge_base_result.stdout.strip()
     if not merge_base:
         raise ValueError(
-            f"Unable to compute merge-base against '{base_ref}' for '{source_path}'. "
-            "Ensure the base branch history is fetched and reachable."
+            f"无法为 '{source_path}' 与 '{base_ref}' 计算 merge-base。"
+            "请确认已拉取并可访问基准分支历史。"
         )
 
     diff_result = _run_git_command_raw(
@@ -946,8 +942,8 @@ def _resolve_repo_diff_scope(
     if diff_result.returncode != 0:
         stderr = diff_result.stderr.decode("utf-8", errors="replace").strip()
         raise ValueError(
-            f"Unable to resolve changed files for '{source_path}'. "
-            f"{stderr or 'Ensure the repository has enough history for diff-scope.'}"
+            f"无法解析 '{source_path}' 的变更文件。"
+            f"{stderr or '请确认仓库具有足够历史以支持 diff-scope。'}"
         )
 
     entries = _parse_name_status_z(diff_result.stdout)
@@ -974,7 +970,7 @@ def resolve_diff_scope_context(
     env: dict[str, str] | None = None,
 ) -> DiffScopeResult:
     if scope_mode not in _SUPPORTED_SCOPE_MODES:
-        raise ValueError(f"Unsupported scope mode: {scope_mode}")
+        raise ValueError(f"不支持的 scope mode：{scope_mode}")
 
     env_map = dict(os.environ if env is None else env)
 
@@ -995,7 +991,7 @@ def resolve_diff_scope_context(
             )
 
     if not local_sources:
-        raise ValueError("Diff-scope is active, but no local repository targets were provided.")
+        raise ValueError("当前已启用 diff-scope，但没有提供本地仓库目标。")
 
     repo_scopes: list[RepoDiffScope] = []
     skipped_non_git: list[str] = []
@@ -1025,8 +1021,8 @@ def resolve_diff_scope_context(
             return DiffScopeResult(active=False, mode=scope_mode, metadata=metadata)
 
         raise ValueError(
-            "Diff-scope is active, but no Git repositories were found. "
-            "Use --scope-mode full to disable diff-scope for this run."
+            "当前已启用 diff-scope，但没有发现 Git 仓库。"
+            "如需关闭本次 diff-scope，请使用 --scope-mode full。"
         )
 
     instruction_block = build_diff_scope_instruction(repo_scopes)
@@ -1065,7 +1061,7 @@ def _is_http_git_repo(url: str) -> bool:
 
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
     if not target or not isinstance(target, str):
-        raise ValueError("Target must be a non-empty string")
+        raise ValueError("目标必须是非空字符串")
 
     target = target.strip()
 
@@ -1100,9 +1096,9 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         if path.exists():
             if path.is_dir():
                 return "local_code", {"target_path": str(path.resolve())}
-            raise ValueError(f"Path exists but is not a directory: {target}")
+            raise ValueError(f"路径存在但不是目录：{target}")
     except (OSError, RuntimeError) as e:
-        raise ValueError(f"Invalid path: {target} - {e!s}") from e
+        raise ValueError(f"无效路径：{target} - {e!s}") from e
 
     if target.endswith(".git"):
         return "repository", {"target_repo": target}
@@ -1121,24 +1117,24 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
             return "web_application", {"target_url": f"https://{target}"}
 
     raise ValueError(
-        f"Invalid target: {target}\n"
-        "Target must be one of:\n"
-        "- A valid URL (http:// or https://)\n"
-        "- A Git repository URL (https://host/org/repo or git@host:org/repo.git)\n"
-        "- A local directory path\n"
-        "- A domain name (e.g., example.com)\n"
-        "- An IP address (e.g., 192.168.1.10)"
+        f"无效目标：{target}\n"
+        "目标必须符合以下任一形式：\n"
+        "- 合法 URL（http:// 或 https://）\n"
+        "- Git 仓库 URL（https://host/org/repo 或 git@host:org/repo.git）\n"
+        "- 本地目录路径\n"
+        "- 域名（如 example.com）\n"
+        "- IP 地址（如 192.168.1.10）"
     )
 
 
 def read_target_list_file(path_str: str) -> list[str]:
     """Read scan targets from a file, one target per non-empty, non-comment line."""
     if not path_str or not path_str.strip():
-        raise ValueError("--target-list path must not be empty.")
+        raise ValueError("--target-list 路径不能为空。")
 
     path = Path(path_str).expanduser()
     if not path.is_file():
-        raise ValueError(f"Target list file '{path_str}' is not an existing file.")
+        raise ValueError(f"目标列表文件 '{path_str}' 不存在。")
 
     try:
         targets = [
@@ -1147,15 +1143,13 @@ def read_target_list_file(path_str: str) -> list[str]:
             if (target := line.strip()) and not target.startswith("#")
         ]
     except UnicodeDecodeError as e:
-        raise ValueError(
-            f"Target list file '{path_str}' must be valid UTF-8 text: {e!s}"
-        ) from e
+        raise ValueError(f"目标列表文件 '{path_str}' 必须是有效的 UTF-8 文本：{e!s}") from e
     except OSError as e:
-        raise ValueError(f"Failed to read target list file '{path_str}': {e!s}") from e
+        raise ValueError(f"读取目标列表文件 '{path_str}' 失败：{e!s}") from e
 
     targets = [target for target in targets if target]
     if not targets:
-        raise ValueError(f"Target list file '{path_str}' is empty.")
+        raise ValueError(f"目标列表文件 '{path_str}' 为空。")
     return targets
 
 
@@ -1311,17 +1305,17 @@ def build_mount_targets_info(mount_paths: list[str]) -> list[dict[str, Any]]:
     targets_info: list[dict[str, Any]] = []
     for raw in mount_paths:
         if not raw or not raw.strip():
-            raise ValueError("--mount path must not be empty.")
+            raise ValueError("--mount 路径不能为空。")
         path = Path(raw).expanduser()
         try:
             resolved = path.resolve()
             is_dir = resolved.is_dir()
         except (OSError, RuntimeError) as e:
-            raise ValueError(f"Invalid mount path '{raw}': {e!s}") from e
+            raise ValueError(f"无效的挂载路径 '{raw}'：{e!s}") from e
         if not is_dir:
             raise ValueError(
-                f"Mount path '{raw}' is not an existing directory. "
-                "--mount requires a path to a local directory."
+                f"挂载路径 '{raw}' 不是现有目录。"
+                "--mount 只能接收本地目录路径。"
             )
         targets_info.append(
             {
@@ -1420,7 +1414,7 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         shutil.rmtree(clone_path)
 
     try:
-        with console.status(f"[bold cyan]Cloning repository {repo_url}...", spinner="dots"):
+        with console.status(f"[bold cyan]正在克隆仓库 {repo_url}...", spinner="dots"):
             subprocess.run(  # noqa: S603
                 [
                     git_executable,
@@ -1437,11 +1431,12 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
     except subprocess.CalledProcessError as e:
         error_text = Text()
-        error_text.append("REPOSITORY CLONE FAILED", style="bold red")
+        error_text.append("仓库克隆失败", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append(f"Could not clone repository: {repo_url}\n", style="white")
+        error_text.append(f"无法克隆仓库：{repo_url}\n", style="white")
         error_text.append(
-            f"Error: {e.stderr if hasattr(e, 'stderr') and e.stderr else str(e)}", style="dim red"
+            f"错误：{e.stderr if hasattr(e, 'stderr') and e.stderr else str(e)}",
+            style="dim red",
         )
 
         panel = Panel(
@@ -1457,10 +1452,10 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         sys.exit(1)
     except FileNotFoundError:
         error_text = Text()
-        error_text.append("GIT NOT FOUND", style="bold red")
+        error_text.append("未找到 Git", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Git is not installed or not available in PATH.\n", style="white")
-        error_text.append("Please install Git to clone repositories.\n", style="white")
+        error_text.append("当前环境未安装 Git，或 Git 不在 PATH 中。\n", style="white")
+        error_text.append("请先安装 Git 后再克隆仓库。\n", style="white")
 
         panel = Panel(
             error_text,
@@ -1481,11 +1476,11 @@ def check_docker_connection() -> Any:
     except DockerException:
         console = Console()
         error_text = Text()
-        error_text.append("DOCKER NOT AVAILABLE", style="bold red")
+        error_text.append("Docker 不可用", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
+        error_text.append("无法连接到 Docker daemon。\n", style="white")
         error_text.append(
-            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
+            "请确认 Docker Desktop 已安装并正在运行，然后重新执行 strix。\n",
             style="white",
         )
 
@@ -1504,7 +1499,7 @@ def image_exists(client: Any, image_name: str) -> bool:
     try:
         client.images.get(image_name)
     except ImageNotFound:
-        return False
+            return False
     else:
         return True
 
@@ -1533,7 +1528,7 @@ def process_pull_line(
         total = len(layers_info)
 
         if total > 0:
-            update_msg = f"[bold cyan]Progress: {completed}/{total} layers complete"
+            update_msg = f"[bold cyan]进度：{completed}/{total} 层已完成"
             if update_msg != last_update:
                 status.update(update_msg)
                 return update_msg
@@ -1541,11 +1536,11 @@ def process_pull_line(
     elif "status" in line and "id" not in line:
         global_status = line["status"]
         if "Pulling from" in global_status:
-            status.update("[bold cyan]Fetching image manifest...")
+            status.update("[bold cyan]正在获取镜像清单...")
         elif "Digest:" in global_status:
-            status.update("[bold cyan]Verifying image...")
+            status.update("[bold cyan]正在校验镜像...")
         elif "Status:" in global_status:
-            status.update("[bold cyan]Finalizing...")
+            status.update("[bold cyan]正在收尾...")
 
     return last_update
 
@@ -1555,26 +1550,26 @@ def validate_config_file(config_path: str) -> Path:
     path = Path(config_path)
 
     if not path.exists():
-        console.print(f"[bold red]Error:[/] Config file not found: {config_path}")
+        console.print(f"[bold red]错误：[/]未找到配置文件：{config_path}")
         sys.exit(1)
 
     if path.suffix != ".json":
-        console.print("[bold red]Error:[/] Config file must be a .json file")
+        console.print("[bold red]错误：[/]配置文件必须是 `.json` 文件")
         sys.exit(1)
 
     try:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
-        console.print(f"[bold red]Error:[/] Invalid JSON in config file: {e}")
+        console.print(f"[bold red]错误：[/]配置文件中的 JSON 无效：{e}")
         sys.exit(1)
 
     if not isinstance(data, dict):
-        console.print("[bold red]Error:[/] Config file must contain a JSON object")
+        console.print("[bold red]错误：[/]配置文件内容必须是 JSON 对象")
         sys.exit(1)
 
     if "env" not in data or not isinstance(data.get("env"), dict):
-        console.print("[bold red]Error:[/] Config file must have an 'env' object")
+        console.print("[bold red]错误：[/]配置文件必须包含 `env` 对象")
         sys.exit(1)
 
     return path

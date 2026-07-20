@@ -43,7 +43,7 @@ security implications and details."""
 
 def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error class needs its own sanitized return
     if not query or not query.strip():
-        return {"success": False, "error": "Query cannot be empty"}
+        return {"success": False, "error": "查询内容不能为空"}
 
     api_key = load_settings().integrations.perplexity_api_key
     if not api_key:
@@ -51,8 +51,8 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
         return {
             "success": False,
             "error": (
-                "Web search is not configured for this scan "
-                "(operator needs to set PERPLEXITY_API_KEY). Proceed without it"
+                "当前扫描未配置 Web 搜索"
+                "（需要设置 PERPLEXITY_API_KEY）。请在无搜索能力的情况下继续"
             ),
         }
     logger.info("web_search query (len=%d): %s", len(query), query[:120])
@@ -75,7 +75,7 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
         logger.warning("web_search timed out")
         return {
             "success": False,
-            "error": "Web search timed out. Try again or shorten the query",
+            "error": "Web 搜索超时。请重试或缩短查询内容",
         }
     except requests.exceptions.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else None

@@ -22,7 +22,7 @@ class CreateNoteRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("◇ ", style="#fbbf24")
-        text.append("note", style="dim")
+        text.append("笔记", style="dim")
         text.append(" ")
         text.append(f"({category})", style="dim")
 
@@ -36,7 +36,7 @@ class CreateNoteRenderer(BaseToolRenderer):
 
         if not title and not content:
             text.append("\n  ")
-            text.append("Capturing...", style="dim")
+            text.append("正在记录...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -51,7 +51,7 @@ class DeleteNoteRenderer(BaseToolRenderer):
     def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: ARG003
         text = Text()
         text.append("◇ ", style="#fbbf24")
-        text.append("note removed", style="dim")
+        text.append("笔记已删除", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -71,7 +71,7 @@ class UpdateNoteRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("◇ ", style="#fbbf24")
-        text.append("note updated", style="dim")
+        text.append("笔记已更新", style="dim")
 
         if title:
             text.append("\n  ")
@@ -83,7 +83,7 @@ class UpdateNoteRenderer(BaseToolRenderer):
 
         if not title and not content:
             text.append("\n  ")
-            text.append("Updating...", style="dim")
+            text.append("正在更新...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -100,7 +100,7 @@ class ListNotesRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("◇ ", style="#fbbf24")
-        text.append("notes", style="dim")
+        text.append("笔记列表", style="dim")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")
@@ -111,10 +111,10 @@ class ListNotesRenderer(BaseToolRenderer):
 
             if count == 0:
                 text.append("\n  ")
-                text.append("No notes", style="dim")
+                text.append("暂无笔记", style="dim")
             else:
                 for note in notes:
-                    title = note.get("title", "").strip() or "(untitled)"
+                    title = note.get("title", "").strip() or "（未命名）"
                     category = note.get("category", "general")
                     note_content = note.get("content", "").strip()
                     if not note_content:
@@ -129,7 +129,7 @@ class ListNotesRenderer(BaseToolRenderer):
                         text.append(note_content, style="dim")
         else:
             text.append("\n  ")
-            text.append("Loading...", style="dim")
+            text.append("正在加载...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -146,11 +146,11 @@ class GetNoteRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("◇ ", style="#fbbf24")
-        text.append("note read", style="dim")
+        text.append("笔记详情", style="dim")
 
         if result and isinstance(result, dict) and result.get("success"):
             note = result.get("note", {}) or {}
-            title = str(note.get("title", "")).strip() or "(untitled)"
+            title = str(note.get("title", "")).strip() or "（未命名）"
             category = note.get("category", "general")
             content = str(note.get("content", "")).strip()
             text.append("\n  ")
@@ -161,7 +161,7 @@ class GetNoteRenderer(BaseToolRenderer):
                 text.append(content, style="dim")
         else:
             text.append("\n  ")
-            text.append("Loading...", style="dim")
+            text.append("正在加载...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)

@@ -95,10 +95,10 @@ class AgentFinishRenderer(BaseToolRenderer):
 
         if success:
             text.append("◆ ", style="#22c55e")
-            text.append("Agent completed", style="bold #22c55e")
+            text.append("代理已完成", style="bold #22c55e")
         else:
             text.append("◆ ", style="#ef4444")
-            text.append("Agent failed", style="bold #ef4444")
+            text.append("代理失败", style="bold #ef4444")
 
         if result_summary:
             text.append("\n  ")
@@ -110,7 +110,7 @@ class AgentFinishRenderer(BaseToolRenderer):
                     text.append(str(finding), style="dim")
         else:
             text.append("\n  ")
-            text.append("Completing task...", style="dim")
+            text.append("正在结束任务...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -130,7 +130,7 @@ class WaitForMessageRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("○ ", style="#6b7280")
-        text.append("waiting", style="dim")
+        text.append("等待中", style="dim")
 
         if reason:
             text.append("\n  ")

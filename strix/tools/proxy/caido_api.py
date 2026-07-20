@@ -65,7 +65,7 @@ def _graphql_url() -> str:
     base_url = caido_url()
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"Invalid Caido URL: {base_url}")
+        raise ValueError(f"无效的 Caido URL：{base_url}")
     return f"{base_url}/graphql"
 
 
@@ -176,7 +176,7 @@ def build_raw_request(
 ) -> tuple[ConnectionInfoInput, bytes]:
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
-        raise ValueError(f"Invalid URL: {url}")
+        raise ValueError(f"无效的 URL：{url}")
     is_tls = parsed.scheme.lower() == "https"
     host = parsed.hostname or ""
     port = parsed.port or (443 if is_tls else 80)
@@ -243,7 +243,7 @@ def parse_raw_request(raw_content: str) -> dict[str, Any]:
     lines = raw_content.split("\n")
     request_line = lines[0].strip().split(" ")
     if len(request_line) < 2:
-        raise ValueError("Invalid request line format")
+        raise ValueError("请求首行格式无效")
     method, url_path = request_line[0], request_line[1]
 
     parsed_headers: dict[str, str] = {}
@@ -444,7 +444,7 @@ async def repeat_request(
     async def _run(client: CaidoClient) -> dict[str, Any]:
         result = await get_request_with_client(client, request_id, part="request")
         if result is None or result.request.raw is None:
-            raise ValueError(f"Request {request_id} not found")
+            raise ValueError(f"未找到请求 {request_id}")
 
         original = result.request
         raw_str = result.request.raw.decode("utf-8", errors="replace")
@@ -618,20 +618,19 @@ def _coerce_sitemap_entry_id(raw_id: str | int | None, *, field_name: str) -> tu
         return None, None
     if isinstance(raw_id, bool):
         return None, (
-            f"Invalid {field_name}: {raw_id!r}. Expected a numeric sitemap entry ID "
-            "returned by list_sitemap."
+            f"无效的 {field_name}：{raw_id!r}。应传入 `list_sitemap` 返回的数字型 sitemap 条目 ID。"
         )
     if isinstance(raw_id, int):
         return raw_id, None
 
     value = str(raw_id).strip()
     if not value:
-        return None, f"Invalid {field_name}: empty value. Expected a numeric sitemap entry ID."
+        return None, f"无效的 {field_name}：空值。应传入数字型 sitemap 条目 ID。"
     if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
         return int(value), None
     return None, (
-        f"Invalid {field_name}: {raw_id!r}. Expected a numeric sitemap entry ID "
-        "returned by list_sitemap, not a request ID."
+        f"无效的 {field_name}：{raw_id!r}。应传入 `list_sitemap` 返回的数字型 sitemap 条目 ID，"
+        "而不是 request ID。"
     )
 
 
@@ -702,7 +701,7 @@ async def view_sitemap_entry_with_client(
     raw = await client.graphql.query(_SITEMAP_ENTRY_QUERY, variables={"id": normalized_entry_id})
     entry = raw.get("sitemapEntry")
     if not entry:
-        return {"success": False, "error": f"Sitemap entry {entry_id} not found"}
+        return {"success": False, "error": f"未找到 sitemap 条目 {entry_id}"}
 
     cleaned = _clean_sitemap_metadata(entry)
     primary = entry.get("request") or {}

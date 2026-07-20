@@ -1,107 +1,107 @@
 ---
-title: "Configuration"
-description: "Environment variables for Strix"
+title: "配置"
+description: "Strix 的环境变量与配置文件说明"
 ---
 
-Configure Strix using environment variables or a config file.
+你可以通过环境变量或配置文件来配置 Strix。
 
-## LLM Configuration
+## LLM 配置
 
 <ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
+  以 LiteLLM 格式指定模型名，例如 `openai/gpt-5.4`、`anthropic/claude-sonnet-4-6` 或兼容网关下的 `openai/<your-model>`。
 </ParamField>
 
 <ParamField path="LLM_API_KEY" type="string">
-  API key for your LLM provider. Not required for local models or cloud provider auth (Vertex AI, AWS Bedrock).
+  LLM 提供商的 API Key。本地模型或云厂商原生认证方式（如 Vertex AI、AWS Bedrock）可不填写。
 </ParamField>
 
 <ParamField path="LLM_API_BASE" type="string">
-  Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
+  自定义 API base URL。也接受 `OPENAI_API_BASE`、`LITELLM_BASE_URL` 或 `OLLAMA_API_BASE`。
 </ParamField>
 
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
-  Request timeout in seconds for LLM calls.
+  LLM 请求超时时间，单位为秒。
 </ParamField>
 
 <ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
-  Maximum number of retries for LLM API calls on transient failures.
+  LLM API 短暂失败时的最大重试次数。
 </ParamField>
 
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
-  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults to `medium` for quick scan mode.
+  控制推理模型的思考强度。可选值为 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`。在 `quick` 扫描模式下默认会降为 `medium`。
 </ParamField>
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
-  Timeout in seconds for memory compression operations (context summarization).
+  上下文压缩操作的超时时间，单位为秒。
 </ParamField>
 
-## Optional Features
+## 可选功能
 
 <ParamField path="PERPLEXITY_API_KEY" type="string">
-  API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
+  Perplexity AI 的 API Key。配置后可在扫描中启用实时 Web 搜索，用于 OSINT 与漏洞研究。
 </ParamField>
 
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
-  Telemetry toggle. Set to `0`, `false`, `no`, or `off` to disable telemetry (PostHog, Scarf, OTEL).
+  遥测开关。设置为 `0`、`false`、`no` 或 `off` 可关闭 PostHog、Scarf 与 OTEL 遥测。
 </ParamField>
 
 <ParamField path="TRACELOOP_BASE_URL" type="string">
-  OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
+  远程 OpenTelemetry 导出地址。未设置时，Strix 只在本地保留 tracing 数据。
 </ParamField>
 
 <ParamField path="TRACELOOP_API_KEY" type="string">
-  API key used for remote trace export. Remote export is enabled only when both `TRACELOOP_BASE_URL` and `TRACELOOP_API_KEY` are set.
+  远程 tracing 导出使用的 API Key。只有同时设置 `TRACELOOP_BASE_URL` 与 `TRACELOOP_API_KEY` 时，远程导出才会启用。
 </ParamField>
 
 <ParamField path="TRACELOOP_HEADERS" type="string">
-  Optional custom OTEL headers (JSON object or `key=value,key2=value2`). Useful for Langfuse or custom/self-hosted OTLP gateways.
+  可选的 OTEL 额外请求头，支持 JSON 对象或 `key=value,key2=value2` 形式。适用于 Langfuse 或自建 OTLP 网关。
 </ParamField>
 
-When remote OTEL vars are not set, Strix still writes complete run telemetry locally to:
+未配置远程 OTEL 变量时，Strix 仍会把完整运行遥测写入本地：
 
 ```bash
 strix_runs/<run_name>/events.jsonl
 ```
 
-When remote vars are set, Strix dual-writes telemetry to both local JSONL and the remote OTEL endpoint.
+配置远程变量后，Strix 会同时写入本地 JSONL 和远端 OTEL 端点。
 
-## Docker Configuration
+## Docker 配置
 
 <ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.0.0" type="string">
-  Docker image to use for the sandbox container.
+  指定用于沙箱容器的 Docker 镜像。
 </ParamField>
 
 <ParamField path="DOCKER_HOST" type="string">
-  Docker daemon socket path. Use for remote Docker hosts or custom configurations.
+  Docker daemon socket 路径，适用于远程 Docker 或自定义运行环境。
 </ParamField>
 
 <ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
-  Runtime backend for the sandbox environment.
+  沙箱运行时后端。
 </ParamField>
 
 <ParamField path="STRIX_MAX_LOCAL_COPY_MB" default="1024" type="integer">
-  Maximum size (in MB) of a local directory target that Strix will copy into the sandbox file-by-file. Larger targets exit early with a suggestion to use `--mount` instead. Set to `0` to disable the check.
+  本地目录目标允许逐文件复制进沙箱的最大体积，单位为 MB。超过后会提前退出并提示改用 `--mount`。设为 `0` 可关闭该检查。
 </ParamField>
 
-## Sandbox Configuration
+## 沙箱配置
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">
-  Maximum execution time in seconds for sandbox operations.
+  沙箱操作的最大执行时间，单位为秒。
 </ParamField>
 
 <ParamField path="STRIX_SANDBOX_CONNECT_TIMEOUT" default="10" type="integer">
-  Timeout in seconds for connecting to the sandbox container.
+  连接沙箱容器的超时时间，单位为秒。
 </ParamField>
 
-## Config File
+## 配置文件
 
-Strix stores configuration in `~/.strix/cli-config.json`. You can also specify a custom config file:
+Strix 默认把配置保存到 `~/.strix/cli-config.json`。你也可以通过 `--config` 指定自定义配置文件：
 
 ```bash
 strix --target ./app --config /path/to/config.json
 ```
 
-**Config file format:**
+**配置文件格式：**
 
 ```json
 {
@@ -113,18 +113,20 @@ strix --target ./app --config /path/to/config.json
 }
 ```
 
-## Example Setup
+## 示例配置
 
 ```bash
-# Required
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="sk-..."
+# 必填
+export STRIX_LLM="openai/your-compatible-model"
+export LLM_API_KEY="your-api-key"
 
-# Optional: Enable web search
+# 可选：兼容网关或本地模型
+export LLM_API_BASE="https://your-gateway.example/v1"
+
+# 可选：启用 Web 搜索
 export PERPLEXITY_API_KEY="pplx-..."
 
-# Optional: Custom timeouts
+# 可选：自定义超时
 export LLM_TIMEOUT="600"
 export STRIX_SANDBOX_EXECUTION_TIMEOUT="300"
-
 ```

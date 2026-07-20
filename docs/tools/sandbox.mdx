@@ -1,91 +1,91 @@
 ---
-title: "Sandbox Tools"
-description: "Pre-installed security tools in the Strix container"
+title: "沙箱工具"
+description: "Strix 容器中预装的安全工具"
 ---
 
-Strix runs inside a Kali Linux-based Docker container with a comprehensive set of security tools pre-installed. The agent can use any of these tools through the [terminal](/tools/terminal).
+Strix 运行在基于 Kali Linux 的 Docker 沙箱中，容器内预装了较完整的安全工具集。代理可以通过[终端](/tools/terminal)直接调用这些工具。
 
 ## Reconnaissance
 
-| Tool                                                       | Description                            |
-| ---------------------------------------------------------- | -------------------------------------- |
-| [Subfinder](https://github.com/projectdiscovery/subfinder) | Subdomain discovery                    |
-| [Naabu](https://github.com/projectdiscovery/naabu)         | Fast port scanner                      |
-| [httpx](https://github.com/projectdiscovery/httpx)         | HTTP probing and analysis              |
-| [Katana](https://github.com/projectdiscovery/katana)       | Web crawling and spidering             |
-| [ffuf](https://github.com/ffuf/ffuf)                       | Fast web fuzzer                        |
-| [Nmap](https://nmap.org)                                   | Network scanning and service detection |
+| 工具 | 说明 |
+|------|------|
+| [Subfinder](https://github.com/projectdiscovery/subfinder) | 子域发现 |
+| [Naabu](https://github.com/projectdiscovery/naabu) | 高速端口扫描 |
+| [httpx](https://github.com/projectdiscovery/httpx) | HTTP 探测与分析 |
+| [Katana](https://github.com/projectdiscovery/katana) | Web 爬取与 spider |
+| [ffuf](https://github.com/ffuf/ffuf) | 高速 Web fuzzing |
+| [Nmap](https://nmap.org) | 网络扫描与服务识别 |
 
-## Web Testing
+## Web 测试
 
-| Tool                                                   | Description                      |
-| ------------------------------------------------------ | -------------------------------- |
-| [Arjun](https://github.com/s0md3v/Arjun)               | HTTP parameter discovery         |
-| [Dirsearch](https://github.com/maurosoria/dirsearch)   | Directory and file brute-forcing |
-| [wafw00f](https://github.com/EnableSecurity/wafw00f)   | WAF fingerprinting               |
-| [GoSpider](https://github.com/jaeles-project/gospider) | Web spider for link extraction   |
+| 工具 | 说明 |
+|------|------|
+| [Arjun](https://github.com/s0md3v/Arjun) | HTTP 参数发现 |
+| [Dirsearch](https://github.com/maurosoria/dirsearch) | 目录与文件爆破 |
+| [wafw00f](https://github.com/EnableSecurity/wafw00f) | WAF 指纹识别 |
+| [GoSpider](https://github.com/jaeles-project/gospider) | 提取链接的 Web spider |
 
-## Automated Scanners
+## 自动化扫描
 
-| Tool                                                 | Description                                        |
-| ---------------------------------------------------- | -------------------------------------------------- |
-| [Nuclei](https://github.com/projectdiscovery/nuclei) | Template-based vulnerability scanner               |
-| [SQLMap](https://sqlmap.org)                         | Automatic SQL injection detection and exploitation |
-| [Wapiti](https://wapiti-scanner.github.io)           | Web application vulnerability scanner              |
-| [ZAP](https://zaproxy.org)                           | OWASP Zed Attack Proxy                             |
+| 工具 | 说明 |
+|------|------|
+| [Nuclei](https://github.com/projectdiscovery/nuclei) | 基于模板的漏洞扫描 |
+| [SQLMap](https://sqlmap.org) | 自动化 SQL 注入检测与利用 |
+| [Wapiti](https://wapiti-scanner.github.io) | Web 应用漏洞扫描 |
+| [ZAP](https://zaproxy.org) | OWASP Zed Attack Proxy |
 
-## JavaScript Analysis
+## JavaScript 分析
 
-| Tool                                                     | Description                    |
-| -------------------------------------------------------- | ------------------------------ |
-| [JS-Snooper](https://github.com/aravind0x7/JS-Snooper)   | JavaScript reconnaissance      |
-| [jsniper](https://github.com/xchopath/jsniper.sh)        | JavaScript file analysis       |
-| [Retire.js](https://retirejs.github.io/retire.js)        | Detect vulnerable JS libraries |
-| [ESLint](https://eslint.org)                             | JavaScript static analysis     |
-| [js-beautify](https://github.com/beautifier/js-beautify) | JavaScript deobfuscation       |
-| [JSHint](https://jshint.com)                             | JavaScript code quality tool   |
+| 工具 | 说明 |
+|------|------|
+| [JS-Snooper](https://github.com/aravind0x7/JS-Snooper) | JavaScript 侦察 |
+| [jsniper](https://github.com/xchopath/jsniper.sh) | JavaScript 文件分析 |
+| [Retire.js](https://retirejs.github.io/retire.js) | 检测存在漏洞的 JS 依赖 |
+| [ESLint](https://eslint.org) | JavaScript 静态分析 |
+| [js-beautify](https://github.com/beautifier/js-beautify) | JavaScript 去混淆与格式化 |
+| [JSHint](https://jshint.com) | JavaScript 代码质量检查 |
 
-## Source-Aware Analysis
+## 源码感知分析
 
-| Tool                                                    | Description                                   |
-| ------------------------------------------------------- | --------------------------------------------- |
-| [Semgrep](https://github.com/semgrep/semgrep)          | Fast SAST and custom rule matching            |
-| [ast-grep](https://ast-grep.github.io)                 | Structural AST/CST-aware code search (`sg`)   |
-| [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) | Syntax tree parsing and symbol extraction (Java/JS/TS/Python/Go/Bash/JSON/YAML grammars pre-configured) |
-| [Bandit](https://bandit.readthedocs.io)                | Python security linter                        |
+| 工具 | 说明 |
+|------|------|
+| [Semgrep](https://github.com/semgrep/semgrep) | 快速 SAST 与自定义规则匹配 |
+| [ast-grep](https://ast-grep.github.io) | 结构化 AST/CST 感知代码搜索（`sg`） |
+| [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) | 语法树解析与符号提取，已预置 Java/JS/TS/Python/Go/Bash/JSON/YAML |
+| [Bandit](https://bandit.readthedocs.io) | Python 安全 lint 工具 |
 
-## Secret Detection
+## Secret 检测
 
-| Tool                                                        | Description                           |
-| ----------------------------------------------------------- | ------------------------------------- |
-| [TruffleHog](https://github.com/trufflesecurity/trufflehog) | Find secrets in code and history      |
-| [Gitleaks](https://github.com/gitleaks/gitleaks)            | Detect hardcoded secrets in repositories |
+| 工具 | 说明 |
+|------|------|
+| [TruffleHog](https://github.com/trufflesecurity/trufflehog) | 在代码与历史中查找 secrets |
+| [Gitleaks](https://github.com/gitleaks/gitleaks) | 检测仓库中的硬编码 secrets |
 
-## Authentication Testing
+## 认证测试
 
-| Tool                                                         | Description                        |
-| ------------------------------------------------------------ | ---------------------------------- |
-| [jwt_tool](https://github.com/ticarpi/jwt_tool)              | JWT token testing and exploitation |
-| [Interactsh](https://github.com/projectdiscovery/interactsh) | Out-of-band interaction detection  |
+| 工具 | 说明 |
+|------|------|
+| [jwt_tool](https://github.com/ticarpi/jwt_tool) | JWT token 测试与利用 |
+| [Interactsh](https://github.com/projectdiscovery/interactsh) | 带外交互检测 |
 
-## Container & Supply Chain
+## 容器与供应链
 
-| Tool                       | Description                                    |
-| -------------------------- | ---------------------------------------------- |
-| [Trivy](https://trivy.dev) | Filesystem/container scanning for vulns, misconfigurations, secrets, and licenses |
+| 工具 | 说明 |
+|------|------|
+| [Trivy](https://trivy.dev) | 文件系统 / 容器扫描，覆盖漏洞、错误配置、secrets 与许可证 |
 
-## HTTP Proxy
+## HTTP 代理
 
-| Tool                      | Description                                   |
-| ------------------------- | --------------------------------------------- |
-| [Caido](https://caido.io) | Modern HTTP proxy for interception and replay |
+| 工具 | 说明 |
+|------|------|
+| [Caido](https://caido.io) | 用于拦截与重放的现代 HTTP 代理 |
 
-## Browser
+## 浏览器
 
-| Tool                                 | Description                 |
-| ------------------------------------ | --------------------------- |
-| [Playwright](https://playwright.dev) | Headless browser automation |
+| 工具 | 说明 |
+|------|------|
+| [Playwright](https://playwright.dev) | 无头浏览器自动化 |
 
 <Note>
-  All tools are pre-configured and ready to use. The agent selects the appropriate tool based on the vulnerability being tested.
+  所有工具都已预装并可直接使用。代理会根据当前测试目标自动选择合适的工具组合。
 </Note>

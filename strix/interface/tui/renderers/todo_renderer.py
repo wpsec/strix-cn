@@ -18,14 +18,14 @@ def _format_todo_lines(text: Text, result: dict[str, Any]) -> None:
     todos = result.get("todos")
     if not isinstance(todos, list) or not todos:
         text.append("\n  ")
-        text.append("No todos", style="dim")
+        text.append("暂无待办事项", style="dim")
         return
 
     for todo in todos:
         status = todo.get("status", "pending")
         marker = STATUS_MARKERS.get(status, STATUS_MARKERS["pending"])
 
-        title = todo.get("title", "").strip() or "(untitled)"
+        title = todo.get("title", "").strip() or "（未命名）"
 
         text.append("\n  ")
         text.append(marker)
@@ -50,7 +50,7 @@ class CreateTodoRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("📋 ")
-        text.append("Todo", style="bold #a78bfa")
+        text.append("待办事项", style="bold #a78bfa")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")
@@ -59,12 +59,12 @@ class CreateTodoRenderer(BaseToolRenderer):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
-                error = result.get("error", "Failed to create todo")
+                error = result.get("error", "创建待办事项失败")
                 text.append("\n  ")
                 text.append(error, style="#ef4444")
         else:
             text.append("\n  ")
-            text.append("Creating...", style="dim")
+            text.append("正在创建...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -81,7 +81,7 @@ class ListTodosRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("📋 ")
-        text.append("Todos", style="bold #a78bfa")
+        text.append("待办列表", style="bold #a78bfa")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")
@@ -90,12 +90,12 @@ class ListTodosRenderer(BaseToolRenderer):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
-                error = result.get("error", "Unable to list todos")
+                error = result.get("error", "获取待办列表失败")
                 text.append("\n  ")
                 text.append(error, style="#ef4444")
         else:
             text.append("\n  ")
-            text.append("Loading...", style="dim")
+            text.append("正在加载...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -112,7 +112,7 @@ class UpdateTodoRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("📋 ")
-        text.append("Todo Updated", style="bold #a78bfa")
+        text.append("待办事项已更新", style="bold #a78bfa")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")
@@ -121,12 +121,12 @@ class UpdateTodoRenderer(BaseToolRenderer):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
-                error = result.get("error", "Failed to update todo")
+                error = result.get("error", "更新待办事项失败")
                 text.append("\n  ")
                 text.append(error, style="#ef4444")
         else:
             text.append("\n  ")
-            text.append("Updating...", style="dim")
+            text.append("正在更新...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -143,7 +143,7 @@ class MarkTodoDoneRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("📋 ")
-        text.append("Todo Completed", style="bold #a78bfa")
+        text.append("待办事项已完成", style="bold #a78bfa")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")
@@ -152,12 +152,12 @@ class MarkTodoDoneRenderer(BaseToolRenderer):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
-                error = result.get("error", "Failed to mark todo done")
+                error = result.get("error", "标记待办事项完成失败")
                 text.append("\n  ")
                 text.append(error, style="#ef4444")
         else:
             text.append("\n  ")
-            text.append("Marking done...", style="dim")
+            text.append("正在标记为完成...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -174,7 +174,7 @@ class MarkTodoPendingRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("📋 ")
-        text.append("Todo Reopened", style="bold #f59e0b")
+        text.append("待办事项已重新打开", style="bold #f59e0b")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")
@@ -183,12 +183,12 @@ class MarkTodoPendingRenderer(BaseToolRenderer):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
-                error = result.get("error", "Failed to reopen todo")
+                error = result.get("error", "重新打开待办事项失败")
                 text.append("\n  ")
                 text.append(error, style="#ef4444")
         else:
             text.append("\n  ")
-            text.append("Reopening...", style="dim")
+            text.append("正在重新打开...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -205,7 +205,7 @@ class DeleteTodoRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("📋 ")
-        text.append("Todo Removed", style="bold #94a3b8")
+        text.append("待办事项已移除", style="bold #94a3b8")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")
@@ -214,12 +214,12 @@ class DeleteTodoRenderer(BaseToolRenderer):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
-                error = result.get("error", "Failed to remove todo")
+                error = result.get("error", "移除待办事项失败")
                 text.append("\n  ")
                 text.append(error, style="#ef4444")
         else:
             text.append("\n  ")
-            text.append("Removing...", style="dim")
+            text.append("正在移除...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)

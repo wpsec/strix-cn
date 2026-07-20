@@ -99,8 +99,8 @@ async def test_create_report_requires_evidence_and_assumptions(
     )
     assert result["success"] is False
     joined = " ".join(result["errors"])
-    assert "Evidence" in joined
-    assert "Assumptions" in joined
+    assert "证据不能为空" in joined
+    assert "前提假设不能为空" in joined
     assert not report_state.vulnerability_reports
 
 
@@ -212,7 +212,7 @@ async def test_dependency_report_requires_advisory_cvss(report_state: ReportStat
     )
 
     assert result["success"] is False
-    assert any("advisory_cvss is required" in e for e in result["errors"])
+    assert any("advisory_cvss 是必填项" in e for e in result["errors"])
     assert not report_state.vulnerability_reports
 
 

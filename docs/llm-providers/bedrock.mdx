@@ -1,34 +1,34 @@
 ---
 title: "AWS Bedrock"
-description: "Configure Strix with models via AWS Bedrock"
+description: "通过 AWS Bedrock 为 Strix 配置模型"
 ---
 
-## Installation
+## 安装
 
-Bedrock requires the AWS SDK dependency. Install Strix with the bedrock extra:
+Bedrock 需要额外的 AWS SDK 依赖。请使用带 `bedrock` extra 的安装方式：
 
 ```bash
 pipx install "strix-agent[bedrock]"
 ```
 
-## Setup
+## 配置
 
 ```bash
 export STRIX_LLM="bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0"
 ```
 
-No API key required—uses AWS credentials from environment.
+无需额外 API key，默认使用 AWS 凭据。
 
-## Authentication
+## 认证方式
 
-### Option 1: AWS CLI Profile
+### 方式 1：AWS CLI Profile
 
 ```bash
 export AWS_PROFILE="your-profile"
 export AWS_REGION="us-east-1"
 ```
 
-### Option 2: Access Keys
+### 方式 2：Access Keys
 
 ```bash
 export AWS_ACCESS_KEY_ID="AKIA..."
@@ -36,20 +36,20 @@ export AWS_SECRET_ACCESS_KEY="..."
 export AWS_REGION="us-east-1"
 ```
 
-### Option 3: IAM Role (EC2/ECS)
+### 方式 3：IAM Role（EC2 / ECS）
 
-Automatically uses instance role credentials.
+直接使用实例角色凭据。
 
-## Available Models
+## 可用模型
 
-| Model | Description |
-|-------|-------------|
+| 模型 | 说明 |
+|------|------|
 | `bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0` | Claude 4.5 Sonnet |
 | `bedrock/anthropic.claude-4-5-opus-20251022-v1:0` | Claude 4.5 Opus |
 | `bedrock/anthropic.claude-4-5-haiku-20251022-v1:0` | Claude 4.5 Haiku |
 | `bedrock/amazon.titan-text-premier-v2:0` | Amazon Titan Premier v2 |
 
-## Prerequisites
+## 前置条件
 
-1. Enable model access in the AWS Bedrock console
-2. Ensure your IAM role/user has `bedrock:InvokeModel` permission
+1. 在 AWS Bedrock 控制台中开启模型访问权限
+2. 确保当前 IAM 角色或用户具备 `bedrock:InvokeModel` 权限

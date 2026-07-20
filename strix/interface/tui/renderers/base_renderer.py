@@ -16,12 +16,12 @@ class BaseToolRenderer(ABC):
     @classmethod
     def status_icon(cls, status: str) -> tuple[str, str]:
         icons = {
-            "running": ("● In progress...", "#f59e0b"),
-            "completed": ("✓ Done", "#22c55e"),
-            "failed": ("✗ Failed", "#dc2626"),
-            "error": ("✗ Error", "#dc2626"),
+            "running": ("● 进行中...", "#f59e0b"),
+            "completed": ("✓ 已完成", "#22c55e"),
+            "failed": ("✗ 失败", "#dc2626"),
+            "error": ("✗ 错误", "#dc2626"),
         }
-        return icons.get(status, ("○ Unknown", "dim"))
+        return icons.get(status, ("○ 未知", "dim"))
 
     @classmethod
     def get_css_classes(cls, status: str) -> str:

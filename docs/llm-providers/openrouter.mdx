@@ -1,37 +1,37 @@
 ---
 title: "OpenRouter"
-description: "Configure Strix with models via OpenRouter"
+description: "通过 OpenRouter 为 Strix 配置多家模型"
 ---
 
-[OpenRouter](https://openrouter.ai) provides access to 100+ models from multiple providers through a single API.
+[OpenRouter](https://openrouter.ai) 通过单一 API 统一接入多家模型提供商，适合希望快速切换模型或做路由冗余的场景。
 
-## Setup
+## 配置
 
 ```bash
 export STRIX_LLM="openrouter/openai/gpt-5.4"
 export LLM_API_KEY="sk-or-..."
 ```
 
-## Available Models
+## 可用模型
 
-Access any model on OpenRouter using the format `openrouter/<provider>/<model>`:
+OpenRouter 采用 `openrouter/<provider>/<model>` 格式：
 
-| Model | Configuration |
-|-------|---------------|
+| 模型 | 配置 |
+|------|------|
 | GPT-5.4 | `openrouter/openai/gpt-5.4` |
 | Claude Sonnet 4.6 | `openrouter/anthropic/claude-sonnet-4.6` |
 | Gemini 3 Pro | `openrouter/google/gemini-3-pro-preview` |
 | GLM-4.7 | `openrouter/z-ai/glm-4.7` |
 
-## Get API Key
+## 获取 API Key
 
-1. Go to [openrouter.ai](https://openrouter.ai)
-2. Sign in and navigate to Keys
-3. Create a new API key
+1. 打开 [openrouter.ai](https://openrouter.ai)
+2. 登录后进入 Keys
+3. 创建新的 API key
 
-## Benefits
+## 特点
 
-- **Single API** — Access models from OpenAI, Anthropic, Google, Meta, and more
-- **Fallback routing** — Automatic failover between providers
-- **Cost tracking** — Monitor usage across all models
-- **Higher rate limits** — OpenRouter handles provider limits for you
+- **单一 API**：统一访问 OpenAI、Anthropic、Google、Meta 等模型
+- **故障切换**：可在不同提供商间做 fallback routing
+- **成本汇总**：统一统计多模型使用成本
+- **速率更灵活**：由 OpenRouter 处理部分提供商限流问题

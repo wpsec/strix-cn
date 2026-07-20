@@ -1,144 +1,144 @@
 ---
 title: "Skills"
-description: "Specialized knowledge packages that enhance agent capabilities"
+description: "增强代理能力的结构化专业知识包"
 ---
 
-Skills are structured knowledge packages that give Strix agents deep expertise in specific vulnerability types, technologies, and testing methodologies.
+Skills 是结构化的专业知识包，用来让 Strix 代理在特定漏洞类型、技术栈和测试方法上具备更深的上下文能力。
 
-## The Idea
+## 核心思路
 
-LLMs have broad but shallow security knowledge. They know _about_ SQL injection, but lack the nuanced techniques that experienced pentesters use—parser quirks, bypass methods, validation tricks, and chain attacks.
+LLM 的通识能力很强，但安全测试需要很多细节经验。模型通常“知道有 SQL 注入”，却不一定天然掌握经验型渗透测试人员常用的解析器特性、绕过技巧、验证手法和漏洞链路。
 
-Skills inject this deep, specialized knowledge directly into the agent's context, transforming it from a generalist into a specialist for the task at hand.
+Skills 的作用，就是把这些高密度、可执行的专业知识直接注入代理上下文，让代理从“通用型助手”变成“当前任务上的专长型助手”。
 
-## How They Work
+## 工作方式
 
-When Strix spawns an agent for a specific task, it selects up to 5 relevant skills based on the context:
+当 Strix 为某个具体任务创建代理时，会按上下文自动选择最多 5 个相关 skill：
 
 ```python
-# Agent created for JWT testing automatically loads relevant skills
+# 为 JWT 测试创建的代理会自动加载相关 skills
 create_agent(
     task="Test authentication mechanisms",
     skills=["authentication_jwt", "business_logic"]
 )
 ```
 
-The skills are injected into the agent's system prompt, giving it access to:
+这些 skills 会被注入到代理的系统提示中，使它能直接使用：
 
-- **Advanced techniques** — Non-obvious methods beyond standard testing
-- **Working payloads** — Practical examples with variations
-- **Validation methods** — How to confirm findings and avoid false positives
+- **进阶技巧**：超出标准检查项的高价值方法
+- **可用 payload**：带变体的实战示例
+- **验证方法**：如何确认漏洞并降低误报
 
-## Skill Categories
+## Skill 分类
 
 ### Vulnerabilities
 
-Core vulnerability classes with deep exploitation techniques.
+按漏洞类型组织的核心知识库。
 
-| Skill                                 | Coverage                                               |
-| ------------------------------------- | ------------------------------------------------------ |
-| `authentication_jwt`                  | JWT attacks, algorithm confusion, claim tampering      |
-| `idor`                                | Object reference attacks, horizontal/vertical access   |
-| `sql_injection`                       | SQL injection variants, WAF bypasses, blind techniques |
-| `xss`                                 | XSS types, filter bypasses, DOM exploitation           |
-| `ssrf`                                | Server-side request forgery, protocol handlers         |
-| `csrf`                                | Cross-site request forgery, token bypasses             |
-| `xxe`                                 | XML external entities, OOB exfiltration                |
-| `rce`                                 | Remote code execution vectors                          |
-| `business_logic`                      | Logic flaws, state manipulation, race conditions       |
-| `race_conditions`                     | TOCTOU, parallel request attacks                       |
-| `path_traversal_lfi_rfi`              | File inclusion, path traversal                         |
-| `open_redirect`                       | Redirect bypasses, URL parsing tricks                  |
-| `mass_assignment`                     | Attribute injection, hidden parameter pollution        |
-| `insecure_file_uploads`               | Upload bypasses, extension tricks                      |
-| `information_disclosure`              | Data leakage, error-based enumeration                  |
-| `subdomain_takeover`                  | Dangling DNS, cloud resource claims                    |
-| `broken_function_level_authorization` | Privilege escalation, role bypasses                    |
+| Skill | 覆盖范围 |
+|------|----------|
+| `authentication_jwt` | JWT 攻击、算法混淆、claim 篡改 |
+| `idor` | 对象引用攻击、水平 / 垂直越权 |
+| `sql_injection` | SQL 注入变体、WAF 绕过、盲注 |
+| `xss` | XSS 类型、过滤绕过、DOM 利用 |
+| `ssrf` | SSRF、协议处理器、内网访问 |
+| `csrf` | CSRF 与 token 绕过 |
+| `xxe` | XXE 与 OOB 数据外带 |
+| `rce` | 远程代码执行路径 |
+| `business_logic` | 业务逻辑缺陷、状态操控、竞态 |
+| `race_conditions` | TOCTOU 与并发请求攻击 |
+| `path_traversal_lfi_rfi` | 路径遍历、文件包含 |
+| `open_redirect` | 重定向绕过、URL 解析技巧 |
+| `mass_assignment` | 属性注入、隐藏参数污染 |
+| `insecure_file_uploads` | 上传绕过、扩展名技巧 |
+| `information_disclosure` | 信息泄露、基于报错的枚举 |
+| `subdomain_takeover` | 悬空 DNS 与云资源接管 |
+| `broken_function_level_authorization` | 功能级鉴权绕过与提权 |
 
 ### Frameworks
 
-Framework-specific testing patterns.
+面向具体框架的测试模式。
 
-| Skill     | Coverage                                     |
-| --------- | -------------------------------------------- |
-| `fastapi` | FastAPI security patterns, Pydantic bypasses |
-| `nextjs`  | Next.js SSR/SSG issues, API route security   |
+| Skill | 覆盖范围 |
+|------|----------|
+| `fastapi` | FastAPI 安全模式、Pydantic 绕过 |
+| `nextjs` | Next.js SSR/SSG 风险、API 路由安全 |
 
 ### Technologies
 
-Third-party service and platform security.
+面向第三方服务与平台。
 
-| Skill                | Coverage                           |
-| -------------------- | ---------------------------------- |
-| `supabase`           | Supabase RLS bypasses, auth issues |
-| `firebase_firestore` | Firestore rules, Firebase auth     |
+| Skill | 覆盖范围 |
+|------|----------|
+| `supabase` | Supabase RLS 绕过与鉴权问题 |
+| `firebase_firestore` | Firestore 规则与 Firebase 鉴权 |
 
 ### Protocols
 
-Protocol-specific testing techniques.
+面向协议和接口形态。
 
-| Skill     | Coverage                                         |
-| --------- | ------------------------------------------------ |
-| `graphql` | GraphQL introspection, batching, resolver issues |
+| Skill | 覆盖范围 |
+|------|----------|
+| `graphql` | GraphQL introspection、批处理与 resolver 风险 |
 
 ### Reconnaissance
 
-Passive discovery and attack-surface mapping techniques.
+面向被动发现和攻击面测绘。
 
-| Skill             | Coverage                                                        |
-| ----------------- | --------------------------------------------------------------- |
-| `asset_discovery` | CT, TLS SAN pivoting, passive DNS, and ASN/IP asset enumeration |
+| Skill | 覆盖范围 |
+|------|----------|
+| `asset_discovery` | CT、TLS SAN、被动 DNS、ASN/IP 资产枚举 |
 
 ### Tooling
 
-Sandbox CLI playbooks for core recon and scanning tools.
+面向沙箱内核心安全工具的使用剧本。
 
-| Skill       | Coverage                                                |
-| ----------- | ------------------------------------------------------- |
-| `nmap`      | Port/service scan syntax and high-signal scan patterns  |
-| `nuclei`    | Template selection, severity filtering, and rate tuning |
-| `httpx`     | HTTP probing and fingerprint output patterns            |
-| `ffuf`      | Wordlist fuzzing, matcher/filter strategy, recursion    |
-| `subfinder` | Passive subdomain enumeration and source control        |
-| `naabu`     | Fast port scanning with explicit rate/verify controls   |
-| `katana`    | Crawl depth/JS/known-files behavior and pitfalls        |
-| `sqlmap`    | SQLi workflow for enumeration and controlled extraction  |
+| Skill | 覆盖范围 |
+|------|----------|
+| `nmap` | 端口与服务扫描语法、高信号扫描组合 |
+| `nuclei` | 模板选择、严重度过滤、速率调整 |
+| `httpx` | HTTP 探测与指纹识别 |
+| `ffuf` | 字典爆破、匹配器 / 过滤器策略、递归 |
+| `subfinder` | 被动子域枚举与数据源控制 |
+| `naabu` | 高速端口扫描与速率控制 |
+| `katana` | 爬取深度、JS、已知文件行为与注意事项 |
+| `sqlmap` | SQL 注入工作流与受控枚举 |
 
-## Skill Structure
+## Skill 结构
 
-Each skill is a Markdown file with YAML frontmatter for metadata:
+每个 skill 都是带 YAML frontmatter 的 Markdown 文件：
 
 ```markdown
 ---
 name: skill_name
-description: Brief description of the skill's coverage
+description: skill 覆盖范围的简要说明
 ---
 
-# Skill Title
+# Skill 标题
 
-Key insight about this vulnerability or technique.
+这里先写这个漏洞类型或技巧最关键的一条判断。
 
-## Attack Surface
-What this skill covers and where to look.
+## 攻击面
+说明这个 skill 主要覆盖哪些位置、哪些入口值得优先检查。
 
-## Methodology
-Step-by-step testing approach.
+## 方法论
+写清楚逐步测试流程和推荐顺序。
 
-## Techniques
-How to discover and exploit the vulnerability.
+## 技术要点
+整理发现、验证和利用该问题时的关键技巧。
 
-## Bypass Methods
-How to bypass common protections.
+## 绕过方法
+记录常见防护的绕过思路与注意事项。
 
-## Validation
-How to confirm findings and avoid false positives.
+## 验证方式
+说明如何确认问题真实存在，以及如何避免误报。
 ```
 
-## Contributing Skills
+## 贡献 Skills
 
-Community contributions are welcome. Create a `.md` file in the appropriate category with YAML frontmatter (`name` and `description` fields). Good skills include:
+欢迎社区贡献新的 skills。请在合适的分类目录中创建带 YAML frontmatter 的 `.md` 文件。高质量 skill 通常包含：
 
-1. **Real-world techniques** — Methods that work in practice
-2. **Practical payloads** — Working examples with variations
-3. **Validation steps** — How to confirm without false positives
-4. **Context awareness** — Version/environment-specific behavior
+1. **真实可用的方法**：不仅能说通，而且在实际环境里可复现
+2. **实战 payload**：包含变体与边界条件
+3. **验证步骤**：说明如何确认漏洞、避免误报
+4. **上下文意识**：体现版本差异、部署环境差异和真实约束

@@ -115,38 +115,38 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("🐞 ")
-        text.append("Vulnerability Report", style="bold #ea580c")
+        text.append("漏洞报告", style="bold #ea580c")
 
         if title:
             text.append("\n\n")
-            text.append("Title: ", style=FIELD_STYLE)
+            text.append("标题：", style=FIELD_STYLE)
             text.append(title)
 
         if severity:
             text.append("\n\n")
-            text.append("Severity: ", style=FIELD_STYLE)
+            text.append("严重度：", style=FIELD_STYLE)
             severity_color = cls.SEVERITY_COLORS.get(severity.lower(), "#6b7280")
             text.append(severity.upper(), style=f"bold {severity_color}")
 
         if cvss_score is not None:
             text.append("\n\n")
-            text.append("CVSS Score: ", style=FIELD_STYLE)
+            text.append("CVSS 分数：", style=FIELD_STYLE)
             cvss_color = cls._get_cvss_color(cvss_score)
             text.append(str(cvss_score), style=f"bold {cvss_color}")
 
         if target:
             text.append("\n\n")
-            text.append("Target: ", style=FIELD_STYLE)
+            text.append("目标：", style=FIELD_STYLE)
             text.append(target)
 
         if endpoint:
             text.append("\n\n")
-            text.append("Endpoint: ", style=FIELD_STYLE)
+            text.append("接口：", style=FIELD_STYLE)
             text.append(endpoint)
 
         if method:
             text.append("\n\n")
-            text.append("Method: ", style=FIELD_STYLE)
+            text.append("方法：", style=FIELD_STYLE)
             text.append(method)
 
         if cve:
@@ -175,33 +175,33 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
                 val = cvss_breakdown.get(key)
                 if val:
                     cvss_parts.append(f"{prefix}:{val}")
-            text.append("CVSS Vector: ", style=FIELD_STYLE)
+            text.append("CVSS 向量：", style=FIELD_STYLE)
             text.append("/".join(cvss_parts), style=DIM_STYLE)
 
         if description:
             text.append("\n\n")
-            text.append("Description", style=FIELD_STYLE)
+            text.append("漏洞描述", style=FIELD_STYLE)
             text.append("\n")
             text.append(description)
 
         if impact:
             text.append("\n\n")
-            text.append("Impact", style=FIELD_STYLE)
+            text.append("影响", style=FIELD_STYLE)
             text.append("\n")
             text.append(impact)
 
         if technical_analysis:
             text.append("\n\n")
-            text.append("Technical Analysis", style=FIELD_STYLE)
+            text.append("技术分析", style=FIELD_STYLE)
             text.append("\n")
             text.append(technical_analysis)
 
         if code_locations:
             text.append("\n\n")
-            text.append("Code Locations", style=FIELD_STYLE)
+            text.append("代码位置", style=FIELD_STYLE)
             for i, loc in enumerate(code_locations):
                 text.append("\n\n")
-                text.append(f"  Location {i + 1}: ", style=DIM_STYLE)
+                text.append(f"  位置 {i + 1}：", style=DIM_STYLE)
                 text.append(loc.get("file", "unknown"), style=FILE_STYLE)
                 start = loc.get("start_line")
                 end = loc.get("end_line")
@@ -217,7 +217,7 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
                     text.append(loc["snippet"], style=CODE_STYLE)
                 if loc.get("fix_before") or loc.get("fix_after"):
                     text.append("\n  ")
-                    text.append("Fix:", style=DIM_STYLE)
+                    text.append("修复建议：", style=DIM_STYLE)
                     if loc.get("fix_before"):
                         text.append("\n  ")
                         text.append("- ", style=BEFORE_STYLE)
@@ -229,25 +229,25 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
 
         if poc_description:
             text.append("\n\n")
-            text.append("PoC Description", style=FIELD_STYLE)
+            text.append("PoC 说明", style=FIELD_STYLE)
             text.append("\n")
             text.append(poc_description)
 
         if poc_script_code:
             text.append("\n\n")
-            text.append("PoC Code", style=FIELD_STYLE)
+            text.append("PoC 代码", style=FIELD_STYLE)
             text.append("\n")
             text.append_text(cls._highlight_python(poc_script_code))
 
         if remediation_steps:
             text.append("\n\n")
-            text.append("Remediation", style=FIELD_STYLE)
+            text.append("修复建议", style=FIELD_STYLE)
             text.append("\n")
             text.append(remediation_steps)
 
         if not title:
             text.append("\n  ")
-            text.append("Creating report...", style="dim")
+            text.append("正在创建报告...", style="dim")
 
         padded = Text()
         padded.append("\n\n")
@@ -287,11 +287,11 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
     def _render_unsuccessful(cls, args: dict[str, Any], result: dict[str, Any]) -> Static:
         text = Text()
         text.append("📦 ")
-        text.append("Dependency (SCA) Report", style="bold #ea580c")
+        text.append("依赖漏洞（SCA）报告", style="bold #ea580c")
         title = args.get("title", "")
         if title:
             text.append("\n\n")
-            text.append("Title: ", style=FIELD_STYLE)
+            text.append("标题：", style=FIELD_STYLE)
             text.append(title)
 
         warning = result.get("warning")
@@ -300,12 +300,12 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
             detail = (
                 "; ".join(errors) if isinstance(errors, list) and errors else result.get("error")
             )
-            label, style = "✗ Not created: ", "bold #dc2626"
-            fallback = "Report was not created."
+            label, style = "✗ 创建失败：", "bold #dc2626"
+            fallback = "报告未创建。"
         else:
             detail = warning
-            label, style = "⚠ Not persisted: ", "bold #d97706"
-            fallback = "Report could not be persisted."
+            label, style = "⚠ 未持久化：", "bold #d97706"
+            fallback = "报告未能持久化。"
         text.append("\n\n")
         text.append(label, style=style)
         text.append(str(detail or fallback))
@@ -347,22 +347,22 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("📦 ")
-        text.append("Dependency (SCA) Report", style="bold #ea580c")
+        text.append("依赖漏洞（SCA）报告", style="bold #ea580c")
 
         if title:
             text.append("\n\n")
-            text.append("Title: ", style=FIELD_STYLE)
+            text.append("标题：", style=FIELD_STYLE)
             text.append(title)
 
         if severity:
             text.append("\n\n")
-            text.append("Severity: ", style=FIELD_STYLE)
+            text.append("严重度：", style=FIELD_STYLE)
             severity_color = cls.SEVERITY_COLORS.get(severity.lower(), "#6b7280")
             text.append(severity.upper(), style=f"bold {severity_color}")
 
         if advisory_cvss is not None:
             text.append("\n\n")
-            text.append("Advisory CVSS: ", style=FIELD_STYLE)
+            text.append("公告 CVSS：", style=FIELD_STYLE)
             try:
                 score = float(advisory_cvss)
                 text.append(str(score), style=f"bold {cls._get_cvss_color(score)}")
@@ -381,36 +381,36 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
 
         if package_name:
             text.append("\n\n")
-            text.append("Package: ", style=FIELD_STYLE)
+            text.append("依赖包：", style=FIELD_STYLE)
             text.append(package_name, style=FILE_STYLE)
             if package_ecosystem:
                 text.append(f" ({package_ecosystem})", style=DIM_STYLE)
 
         if installed_version:
             text.append("\n\n")
-            text.append("Installed: ", style=FIELD_STYLE)
+            text.append("当前版本：", style=FIELD_STYLE)
             text.append(installed_version, style=BEFORE_STYLE)
             if fixed_version:
                 text.append("  →  ", style=DIM_STYLE)
-                text.append("Fixed: ", style=FIELD_STYLE)
+                text.append("修复版本：", style=FIELD_STYLE)
                 text.append(fixed_version, style=AFTER_STYLE)
 
         if fix_effort:
             text.append("\n\n")
-            text.append("Fix Effort: ", style=FIELD_STYLE)
+            text.append("修复成本：", style=FIELD_STYLE)
             text.append(fix_effort)
 
         if target:
             text.append("\n\n")
-            text.append("Target: ", style=FIELD_STYLE)
+            text.append("目标：", style=FIELD_STYLE)
             text.append(target)
 
         for label, value in [
-            ("Description", description),
-            ("Impact", impact),
-            ("Technical Analysis", technical_analysis),
-            ("Assumptions", assumptions),
-            ("Remediation", remediation_steps),
+            ("漏洞描述", description),
+            ("影响", impact),
+            ("技术分析", technical_analysis),
+            ("前提假设", assumptions),
+            ("修复建议", remediation_steps),
         ]:
             if value:
                 text.append("\n\n")
@@ -420,7 +420,7 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
 
         if not title:
             text.append("\n  ")
-            text.append("Creating dependency report...", style="dim")
+            text.append("正在创建依赖漏洞报告...", style="dim")
 
         padded = Text()
         padded.append("\n\n")

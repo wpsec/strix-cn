@@ -61,12 +61,12 @@ HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 BEDROCK_MODEL_PREFIX = "bedrock/"
 BEDROCK_MISSING_MODULE_ERROR = "No module named 'boto3'"
 BEDROCK_EXTRA_HINT = (
-    'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
+    'Bedrock 支持是可选依赖。可通过以下命令安装：pipx install "strix-agent[bedrock]"'
 )
 VERTEX_MODEL_MARKER = "vertex"
 VERTEX_MISSING_MODULE_ERROR = "No module named 'google"
 VERTEX_EXTRA_HINT = (
-    'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
+    'Vertex AI 支持是可选依赖。可通过以下命令安装：pipx install "strix-agent[vertex]"'
 )
 
 
@@ -98,65 +98,66 @@ def validate_environment() -> None:
 
     if missing_required_vars:
         error_text = Text()
-        error_text.append("MISSING REQUIRED ENVIRONMENT VARIABLES", style="bold red")
+        error_text.append("缺少必需环境变量", style="bold red")
         error_text.append("\n\n", style="white")
 
         for var in missing_required_vars:
             error_text.append(f"• {var}", style="bold yellow")
-            error_text.append(" is not set\n", style="white")
+            error_text.append(" 未设置\n", style="white")
 
         if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="dim white")
+            error_text.append("\n可选环境变量：\n", style="dim white")
             for var in missing_optional_vars:
                 error_text.append(f"• {var}", style="dim yellow")
-                error_text.append(" is not set\n", style="dim white")
+                error_text.append(" 未设置\n", style="dim white")
 
-        error_text.append("\nRequired environment variables:\n", style="white")
+        error_text.append("\n必需环境变量：\n", style="white")
         for var in missing_required_vars:
             if var == "STRIX_LLM":
                 error_text.append("• ", style="white")
                 error_text.append("STRIX_LLM", style="bold cyan")
                 error_text.append(
-                    " - Model name to use (e.g., 'openai/gpt-5.4' or "
-                    "'anthropic/claude-opus-4-7')\n",
+                    " - 要使用的模型名，例如 `openai/gpt-5.4` 或 "
+                    "`anthropic/claude-opus-4-7`\n",
                     style="white",
                 )
 
         if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="white")
+            error_text.append("\n可选环境变量：\n", style="white")
             for var in missing_optional_vars:
                 if var == "LLM_API_KEY":
                     error_text.append("• ", style="white")
                     error_text.append("LLM_API_KEY", style="bold cyan")
                     error_text.append(
-                        " - API key for the LLM provider "
-                        "(not needed for local models, Vertex AI, AWS, etc.)\n",
+                        " - LLM 提供商的 API Key"
+                        "（本地模型、Vertex AI、AWS 等场景通常不需要）\n",
                         style="white",
                     )
                 elif var == "LLM_API_BASE":
                     error_text.append("• ", style="white")
                     error_text.append("LLM_API_BASE", style="bold cyan")
                     error_text.append(
-                        " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
+                        " - 自定义 API base URL，适用于本地模型或兼容网关"
+                        "（如 Ollama、LM Studio）\n",
                         style="white",
                     )
                 elif var == "PERPLEXITY_API_KEY":
                     error_text.append("• ", style="white")
                     error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
                     error_text.append(
-                        " - API key for Perplexity AI web search (enables real-time research)\n",
+                        " - Perplexity AI Web 搜索的 API Key（启用实时研究）\n",
                         style="white",
                     )
                 elif var == "STRIX_REASONING_EFFORT":
                     error_text.append("• ", style="white")
                     error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
                     error_text.append(
-                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh "
-                        "(default: high)\n",
+                        " - 推理强度等级：none、minimal、low、medium、high、xhigh"
+                        "（默认：high）\n",
                         style="white",
                     )
 
-        error_text.append("\nExample setup:\n", style="white")
+        error_text.append("\n示例配置：\n", style="white")
         error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
 
         if missing_optional_vars:
@@ -164,18 +165,19 @@ def validate_environment() -> None:
                 if var == "LLM_API_KEY":
                     error_text.append(
                         "export LLM_API_KEY='your-api-key-here'  "
-                        "# not needed for local models, Vertex AI, AWS, etc.\n",
+                        "# 本地模型、Vertex AI、AWS 等场景通常不需要\n",
                         style="dim white",
                     )
                 elif var == "LLM_API_BASE":
                     error_text.append(
                         "export LLM_API_BASE='http://localhost:11434'  "
-                        "# needed for local models only\n",
+                        "# 仅本地模型或兼容网关需要\n",
                         style="dim white",
                     )
                 elif var == "PERPLEXITY_API_KEY":
                     error_text.append(
-                        "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
+                        "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n",
+                        style="dim white",
                     )
                 elif var == "STRIX_REASONING_EFFORT":
                     error_text.append(
@@ -207,11 +209,12 @@ def check_docker_installed() -> None:
         logger.error("Docker CLI not found in PATH")
         console = Console()
         error_text = Text()
-        error_text.append("DOCKER NOT INSTALLED", style="bold red")
+        error_text.append("未安装 Docker", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
+        error_text.append("在当前 PATH 中未找到 `docker` 命令。\n", style="white")
         error_text.append(
-            "Please install Docker and ensure the 'docker' command is available.\n\n", style="white"
+            "请先安装 Docker，并确保终端可以直接调用 `docker`。\n\n",
+            style="white",
         )
 
         panel = Panel(
@@ -284,17 +287,17 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             and not llm.api_base
         ):
             warn_text = Text()
-            warn_text.append("UNKNOWN MODEL NAME", style="bold yellow")
+            warn_text.append("未知模型名", style="bold yellow")
             warn_text.append("\n\n", style="white")
             warn_text.append(f"'{raw_model}'", style="bold cyan")
             warn_text.append(
-                " is not a known OpenAI model. Bare names route to OpenAI by default.\n"
-                "If you meant a non-OpenAI provider, use the '",
+                " 不是已知的 OpenAI 模型。未带 provider 前缀的裸模型名会默认路由到 OpenAI。\n"
+                "如果你想使用非 OpenAI 提供商，请改用 `",
                 style="white",
             )
             warn_text.append("<provider>/<model>", style="bold cyan")
             warn_text.append(
-                "' form, e.g. 'anthropic/claude-opus-4-7', 'deepseek/deepseek-v4-pro'.",
+                "` 形式，例如 `anthropic/claude-opus-4-7`、`deepseek/deepseek-v4-pro`。",
                 style="white",
             )
             console.print(
@@ -310,18 +313,17 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
 
         if show_model_warning and raw_model and not is_recommended_or_frontier_model(raw_model):
             warn_text = Text()
-            warn_text.append("MODEL QUALITY WARNING", style="bold yellow")
+            warn_text.append("模型质量提示", style="bold yellow")
             warn_text.append("\n\n", style="white")
             warn_text.append(f"'{raw_model}'", style="bold cyan")
             warn_text.append(
-                " is not a recommended frontier model for Strix.\nSecurity scans work best with:\n",
+                " 不是 Strix 当前推荐的前沿模型。\n更适合安全扫描的模型包括：\n",
                 style="white",
             )
             for recommended_model in RECOMMENDED_MODEL_NAMES:
                 warn_text.append(f"• {recommended_model}\n", style="bold cyan")
             warn_text.append(
-                "\nYou can continue, but weaker models may miss vulnerabilities "
-                "or produce lower-quality findings.",
+                "\n你仍然可以继续运行，但较弱的模型可能会漏报漏洞，或降低分析质量。",
                 style="white",
             )
             console.print(
@@ -355,14 +357,14 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
     except Exception as e:
         logger.exception("LLM warm-up failed")
         error_text = Text()
-        error_text.append("LLM CONNECTION FAILED", style="bold red")
+        error_text.append("LLM 连接失败", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Could not establish connection to the language model.\n", style="white")
-        error_text.append("Please check your configuration and try again.\n", style="white")
+        error_text.append("无法与语言模型建立连接。\n", style="white")
+        error_text.append("请检查配置后重试。\n", style="white")
         hint = _provider_import_hint(e, raw_model)
         if hint is not None:
             error_text.append(f"\n{hint}\n", style="bold yellow")
-        error_text.append(f"\nError: {e}", style="dim white")
+        error_text.append(f"\n错误：{e}", style="dim white")
 
         panel = Panel(
             error_text,
@@ -401,40 +403,40 @@ def _positive_budget(value: str) -> float:
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
+        description="Strix 多代理网络安全渗透测试工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Web application penetration test
+示例：
+  # Web 应用渗透测试
   strix --target https://example.com
 
-  # GitHub repository analysis
+  # GitHub 仓库分析
   strix --target https://github.com/user/repo
   strix --target git@github.com:user/repo.git
 
-  # Local code analysis
+  # 本地代码分析
   strix --target ./my-project
 
-  # Large local repository (bind-mounted read-only instead of copied)
+  # 大型本地仓库（只读挂载，不逐文件复制）
   strix --mount ./huge-monorepo
 
-  # Domain penetration test
+  # 域名渗透测试
   strix --target example.com
 
-  # IP address penetration test
+  # IP 地址渗透测试
   strix --target 192.168.1.42
 
-  # Multiple targets (e.g., white-box testing with source and deployed app)
+  # 多目标联合测试（例如源码 + 已部署应用的白盒测试）
   strix --target https://github.com/user/repo --target https://example.com
   strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
 
-  # Targets from a file, one target per non-empty, non-comment line
+  # 从文件读取目标，每行一个，忽略空行和注释行
   strix --target-list ./targets.txt
 
-  # Custom instructions (inline)
-  strix --target example.com --instruction "Focus on authentication vulnerabilities"
+  # 自定义指令（内联）
+  strix --target example.com --instruction "重点测试认证相关漏洞"
 
-  # Custom instructions (from file)
+  # 自定义指令（来自文件）
   strix --target example.com --instruction-file ./instructions.txt
   strix --target https://app.com --instruction-file /path/to/detailed_instructions.md
         """,
@@ -452,54 +454,48 @@ Examples:
         "--target",
         type=str,
         action="append",
-        help="Target to test (URL, repository, local directory path, domain name, or IP address). "
-        "Can be specified multiple times for multi-target scans. "
-        "Fresh runs require at least one of --target, --target-list, or --mount.",
+        help="要测试的目标（URL、仓库、本地目录路径、域名或 IP 地址）。"
+        "多目标扫描时可重复指定。"
+        "新任务必须至少提供 --target、--target-list 或 --mount 之一。",
     )
     parser.add_argument(
         "--target-list",
         type=str,
         action="append",
         metavar="PATH",
-        help="Path to a file containing targets, one per non-empty, non-comment line. "
-        "Can be specified multiple times and combined with --target.",
+        help="目标列表文件路径。每个非空、非注释行视为一个目标。"
+        "可重复指定，也可与 --target 混用。",
     )
     parser.add_argument(
         "--mount",
         type=str,
         action="append",
         metavar="PATH",
-        help="Bind-mount a local directory into the sandbox (read-only) instead of "
-        "copying it file-by-file. Use this for large repositories that are too big to "
-        "stream into the container. Can be specified multiple times.",
+        help="将本地目录以只读方式挂载到沙箱，而不是逐文件复制。"
+        "适合过大、无法流式复制进容器的大型仓库。"
+        "可重复指定。",
     )
     parser.add_argument(
         "--instruction",
         type=str,
-        help="Custom instructions for the penetration test. This can be "
-        "specific vulnerability types to focus on (e.g., 'Focus on IDOR and XSS'), "
-        "testing approaches (e.g., 'Perform thorough authentication testing'), "
-        "test credentials (e.g., 'Use the following credentials to access the app: "
-        "admin:password123'), "
-        "or areas of interest (e.g., 'Check login API endpoint for security issues').",
+        help="为本次渗透测试补充自定义指令。"
+        "可以指定重点漏洞类型（如“重点测试 IDOR 和 XSS”）、"
+        "测试方法（如“重点覆盖认证流程”）、"
+        "测试凭据，或关注区域（如“重点检查登录 API”）。",
     )
 
     parser.add_argument(
         "--instruction-file",
         type=str,
-        help="Path to a file containing detailed custom instructions for the penetration test. "
-        "Use this option when you have lengthy or complex instructions saved in a file "
-        "(e.g., '--instruction-file ./detailed_instructions.txt').",
+        help="包含详细自定义测试指令的文件路径。"
+        "适合较长或较复杂的说明，例如 `--instruction-file ./detailed_instructions.txt`。",
     )
 
     parser.add_argument(
         "-n",
         "--non-interactive",
         action="store_true",
-        help=(
-            "Run in non-interactive mode (no TUI, exits on completion). "
-            "Default is interactive mode with TUI."
-        ),
+        help="以非交互模式运行（不启动 TUI，任务完成后直接退出）。默认使用带 TUI 的交互模式。",
     )
 
     parser.add_argument(
@@ -509,11 +505,10 @@ Examples:
         choices=["quick", "standard", "deep"],
         default="deep",
         help=(
-            "Scan mode: "
-            "'quick' for fast CI/CD checks, "
-            "'standard' for routine testing, "
-            "'deep' for thorough security reviews (default). "
-            "Default: deep."
+            "扫描模式："
+            "`quick` 用于快速 CI/CD 检查，"
+            "`standard` 用于常规测试，"
+            "`deep` 用于深入安全审计（默认）。"
         ),
     )
 
@@ -523,10 +518,10 @@ Examples:
         choices=["auto", "diff", "full"],
         default="auto",
         help=(
-            "Scope mode for code targets: "
-            "'auto' enables PR diff-scope in CI/headless runs, "
-            "'diff' forces changed-files scope, "
-            "'full' disables diff-scope."
+            "代码目标的范围模式："
+            "`auto` 会在 CI/无头运行中自动启用 PR diff-scope，"
+            "`diff` 强制只看变更文件，"
+            "`full` 关闭 diff-scope。"
         ),
     )
 
@@ -534,22 +529,22 @@ Examples:
         "--diff-base",
         type=str,
         help=(
-            "Target branch or commit to compare against (e.g., origin/main). "
-            "Defaults to the repository's default branch."
+            "用于对比的目标分支或提交，例如 `origin/main`。"
+            "默认使用仓库默认分支。"
         ),
     )
 
     parser.add_argument(
         "--config",
         type=str,
-        help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
+        help="自定义配置文件（JSON）路径，用于替代 `~/.strix/cli-config.json`",
     )
 
     parser.add_argument(
         "--max-budget-usd",
         type=_positive_budget,
         default=None,
-        help="Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached.",
+        help="LLM 最大成本上限（美元，需大于 0）。达到上限后任务会安全停止。",
     )
 
     parser.add_argument(
@@ -557,18 +552,16 @@ Examples:
         type=str,
         metavar="RUN_NAME",
         help=(
-            "Resume a prior scan by its run name (the dir under ./strix_runs/). "
-            "Picks up the root + every non-terminal subagent's full LLM history "
-            "and agent topology. Skips fresh run-name generation."
+            "按历史运行名恢复之前的扫描（即 `./strix_runs/` 下的目录名）。"
+            "会恢复根代理与所有未结束子代理的完整 LLM 历史和代理拓扑，"
+            "并跳过新的 run-name 生成。"
         ),
     )
 
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:
-        parser.error(
-            "Cannot specify both --instruction and --instruction-file. Use one or the other."
-        )
+        parser.error("不能同时指定 --instruction 和 --instruction-file，请二选一。")
 
     if args.instruction_file:
         instruction_path = Path(args.instruction_file)
@@ -576,33 +569,31 @@ Examples:
             with instruction_path.open(encoding="utf-8") as f:
                 args.instruction = f.read().strip()
                 if not args.instruction:
-                    parser.error(f"Instruction file '{instruction_path}' is empty")
+                    parser.error(f"指令文件 '{instruction_path}' 为空")
         except Exception as e:
-            parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
+            parser.error(f"读取指令文件 '{instruction_path}' 失败：{e}")
 
     args.user_explicit_instruction = args.instruction if args.resume else None
 
     if args.resume:
         if args.target or args.target_list or args.mount:
             parser.error(
-                "Cannot combine --resume with --target/--target-list/--mount. "
-                "--resume picks up where the prior run left off, including the "
-                "original target list."
+                "不能将 --resume 与 --target/--target-list/--mount 同时使用。"
+                "--resume 会直接接续上一次运行，包括原始目标列表。"
             )
         _load_resume_state(args, parser)
         agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
         if not agents_path.exists():
             parser.error(
-                f"--resume {args.resume}: missing {agents_path}. The run was "
-                f"persisted but never reached its first agent snapshot — "
-                f"there's nothing to resume from. Pick a fresh --run-name "
-                f"or remove --resume to start over with the same targets."
+                f"--resume {args.resume}：缺少 {agents_path}。该运行虽然已落盘，"
+                f"但还没走到首次代理快照阶段，因此没有可恢复的状态。"
+                f"请改用新的 --run-name，或去掉 --resume 重新开始。"
             )
     else:
         if not args.target and not args.target_list and not args.mount:
             parser.error(
-                "the following arguments are required: -t/--target, --target-list, or --mount "
-                "(or use --resume <run_name> to continue a prior scan)"
+                "必须至少提供以下参数之一：-t/--target、--target-list 或 --mount"
+                "（也可使用 --resume <run_name> 恢复之前的扫描）"
             )
         args.targets_info = []
         targets = list(args.target or [])
@@ -625,7 +616,7 @@ Examples:
                     {"type": target_type, "details": target_dict, "original": display_target}
                 )
             except ValueError:
-                parser.error(f"Invalid target '{target}'")
+                parser.error(f"无效目标：'{target}'")
 
         try:
             args.targets_info.extend(build_mount_targets_info(args.mount or []))
@@ -645,10 +636,10 @@ Examples:
                 f"{path} ({size / (1024 * 1024):.0f} MB)" for path, size in oversized
             )
             parser.error(
-                f"Local target too large to stream into the sandbox: {details}. "
-                f"The limit is {max_local_copy_mb} MB "
-                "(set STRIX_MAX_LOCAL_COPY_MB to change it). Re-run with "
-                "--mount <path> to bind-mount the directory instead of copying it."
+                f"本地目标过大，无法以流式复制方式送入沙箱：{details}。"
+                f"当前限制为 {max_local_copy_mb} MB"
+                f"（可通过 STRIX_MAX_LOCAL_COPY_MB 调整）。"
+                "请改用 --mount <path> 以只读挂载目录。"
             )
 
     return args
@@ -681,17 +672,17 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     state_path = run_dir / "run.json"
     if not state_path.exists():
         parser.error(
-            f"--resume {args.resume}: no such run "
-            f"(missing {state_path}; remove --resume for a fresh start)"
+            f"--resume {args.resume}：找不到对应运行"
+            f"（缺少 {state_path}；如需重新开始，请去掉 --resume）"
         )
     try:
         state = read_run_record(run_dir)
     except RuntimeError as exc:
-        parser.error(f"--resume {args.resume}: run.json unreadable: {exc}")
+        parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
 
     args.targets_info = state.get("targets_info") or []
     if not args.targets_info:
-        parser.error(f"--resume {args.resume}: run.json has no targets_info")
+        parser.error(f"--resume {args.resume}：run.json 中缺少 targets_info")
 
     for target in args.targets_info:
         if not isinstance(target, dict):
@@ -704,9 +695,9 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
             continue
         if not Path(cloned).expanduser().exists():
             parser.error(
-                f"--resume {args.resume}: cloned repo at {cloned} is missing. "
-                f"It was deleted between runs. Pick a fresh --run-name to "
-                f"re-clone, or restore the directory before resuming."
+                f"--resume {args.resume}：历史克隆目录 {cloned} 不存在。"
+                "它可能在两次运行之间被删除。请使用新的 --run-name 重新克隆，"
+                "或先恢复该目录后再继续。"
             )
 
     if args.instruction is None:
@@ -730,17 +721,17 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     completion_text = Text()
     if scan_completed:
-        completion_text.append("Penetration test completed", style="bold #22c55e")
+        completion_text.append("渗透测试已完成", style="bold #22c55e")
     else:
-        completion_text.append("SESSION ENDED", style="bold #eab308")
+        completion_text.append("本次会话已结束", style="bold #eab308")
 
     target_text = Text()
-    target_text.append("Target", style="dim")
+    target_text.append("目标", style="dim")
     target_text.append("  ")
     if len(args.targets_info) == 1:
         target_text.append(args.targets_info[0]["original"], style="bold white")
     else:
-        target_text.append(f"{len(args.targets_info)} targets", style="bold white")
+        target_text.append(f"{len(args.targets_info)} 个目标", style="bold white")
         for target_info in args.targets_info:
             target_text.append("\n        ")
             target_text.append(target_info["original"], style="white")
@@ -754,7 +745,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     results_text = Text()
     results_text.append("\n")
-    results_text.append("Output", style="dim")
+    results_text.append("输出目录", style="dim")
     results_text.append("  ")
     results_text.append(str(results_path), style="#60a5fa")
     panel_parts.extend(["\n", results_text])
@@ -762,7 +753,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     if not scan_completed:
         resume_text = Text()
         resume_text.append("\n")
-        resume_text.append("Resume", style="dim")
+        resume_text.append("继续运行", style="dim")
         resume_text.append("  ")
         resume_text.append(f"strix --resume {args.run_name}", style="#22c55e")
         panel_parts.extend(["\n", resume_text])
@@ -802,11 +793,11 @@ def pull_docker_image() -> None:
 
     logger.info("Pulling docker image: %s", image)
     console.print()
-    console.print(f"[dim]Pulling image[/] {image}")
-    console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
+    console.print(f"[dim]正在拉取镜像[/] {image}")
+    console.print("[dim yellow]首次运行时才会出现，可能需要几分钟，请稍候...[/]")
     console.print()
 
-    with console.status("[bold cyan]Downloading image layers...", spinner="dots") as status:
+    with console.status("[bold cyan]正在下载镜像层...", spinner="dots") as status:
         try:
             layers_info: dict[str, str] = {}
             last_update = ""
@@ -818,9 +809,9 @@ def pull_docker_image() -> None:
             logger.exception("Failed to pull docker image %s", image)
             console.print()
             error_text = Text()
-            error_text.append("FAILED TO PULL IMAGE", style="bold red")
+            error_text.append("拉取镜像失败", style="bold red")
             error_text.append("\n\n", style="white")
-            error_text.append(f"Could not download: {image}\n", style="white")
+            error_text.append(f"无法下载镜像：{image}\n", style="white")
             error_text.append(str(e), style="dim red")
 
             panel = Panel(
@@ -835,7 +826,7 @@ def pull_docker_image() -> None:
 
     logger.info("Docker image %s ready", image)
     success_text = Text()
-    success_text.append("Docker image ready", style="#22c55e")
+    success_text.append("Docker 镜像已就绪", style="#22c55e")
     console.print(success_text)
     console.print()
 
@@ -880,7 +871,7 @@ def main() -> None:
         except ValueError as e:
             console = Console()
             error_text = Text()
-            error_text.append("DIFF SCOPE RESOLUTION FAILED", style="bold red")
+            error_text.append("Diff scope 解析失败", style="bold red")
             error_text.append("\n\n", style="white")
             error_text.append(str(e), style="white")
 

@@ -84,7 +84,17 @@ def test_parse_arguments_rejects_resume_with_target_list(
     with pytest.raises(SystemExit):
         cli_main.parse_arguments()
 
-    assert (
-        "Cannot combine --resume with --target/--target-list/--mount"
-        in capsys.readouterr().err
-    )
+    assert "不能将 --resume 与 --target/--target-list/--mount 同时使用" in capsys.readouterr().err
+
+
+def test_help_output_is_localized(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(sys, "argv", ["strix", "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main.parse_arguments()
+
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "Strix 多代理网络安全渗透测试工具" in help_text
+    assert "扫描模式" in help_text
+    assert "自定义指令" in help_text

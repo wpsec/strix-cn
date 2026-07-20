@@ -26,35 +26,35 @@ class FinishScanRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("◆ ", style="#22c55e")
-        text.append("Penetration test completed", style="bold #22c55e")
+        text.append("渗透测试已完成", style="bold #22c55e")
 
         if executive_summary:
             text.append("\n\n")
-            text.append("Executive Summary", style=FIELD_STYLE)
+            text.append("执行摘要", style=FIELD_STYLE)
             text.append("\n")
             text.append(executive_summary)
 
         if methodology:
             text.append("\n\n")
-            text.append("Methodology", style=FIELD_STYLE)
+            text.append("测试方法", style=FIELD_STYLE)
             text.append("\n")
             text.append(methodology)
 
         if technical_analysis:
             text.append("\n\n")
-            text.append("Technical Analysis", style=FIELD_STYLE)
+            text.append("技术分析", style=FIELD_STYLE)
             text.append("\n")
             text.append(technical_analysis)
 
         if recommendations:
             text.append("\n\n")
-            text.append("Recommendations", style=FIELD_STYLE)
+            text.append("修复建议", style=FIELD_STYLE)
             text.append("\n")
             text.append(recommendations)
 
         if not (executive_summary or methodology or technical_analysis or recommendations):
             text.append("\n  ")
-            text.append("Generating final report...", style="dim")
+            text.append("正在生成最终报告...", style="dim")
 
         padded = Text()
         padded.append("\n\n")

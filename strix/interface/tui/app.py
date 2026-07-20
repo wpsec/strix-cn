@@ -179,7 +179,7 @@ class SplashScreen(Static):  # type: ignore[misc]
         text = Text("⚠ ", style=Style(color="yellow", bold=True))
         text.append(model, style=Style(color="cyan", bold=True))
         text.append(
-            " is not a recommended frontier model - pentest quality could be degraded",
+            " 不是推荐的前沿模型，渗透测试质量可能下降",
             style=Style(color="yellow"),
         )
         return text
@@ -188,19 +188,19 @@ class SplashScreen(Static):  # type: ignore[misc]
         return Text("strix.ai", style=Style(color=self.PRIMARY_GREEN, bold=True))
 
     def _build_welcome_text(self) -> Text:
-        text = Text("Welcome to ", style=Style(color="white", bold=True))
+        text = Text("欢迎使用 ", style=Style(color="white", bold=True))
         text.append("Strix", style=Style(color=self.PRIMARY_GREEN, bold=True))
-        text.append("!", style=Style(color="white", bold=True))
+        text.append("。", style=Style(color="white", bold=True))
         return text
 
     def _build_version_text(self) -> Text:
         return Text(f"v{self._version}", style=Style(color="white", dim=True))
 
     def _build_tagline_text(self) -> Text:
-        return Text("Open-source AI hackers for your apps", style=Style(color="white", dim=True))
+        return Text("面向应用安全验证的开源 AI 代理", style=Style(color="white", dim=True))
 
     def _build_start_line_text(self, phase: int) -> Text:
-        full_text = "Starting Strix Agent"
+        full_text = "正在启动 Strix Agent"
         text_len = len(full_text)
 
         shine_pos = phase % (text_len + 8)
@@ -226,10 +226,10 @@ class SplashScreen(Static):  # type: ignore[misc]
 class HelpScreen(ModalScreen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label("Strix Help", id="help_title"),
+            Label("Strix 帮助", id="help_title"),
             Label(
-                "F1        Help\nCtrl+Q/C  Quit\nESC       Stop Agent\n"
-                "Enter     Send message to agent\nTab       Switch panels\n↑/↓       Navigate tree",
+                "F1        帮助\nCtrl+Q/C  退出\nESC       停止代理\n"
+                "Enter     发送消息给代理\nTab       切换面板\n↑/↓       浏览代理树",
                 id="help_content",
             ),
             id="dialog",
@@ -247,10 +247,10 @@ class StopAgentScreen(ModalScreen):  # type: ignore[misc]
 
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label(f"🛑 Stop '{self.agent_name}'?", id="stop_agent_title"),
+            Label(f"🛑 停止代理“{self.agent_name}”？", id="stop_agent_title"),
             Grid(
-                Button("Yes", variant="error", id="stop_agent"),
-                Button("No", variant="default", id="cancel_stop"),
+                Button("确认", variant="error", id="stop_agent"),
+                Button("取消", variant="default", id="cancel_stop"),
                 id="stop_agent_buttons",
             ),
             id="stop_agent_dialog",
@@ -307,8 +307,8 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
         yield Grid(
             VerticalScroll(Static(content, id="vuln_detail_content"), id="vuln_detail_scroll"),
             Horizontal(
-                Button("Copy", variant="default", id="copy_vuln_detail"),
-                Button("Done", variant="default", id="close_vuln_detail"),
+                Button("复制", variant="default", id="copy_vuln_detail"),
+                Button("关闭", variant="default", id="close_vuln_detail"),
                 id="vuln_detail_buttons",
             ),
             id="vuln_detail_dialog",
@@ -362,46 +362,46 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
         text = Text()
 
         text.append("🐞 ")
-        text.append("Vulnerability Report", style="bold #ea580c")
+        text.append("漏洞报告", style="bold #ea580c")
 
         agent_name = vuln.get("agent_name", "")
         if agent_name:
             text.append("\n\n")
-            text.append("Agent: ", style=self.FIELD_STYLE)
+            text.append("代理：", style=self.FIELD_STYLE)
             text.append(agent_name)
 
         title = vuln.get("title", "")
         if title:
             text.append("\n\n")
-            text.append("Title: ", style=self.FIELD_STYLE)
+            text.append("标题：", style=self.FIELD_STYLE)
             text.append(title)
 
         severity = vuln.get("severity", "")
         if severity:
             text.append("\n\n")
-            text.append("Severity: ", style=self.FIELD_STYLE)
+            text.append("严重度：", style=self.FIELD_STYLE)
             severity_color = self.SEVERITY_COLORS.get(severity.lower(), "#6b7280")
             text.append(severity.upper(), style=f"bold {severity_color}")
 
         cvss_score = vuln.get("cvss")
         if cvss_score is not None:
             text.append("\n\n")
-            text.append("CVSS Score: ", style=self.FIELD_STYLE)
+            text.append("CVSS 分数：", style=self.FIELD_STYLE)
             cvss_color = self._get_cvss_color(float(cvss_score))
             text.append(str(cvss_score), style=f"bold {cvss_color}")
 
         target = vuln.get("target", "")
         if target:
             text.append("\n\n")
-            text.append("Target: ", style=self.FIELD_STYLE)
+            text.append("目标：", style=self.FIELD_STYLE)
             text.append(target)
 
         dep_meta = vuln.get("dependency_metadata") or {}
         for label, key in (
-            ("Package", "package_name"),
-            ("Ecosystem", "package_ecosystem"),
-            ("Installed Version", "installed_version"),
-            ("Fixed Version", "fixed_version"),
+            ("依赖包", "package_name"),
+            ("生态", "package_ecosystem"),
+            ("当前版本", "installed_version"),
+            ("修复版本", "fixed_version"),
         ):
             value = dep_meta.get(key)
             if value:
@@ -412,13 +412,13 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
         endpoint = vuln.get("endpoint", "")
         if endpoint:
             text.append("\n\n")
-            text.append("Endpoint: ", style=self.FIELD_STYLE)
+            text.append("接口：", style=self.FIELD_STYLE)
             text.append(endpoint)
 
         method = vuln.get("method", "")
         if method:
             text.append("\n\n")
-            text.append("Method: ", style=self.FIELD_STYLE)
+            text.append("方法：", style=self.FIELD_STYLE)
             text.append(method)
 
         cve = vuln.get("cve", "")
@@ -436,7 +436,7 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
         fix_effort = vuln.get("fix_effort", "")
         if fix_effort:
             text.append("\n\n")
-            text.append("Fix Effort: ", style=self.FIELD_STYLE)
+            text.append("修复成本：", style=self.FIELD_STYLE)
             text.append(str(fix_effort).title())
 
         cvss_breakdown = vuln.get("cvss_breakdown", {})
@@ -460,62 +460,62 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 cvss_parts.append(f"A:{cvss_breakdown['availability']}")
             if cvss_parts:
                 text.append("\n\n")
-                text.append("CVSS Vector: ", style=self.FIELD_STYLE)
+                text.append("CVSS 向量：", style=self.FIELD_STYLE)
                 text.append("/".join(cvss_parts), style="dim")
 
         description = vuln.get("description", "")
         if description:
             text.append("\n\n")
-            text.append("Description", style=self.FIELD_STYLE)
+            text.append("漏洞描述", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(description)
 
         impact = vuln.get("impact", "")
         if impact:
             text.append("\n\n")
-            text.append("Impact", style=self.FIELD_STYLE)
+            text.append("影响", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(impact)
 
         technical_analysis = vuln.get("technical_analysis", "")
         if technical_analysis:
             text.append("\n\n")
-            text.append("Technical Analysis", style=self.FIELD_STYLE)
+            text.append("技术分析", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(technical_analysis)
 
         evidence = vuln.get("evidence", "")
         if evidence:
             text.append("\n\n")
-            text.append("Evidence", style=self.FIELD_STYLE)
+            text.append("证据", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(evidence)
 
         poc_description = vuln.get("poc_description", "")
         if poc_description:
             text.append("\n\n")
-            text.append("PoC Description", style=self.FIELD_STYLE)
+            text.append("PoC 说明", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(poc_description)
 
         poc_script_code = vuln.get("poc_script_code", "")
         if poc_script_code:
             text.append("\n\n")
-            text.append("PoC Code", style=self.FIELD_STYLE)
+            text.append("PoC 代码", style=self.FIELD_STYLE)
             text.append("\n")
             text.append_text(self._highlight_python(poc_script_code))
 
         remediation_steps = vuln.get("remediation_steps", "")
         if remediation_steps:
             text.append("\n\n")
-            text.append("Remediation", style=self.FIELD_STYLE)
+            text.append("修复建议", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(remediation_steps)
 
         assumptions = vuln.get("assumptions", "")
         if assumptions:
             text.append("\n\n")
-            text.append("Assumptions", style=self.FIELD_STYLE)
+            text.append("前提假设", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(assumptions)
 
@@ -526,33 +526,33 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
         vuln = self.vulnerability
         lines: list[str] = []
 
-        title = vuln.get("title", "Untitled Vulnerability")
+        title = vuln.get("title", "未命名漏洞")
         lines.append(f"# {title}")
         lines.append("")
 
         if vuln.get("id"):
             lines.append(f"**ID:** {vuln['id']}")
         if vuln.get("severity"):
-            lines.append(f"**Severity:** {vuln['severity'].upper()}")
+            lines.append(f"**严重度：** {vuln['severity'].upper()}")
         if vuln.get("timestamp"):
-            lines.append(f"**Found:** {vuln['timestamp']}")
+            lines.append(f"**发现时间：** {vuln['timestamp']}")
         if vuln.get("agent_name"):
-            lines.append(f"**Agent:** {vuln['agent_name']}")
+            lines.append(f"**代理：** {vuln['agent_name']}")
         if vuln.get("target"):
-            lines.append(f"**Target:** {vuln['target']}")
+            lines.append(f"**目标：** {vuln['target']}")
         dep_meta = vuln.get("dependency_metadata") or {}
         if dep_meta.get("package_name"):
-            lines.append(f"**Package:** {dep_meta['package_name']}")
+            lines.append(f"**依赖包：** {dep_meta['package_name']}")
         if dep_meta.get("package_ecosystem"):
-            lines.append(f"**Ecosystem:** {dep_meta['package_ecosystem']}")
+            lines.append(f"**生态：** {dep_meta['package_ecosystem']}")
         if dep_meta.get("installed_version"):
-            lines.append(f"**Installed Version:** {dep_meta['installed_version']}")
+            lines.append(f"**当前版本：** {dep_meta['installed_version']}")
         if dep_meta.get("fixed_version"):
-            lines.append(f"**Fixed Version:** {dep_meta['fixed_version']}")
+            lines.append(f"**修复版本：** {dep_meta['fixed_version']}")
         if vuln.get("endpoint"):
-            lines.append(f"**Endpoint:** {vuln['endpoint']}")
+            lines.append(f"**接口：** {vuln['endpoint']}")
         if vuln.get("method"):
-            lines.append(f"**Method:** {vuln['method']}")
+            lines.append(f"**方法：** {vuln['method']}")
         if vuln.get("cve"):
             lines.append(f"**CVE:** {vuln['cve']}")
         if vuln.get("cwe"):
@@ -560,7 +560,7 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
         if vuln.get("cvss") is not None:
             lines.append(f"**CVSS:** {vuln['cvss']}")
         if vuln.get("fix_effort"):
-            lines.append(f"**Fix Effort:** {str(vuln['fix_effort']).title()}")
+            lines.append(f"**修复成本：** {str(vuln['fix_effort']).title()}")
 
         cvss_breakdown = vuln.get("cvss_breakdown", {})
         if cvss_breakdown:
@@ -578,21 +578,21 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 f"{abbrevs.get(k, k)}:{v}" for k, v in cvss_breakdown.items() if v and k in abbrevs
             ]
             if parts:
-                lines.append(f"**CVSS Vector:** {'/'.join(parts)}")
+                lines.append(f"**CVSS 向量：** {'/'.join(parts)}")
 
         lines.append("")
-        lines.append("## Description")
+        lines.append("## 漏洞描述")
         lines.append("")
-        lines.append(vuln.get("description") or "No description provided.")
+        lines.append(vuln.get("description") or "未提供描述。")
 
         if vuln.get("impact"):
-            lines.extend(["", "## Impact", "", vuln["impact"]])
+            lines.extend(["", "## 影响", "", vuln["impact"]])
 
         if vuln.get("technical_analysis"):
-            lines.extend(["", "## Technical Analysis", "", vuln["technical_analysis"]])
+            lines.extend(["", "## 技术分析", "", vuln["technical_analysis"]])
 
         if vuln.get("evidence"):
-            lines.extend(["", "## Evidence", "", vuln["evidence"]])
+            lines.extend(["", "## 证据", "", vuln["evidence"]])
 
         if vuln.get("poc_description") or vuln.get("poc_script_code"):
             lines.extend(["", "## Proof of Concept", ""])
@@ -605,22 +605,22 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 lines.append("```")
 
         if vuln.get("code_locations"):
-            lines.extend(["", "## Code Analysis", ""])
+            lines.extend(["", "## 代码分析", ""])
             for i, loc in enumerate(vuln["code_locations"]):
                 file_ref = loc.get("file", "unknown")
                 line_ref = ""
                 if loc.get("start_line") is not None:
                     if loc.get("end_line") and loc["end_line"] != loc["start_line"]:
-                        line_ref = f" (lines {loc['start_line']}-{loc['end_line']})"
+                        line_ref = f"（第 {loc['start_line']}-{loc['end_line']} 行）"
                     else:
-                        line_ref = f" (line {loc['start_line']})"
-                lines.append(f"**Location {i + 1}:** `{file_ref}`{line_ref}")
+                        line_ref = f"（第 {loc['start_line']} 行）"
+                lines.append(f"**位置 {i + 1}：** `{file_ref}`{line_ref}")
                 if loc.get("label"):
                     lines.append(f"  {loc['label']}")
                 if loc.get("snippet"):
                     lines.append(f"```\n{loc['snippet']}\n```")
                 if loc.get("fix_before") or loc.get("fix_after"):
-                    lines.append("**Suggested Fix:**")
+                    lines.append("**建议修复：**")
                     lines.append("```diff")
                     if loc.get("fix_before"):
                         lines.extend(f"- {line}" for line in loc["fix_before"].splitlines())
@@ -630,10 +630,10 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 lines.append("")
 
         if vuln.get("remediation_steps"):
-            lines.extend(["", "## Remediation", "", vuln["remediation_steps"]])
+            lines.extend(["", "## 修复建议", "", vuln["remediation_steps"]])
 
         if vuln.get("assumptions"):
-            lines.extend(["", "## Assumptions", "", vuln["assumptions"]])
+            lines.extend(["", "## 前提假设", "", vuln["assumptions"]])
 
         lines.append("")
         return "\n".join(lines)
@@ -649,8 +649,8 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             self.app.copy_to_clipboard(markdown_text)
 
             copy_button = self.query_one("#copy_vuln_detail", Button)
-            copy_button.label = "Copied!"
-            self.set_timer(1.5, lambda: setattr(copy_button, "label", "Copy"))
+            copy_button.label = "已复制"
+            self.set_timer(1.5, lambda: setattr(copy_button, "label", "复制"))
         elif event.button.id == "close_vuln_detail":
             self.app.pop_screen()
 
@@ -699,7 +699,7 @@ class VulnerabilitiesPanel(VerticalScroll):  # type: ignore[misc]
 
         for vuln in self._vulnerabilities:
             severity = vuln.get("severity", "info").lower()
-            title = vuln.get("title", "Unknown Vulnerability")
+            title = vuln.get("title", "未知漏洞")
             color = self.SEVERITY_COLORS.get(severity, "#3b82f6")
 
             label = Text()
@@ -713,10 +713,10 @@ class VulnerabilitiesPanel(VerticalScroll):  # type: ignore[misc]
 class QuitScreen(ModalScreen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label("Quit Strix?", id="quit_title"),
+            Label("退出 Strix？", id="quit_title"),
             Grid(
-                Button("Yes", variant="error", id="quit"),
-                Button("No", variant="default", id="cancel"),
+                Button("确认", variant="error", id="quit"),
+                Button("取消", variant="default", id="cancel"),
                 id="quit_buttons",
             ),
             id="quit_dialog",
@@ -764,10 +764,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
     show_splash: reactive[bool] = reactive(default=True)
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("f1", "toggle_help", "Help", priority=True),
-        Binding("ctrl+q", "request_quit", "Quit", priority=True),
-        Binding("ctrl+c", "request_quit", "Quit", priority=True),
-        Binding("escape", "stop_selected_agent", "Stop Agent", priority=True),
+        Binding("f1", "toggle_help", "帮助", priority=True),
+        Binding("ctrl+q", "request_quit", "退出", priority=True),
+        Binding("ctrl+c", "request_quit", "退出", priority=True),
+        Binding("escape", "stop_selected_agent", "停止代理", priority=True),
     ]
 
     def __init__(self, args: argparse.Namespace):
@@ -1061,13 +1061,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self,
     ) -> tuple[Any, str | None]:
         if not self.selected_agent_id:
-            return self._get_chat_placeholder_content("Loading...", "placeholder-no-agent")
+            return self._get_chat_placeholder_content("正在加载...", "placeholder-no-agent")
 
         events = self._gather_agent_events(self.selected_agent_id)
 
         if not events:
             return self._get_chat_placeholder_content(
-                "Starting agent...", "placeholder-no-activity"
+                "代理正在启动...", "placeholder-no-activity"
             )
 
         current_event_ids = [f"{e['id']}:{e.get('version', 0)}" for e in events]
@@ -1215,8 +1215,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return t
 
         simple_statuses: dict[str, tuple[str, str]] = {
-            "stopped": ("Agent stopped", ""),
-            "completed": ("Agent completed", ""),
+            "stopped": ("代理已停止", ""),
+            "completed": ("代理已完成", ""),
         }
 
         if status in simple_statuses:
@@ -1231,13 +1231,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if error_msg:
                 text.append(error_msg, style="red")
             else:
-                text.append("Scan failed", style="red")
+                text.append("扫描失败", style="red")
             self._stop_dot_animation()
             return (text, Text(), False)
 
         if status == "waiting":
             text = Text()
-            text.append("Send message to resume", style="dim")
+            text.append("发送消息以继续", style="dim")
             return (text, Text(), False)
 
         if status == "running":
@@ -1246,10 +1246,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 animated_text.append_text(self._get_sweep_animation(self._sweep_colors))
                 animated_text.append("esc", style="white")
                 animated_text.append(" ", style="dim")
-                animated_text.append("stop", style="dim")
-                return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
-            animated_text = self._get_animated_verb_text(agent_id, "Initializing")
-            return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
+                animated_text.append("停止", style="dim")
+                return (animated_text, keymap_styled([("ctrl-q", "退出")]), True)
+            animated_text = self._get_animated_verb_text(agent_id, "初始化中")
+            return (animated_text, keymap_styled([("ctrl-q", "退出")]), True)
 
         return (None, Text(), False)
 
@@ -1890,11 +1890,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     _DECORATIVE_LINES: ClassVar[frozenset[str]] = frozenset(
         {
-            "● In progress...",
-            "✓ Done",
-            "✗ Failed",
-            "✗ Error",
-            "○ Unknown",
+            "● 进行中...",
+            "✓ 已完成",
+            "✗ 失败",
+            "✗ 错误",
+            "○ 未知",
         }
     )
 

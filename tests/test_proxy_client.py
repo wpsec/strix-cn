@@ -166,7 +166,7 @@ def test_coerce_sitemap_entry_id_rejects_request_style_id() -> None:
     value, error = caido_api._coerce_sitemap_entry_id("req_123", field_name="parent_id")
     assert value is None
     assert error is not None
-    assert "numeric sitemap entry ID" in error
+    assert "数字型 sitemap 条目 ID" in error
 
 
 async def test_list_sitemap_with_client_rejects_invalid_parent_id_without_querying() -> None:
@@ -187,5 +187,5 @@ async def test_list_sitemap_with_client_rejects_invalid_parent_id_without_queryi
     result = await caido_api.list_sitemap_with_client(cast("Any", client), parent_id="req_123")
 
     assert result["success"] is False
-    assert "numeric sitemap entry ID" in result["error"]
+    assert "数字型 sitemap 条目 ID" in result["error"]
     assert client.graphql.called is False

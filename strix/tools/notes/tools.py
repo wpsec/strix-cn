@@ -150,15 +150,13 @@ def _create_note_impl(
     with _notes_lock:
         try:
             if not title or not title.strip():
-                return {"success": False, "error": "Title cannot be empty", "note_id": None}
+                return {"success": False, "error": "标题不能为空", "note_id": None}
             if not content or not content.strip():
-                return {"success": False, "error": "Content cannot be empty", "note_id": None}
+                return {"success": False, "error": "内容不能为空", "note_id": None}
             if category not in _VALID_NOTE_CATEGORIES:
                 return {
                     "success": False,
-                    "error": (
-                        f"Invalid category. Must be one of: {', '.join(_VALID_NOTE_CATEGORIES)}"
-                    ),
+                    "error": f"无效的 category，必须是以下之一：{', '.join(_VALID_NOTE_CATEGORIES)}",
                     "note_id": None,
                 }
 
@@ -166,7 +164,7 @@ def _create_note_impl(
             if note_id is None:
                 return {
                     "success": False,
-                    "error": "Failed to generate a unique note ID",
+                    "error": "生成唯一笔记 ID 失败",
                     "note_id": None,
                 }
 
@@ -181,13 +179,13 @@ def _create_note_impl(
             }
             _notes_storage[note_id] = note
         except (ValueError, TypeError) as e:
-            return {"success": False, "error": f"Failed to create note: {e}", "note_id": None}
+            return {"success": False, "error": f"创建笔记失败：{e}", "note_id": None}
         else:
             _persist()
             return {
                 "success": True,
                 "note_id": note_id,
-                "message": f"Note '{title}' created successfully",
+                "message": f"笔记“{title}”创建成功",
                 "total_count": len(_notes_storage),
             }
 
@@ -205,7 +203,7 @@ def _list_notes_impl(
         except (ValueError, TypeError) as e:
             return {
                 "success": False,
-                "error": f"Failed to list notes: {e}",
+                "error": f"获取笔记列表失败：{e}",
                 "notes": [],
                 "filtered_count": 0,
                 "total_count": 0,
@@ -222,18 +220,18 @@ def _get_note_impl(note_id: str) -> dict[str, Any]:
     with _notes_lock:
         try:
             if not note_id or not note_id.strip():
-                return {"success": False, "error": "Note ID cannot be empty", "note": None}
+                return {"success": False, "error": "笔记 ID 不能为空", "note": None}
             note = _notes_storage.get(note_id)
             if note is None:
                 return {
                     "success": False,
-                    "error": f"Note with ID '{note_id}' not found",
+                    "error": f"未找到 ID 为 '{note_id}' 的笔记",
                     "note": None,
                 }
             note_with_id = note.copy()
             note_with_id["note_id"] = note_id
         except (ValueError, TypeError) as e:
-            return {"success": False, "error": f"Failed to get note: {e}", "note": None}
+            return {"success": False, "error": f"获取笔记失败：{e}", "note": None}
         else:
             return {"success": True, "note": note_with_id}
 
@@ -247,27 +245,27 @@ def _update_note_impl(
     with _notes_lock:
         try:
             if note_id not in _notes_storage:
-                return {"success": False, "error": f"Note with ID '{note_id}' not found"}
+                return {"success": False, "error": f"未找到 ID 为 '{note_id}' 的笔记"}
             note = _notes_storage[note_id]
             if title is not None:
                 if not title.strip():
-                    return {"success": False, "error": "Title cannot be empty"}
+                    return {"success": False, "error": "标题不能为空"}
                 note["title"] = title.strip()
             if content is not None:
                 if not content.strip():
-                    return {"success": False, "error": "Content cannot be empty"}
+                    return {"success": False, "error": "内容不能为空"}
                 note["content"] = content.strip()
             if tags is not None:
                 note["tags"] = tags
             note["updated_at"] = datetime.now(UTC).isoformat()
         except (ValueError, TypeError) as e:
-            return {"success": False, "error": f"Failed to update note: {e}"}
+            return {"success": False, "error": f"更新笔记失败：{e}"}
         else:
             _persist()
             return {
                 "success": True,
                 "note_id": note_id,
-                "message": f"Note '{note['title']}' updated successfully",
+                "message": f"笔记“{note['title']}”更新成功",
                 "total_count": len(_notes_storage),
             }
 
@@ -276,18 +274,18 @@ def _delete_note_impl(note_id: str) -> dict[str, Any]:
     with _notes_lock:
         try:
             if note_id not in _notes_storage:
-                return {"success": False, "error": f"Note with ID '{note_id}' not found"}
+                return {"success": False, "error": f"未找到 ID 为 '{note_id}' 的笔记"}
             note = _notes_storage[note_id]
             note_title = note["title"]
             del _notes_storage[note_id]
         except (ValueError, TypeError) as e:
-            return {"success": False, "error": f"Failed to delete note: {e}"}
+            return {"success": False, "error": f"删除笔记失败：{e}"}
         else:
             _persist()
             return {
                 "success": True,
                 "note_id": note_id,
-                "message": f"Note '{note_title}' deleted successfully",
+                "message": f"笔记“{note_title}”删除成功",
                 "total_count": len(_notes_storage),
             }
 

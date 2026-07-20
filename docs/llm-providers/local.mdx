@@ -1,56 +1,55 @@
 ---
-title: "Local Models"
-description: "Run Strix with self-hosted LLMs for privacy and air-gapped testing"
+title: "本地模型"
+description: "使用自托管 LLM 运行 Strix，适合隐私优先和内网环境"
 ---
 
-Running Strix with local models allows for completely offline, privacy-first security assessments. Data never leaves your machine, making this ideal for sensitive internal networks or air-gapped environments.
+使用本地模型运行 Strix，可以把数据保留在本机或内网环境中，适合对隐私、合规或网络隔离要求较高的场景。
 
-## Privacy vs Performance
+## 隐私与效果对比
 
-| Feature | Local Models | Cloud Models (GPT-5/Claude 4.5) |
-|---------|--------------|--------------------------------|
-| **Privacy** | 🔒 Data stays local | Data sent to provider |
-| **Cost** | Free (hardware only) | Pay-per-token |
-| **Reasoning** | Lower (struggles with agents) | State-of-the-art |
-| **Setup** | Complex (GPU required) | Instant |
+| 指标 | 本地模型 | 云模型（GPT-5 / Claude 4.5） |
+|------|----------|------------------------------|
+| **隐私** | 数据留在本地 | 数据发往提供商 |
+| **成本** | 主要消耗本地硬件资源 | 按 token 计费 |
+| **推理能力** | 相对较弱，复杂代理任务更容易掉队 | 整体更强 |
+| **部署复杂度** | 更高，通常需要 GPU | 开箱即用 |
 
 <Warning>
-**Compatibility Note**: Strix relies on advanced agentic capabilities (tool use, multi-step planning, self-correction). Most local models, especially those under 70B parameters, struggle with these complex tasks.
+兼容性提醒：Strix 对工具调用、多步规划与自我修正能力有较高要求。多数本地模型，尤其是 70B 以下模型，在复杂代理任务上仍明显弱于前沿云模型。
 
-For critical assessments, we strongly recommend using state-of-the-art cloud models like **Claude 4.5 Sonnet** or **GPT-5**. Use local models only when privacy is the absolute priority.
+如果你的目标是高质量安全评估，建议优先使用高能力云模型。如果隐私是第一优先级，再采用本地模型路径。
 </Warning>
 
 ## Ollama
 
-[Ollama](https://ollama.ai) is the easiest way to run local models on macOS, Linux, and Windows.
+[Ollama](https://ollama.ai) 是在 macOS、Linux 和 Windows 上运行本地模型的最直接方式之一。
 
-### Setup
+### 配置步骤
 
-1. Install Ollama from [ollama.ai](https://ollama.ai)
-2. Pull a high-performance model:
+1. 从 [ollama.ai](https://ollama.ai) 安装 Ollama
+2. 拉取一个表现较好的模型：
    ```bash
    ollama pull qwen3-vl
    ```
-3. Configure Strix:
+3. 配置 Strix：
    ```bash
    export STRIX_LLM="ollama/qwen3-vl"
    export LLM_API_BASE="http://localhost:11434"
    ```
 
-### Recommended Models
+### 推荐模型
 
-We recommend these models for the best balance of reasoning and tool use:
+以下模型在本地部署场景中相对更值得优先尝试：
 
-**Recommended models:**
-- **Qwen3 VL** (`ollama pull qwen3-vl`)
-- **DeepSeek V3.1** (`ollama pull deepseek-v3.1`)
-- **Devstral 2** (`ollama pull devstral-2`)
+- **Qwen3 VL**：`ollama pull qwen3-vl`
+- **DeepSeek V3.1**：`ollama pull deepseek-v3.1`
+- **Devstral 2**：`ollama pull devstral-2`
 
-## LM Studio / OpenAI Compatible
+## LM Studio / OpenAI-compatible
 
-If you use LM Studio, vLLM, or other runners:
+如果你使用 LM Studio、vLLM 或其他 OpenAI-compatible 本地服务：
 
 ```bash
 export STRIX_LLM="openai/local-model"
-export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
+export LLM_API_BASE="http://localhost:1234/v1"
 ```

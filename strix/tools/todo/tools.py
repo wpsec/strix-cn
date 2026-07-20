@@ -112,7 +112,7 @@ def _get_agent_todos(agent_id: str) -> dict[str, dict[str, Any]]:
 def _normalize_priority(priority: str | None, default: str = "normal") -> str:
     candidate = (priority or default or "normal").lower()
     if candidate not in VALID_PRIORITIES:
-        raise ValueError(f"Invalid priority. Must be one of: {', '.join(VALID_PRIORITIES)}")
+        raise ValueError(f"无效的 priority，必须是以下之一：{', '.join(VALID_PRIORITIES)}")
     return candidate
 
 
@@ -154,20 +154,20 @@ def _normalize_bulk_updates(raw_updates: Any) -> list[dict[str, Any]]:
         try:
             data = json.loads(stripped)
         except json.JSONDecodeError as e:
-            raise ValueError("Updates must be valid JSON") from e
+            raise ValueError("updates 必须是合法 JSON") from e
 
     if isinstance(data, dict):
         data = [data]
     if not isinstance(data, list):
-        raise TypeError("Updates must be a list of update objects")
+        raise TypeError("updates 必须是更新对象列表")
 
     normalized: list[dict[str, Any]] = []
     for item in data:
         if not isinstance(item, dict):
-            raise TypeError("Each update must be an object with todo_id")
+            raise TypeError("每个更新项都必须是包含 todo_id 的对象")
         todo_id = item.get("todo_id") or item.get("id")
         if not todo_id:
-            raise ValueError("Each update must include 'todo_id'")
+            raise ValueError("每个更新项都必须包含 `todo_id`")
         normalized.append(
             {
                 "todo_id": str(todo_id).strip(),
@@ -197,7 +197,7 @@ def _normalize_bulk_todos(raw_todos: Any) -> list[dict[str, Any]]:
     if isinstance(data, dict):
         data = [data]
     if not isinstance(data, list):
-        raise TypeError("Todos must be provided as a list, dict, or JSON string")
+        raise TypeError("todos 必须是列表、对象或 JSON 字符串")
 
     normalized: list[dict[str, Any]] = []
     for item in data:
@@ -207,10 +207,10 @@ def _normalize_bulk_todos(raw_todos: Any) -> list[dict[str, Any]]:
                 normalized.append({"title": title})
             continue
         if not isinstance(item, dict):
-            raise TypeError("Each todo entry must be a string or object with a title")
+            raise TypeError("每个 todo 项都必须是字符串，或包含 title 的对象")
         title = item.get("title", "")
         if not isinstance(title, str) or not title.strip():
-            raise ValueError("Each todo entry must include a non-empty 'title'")
+            raise ValueError("每个 todo 项都必须包含非空 `title`")
         normalized.append(
             {
                 "title": title.strip(),
@@ -230,11 +230,11 @@ def _apply_single_update(
     status: str | None = None,
 ) -> dict[str, Any] | None:
     if todo_id not in agent_todos:
-        return {"todo_id": todo_id, "error": f"Todo with ID '{todo_id}' not found"}
+        return {"todo_id": todo_id, "error": f"未找到 ID 为 '{todo_id}' 的待办事项"}
     todo = agent_todos[todo_id]
     if title is not None:
         if not title.strip():
-            return {"todo_id": todo_id, "error": "Title cannot be empty"}
+            return {"todo_id": todo_id, "error": "标题不能为空"}
         todo["title"] = title.strip()
     if description is not None:
         todo["description"] = description.strip() if description else None
@@ -248,7 +248,7 @@ def _apply_single_update(
         if status_candidate not in VALID_STATUSES:
             return {
                 "todo_id": todo_id,
-                "error": f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}",
+                "error": f"无效的 status，必须是以下之一：{', '.join(VALID_STATUSES)}",
             }
         todo["status"] = status_candidate
         todo["completed_at"] = datetime.now(UTC).isoformat() if status_candidate == "done" else None
@@ -296,7 +296,7 @@ async def create_todo(ctx: RunContextWrapper, todos: str) -> str:
         tasks = _normalize_bulk_todos(todos)
         if not tasks:
             return json.dumps(
-                {"success": False, "error": "Provide a non-empty 'todos' list to create"},
+                {"success": False, "error": "请提供非空的 `todos` 列表"},
                 ensure_ascii=False,
                 default=str,
             )
@@ -319,7 +319,7 @@ async def create_todo(ctx: RunContextWrapper, todos: str) -> str:
             created.append({"todo_id": todo_id, "title": task["title"], "priority": task_priority})
     except (ValueError, TypeError) as e:
         return json.dumps(
-            {"success": False, "error": f"Failed to create todo: {e}"},
+            {"success": False, "error": f"创建待办事项失败：{e}"},
             ensure_ascii=False,
             default=str,
         )
@@ -380,7 +380,7 @@ async def list_todos(
         return json.dumps(
             {
                 "success": False,
-                "error": f"Failed to list todos: {e}",
+                "error": f"获取待办列表失败：{e}",
                 "todos": [],
                 "filtered_count": 0,
                 "total_count": 0,
@@ -438,7 +438,7 @@ async def update_todo(ctx: RunContextWrapper, updates: str) -> str:
         updates_to_apply = _normalize_bulk_updates(updates)
         if not updates_to_apply:
             return json.dumps(
-                {"success": False, "error": "Provide a non-empty 'updates' list"},
+                {"success": False, "error": "请提供非空的 `updates` 列表"},
                 ensure_ascii=False,
                 default=str,
             )
@@ -480,7 +480,8 @@ def _mark(*, agent_id: str, todo_ids: str, new_status: str) -> str:
         agent_todos = _get_agent_todos(agent_id)
         ids = _normalize_todo_ids(todo_ids)
         if not ids:
-            msg = f"Provide a non-empty 'todo_ids' list to mark as {new_status}"
+            status_label = "完成" if new_status == "done" else "待处理"
+            msg = f"请提供非空的 `todo_ids` 列表以标记为{status_label}"
             return json.dumps({"success": False, "error": msg}, ensure_ascii=False, default=str)
 
         marked: list[str] = []
@@ -488,7 +489,7 @@ def _mark(*, agent_id: str, todo_ids: str, new_status: str) -> str:
         timestamp = datetime.now(UTC).isoformat()
         for tid in ids:
             if tid not in agent_todos:
-                errors.append({"todo_id": tid, "error": f"Todo with ID '{tid}' not found"})
+                errors.append({"todo_id": tid, "error": f"未找到 ID 为 '{tid}' 的待办事项"})
                 continue
             todo = agent_todos[tid]
             todo["status"] = new_status
@@ -555,7 +556,7 @@ async def delete_todo(ctx: RunContextWrapper, todo_ids: str) -> str:
         ids = _normalize_todo_ids(todo_ids)
         if not ids:
             return json.dumps(
-                {"success": False, "error": "Provide a non-empty 'todo_ids' list to delete"},
+                {"success": False, "error": "请提供非空的 `todo_ids` 列表以删除"},
                 ensure_ascii=False,
                 default=str,
             )
@@ -564,7 +565,7 @@ async def delete_todo(ctx: RunContextWrapper, todo_ids: str) -> str:
         errors: list[dict[str, Any]] = []
         for tid in ids:
             if tid not in agent_todos:
-                errors.append({"todo_id": tid, "error": f"Todo with ID '{tid}' not found"})
+                errors.append({"todo_id": tid, "error": f"未找到 ID 为 '{tid}' 的待办事项"})
                 continue
             del agent_todos[tid]
             deleted.append(tid)

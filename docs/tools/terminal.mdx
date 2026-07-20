@@ -1,65 +1,65 @@
 ---
-title: "Terminal"
-description: "Bash shell for running commands and security tools"
+title: "终端"
+description: "用于运行命令与安全工具的 Bash 终端"
 ---
 
-Strix has access to a persistent bash terminal running inside the Docker sandbox. This gives the agent access to all [pre-installed security tools](/tools/sandbox).
+Strix 可以使用运行在 Docker 沙箱内的持久 Bash 终端，因此能够直接调用所有[预装安全工具](/tools/sandbox)。
 
-## Capabilities
+## 能力概览
 
-| Feature           | Description                                                |
-| ----------------- | ---------------------------------------------------------- |
-| Persistent state  | Working directory and environment persist between commands |
-| Multiple sessions | Run parallel terminals for concurrent operations           |
-| Background jobs   | Start long-running processes without blocking              |
-| Interactive       | Respond to prompts and control running processes           |
+| 能力 | 说明 |
+|------|------|
+| 持久状态 | 工作目录与环境变量会在命令之间保留 |
+| 多会话 | 可并行开启多个终端处理不同任务 |
+| 后台任务 | 可启动长时间运行的进程而不阻塞主流程 |
+| 交互控制 | 可响应提示并控制运行中的进程 |
 
-## Common Uses
+## 常见用途
 
-### Running Security Tools
+### 运行安全工具
 
 ```bash
-# Subdomain enumeration
+# 子域枚举
 subfinder -d example.com
 
-# Vulnerability scanning
+# 漏洞扫描
 nuclei -u https://example.com
 
-# SQL injection testing
+# SQL 注入测试
 sqlmap -u "https://example.com/page?id=1"
 ```
 
-### Code Analysis
+### 代码分析
 
 ```bash
-# Fast SAST triage
+# 快速 SAST 初筛
 semgrep --config auto ./src
 
-# Structural AST search
+# 结构化 AST 搜索
 sg scan ./src
 
-# Secret detection
+# Secret 检测
 gitleaks detect --source ./
 trufflehog filesystem ./
 
-# Supply-chain and misconfiguration checks
+# 供应链和配置检查
 trivy fs ./
 ```
 
-### Custom Scripts
+### 自定义脚本
 
 ```bash
-# Run Python exploits
+# 执行 Python 利用脚本
 python3 exploit.py
 
-# Execute shell scripts
+# 执行 Shell 脚本
 ./test_auth_bypass.sh
 ```
 
-## Session Management
+## 会话管理
 
-The agent can run multiple terminal sessions concurrently, for example:
+代理可以同时维护多个终端会话，例如：
 
-- Main session for primary testing
-- Secondary session for monitoring
-- Background processes for servers or watchers
+- 主会话用于核心测试
+- 次会话用于监控或旁路检查
+- 后台进程用于临时服务、watcher 或长任务

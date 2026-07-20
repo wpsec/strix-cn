@@ -272,7 +272,7 @@ async def view_request(
         )
         if result is None:
             return json.dumps(
-                {"success": False, "error": f"Request {request_id} not found"},
+                {"success": False, "error": f"未找到请求 {request_id}"},
                 ensure_ascii=False,
                 default=str,
             )
@@ -286,7 +286,7 @@ async def view_request(
             return json.dumps(
                 {
                     "success": False,
-                    "error": f"No raw {part} for {request_id}",
+                    "error": f"请求 {request_id} 没有可用的原始 {part}",
                 },
                 ensure_ascii=False,
                 default=str,
@@ -313,7 +313,7 @@ def _format_search_hits(content: str, pattern: str) -> dict[str, Any]:
     try:
         regex = re.compile(pattern)
     except re.error as exc:
-        return {"success": False, "error": f"Invalid regex: {exc}"}
+        return {"success": False, "error": f"无效的正则表达式：{exc}"}
 
     hits = []
     for match in regex.finditer(content):
@@ -405,7 +405,7 @@ async def repeat_request(
         replay = await _call(client, _do)
         if replay is None:
             return json.dumps(
-                {"success": False, "error": f"Request {request_id} not found"},
+                {"success": False, "error": f"未找到请求 {request_id}"},
                 ensure_ascii=False,
                 default=str,
             )

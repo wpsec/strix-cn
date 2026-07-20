@@ -27,22 +27,22 @@ def _do_finish(
         return {
             "success": False,
             "error": (
-                "This tool can only be used by the root/main agent. "
-                "If you are a subagent, use agent_finish instead"
+                "该工具只能由根代理 / 主代理调用。"
+                "如果你是子代理，请改用 agent_finish"
             ),
         }
 
     errors: list[str] = []
     if not executive_summary.strip():
-        errors.append("Executive summary cannot be empty")
+        errors.append("执行摘要不能为空")
     if not methodology.strip():
-        errors.append("Methodology cannot be empty")
+        errors.append("测试方法不能为空")
     if not technical_analysis.strip():
-        errors.append("Technical analysis cannot be empty")
+        errors.append("技术分析不能为空")
     if not recommendations.strip():
-        errors.append("Recommendations cannot be empty")
+        errors.append("修复建议不能为空")
     if errors:
-        return {"success": False, "error": "Validation failed", "errors": errors}
+        return {"success": False, "error": "校验失败", "errors": errors}
 
     try:
         from strix.report.state import get_global_report_state
@@ -53,8 +53,8 @@ def _do_finish(
             return {
                 "success": True,
                 "scan_completed": True,
-                "message": "Scan completed (not persisted)",
-                "warning": "Results could not be persisted - report state unavailable",
+                "message": "扫描已完成（未持久化）",
+                "warning": "结果未能持久化：报告状态不可用",
             }
         report_state.update_scan_final_fields(
             executive_summary=executive_summary.strip(),
@@ -65,7 +65,7 @@ def _do_finish(
         vuln_count = len(report_state.vulnerability_reports)
     except (ImportError, AttributeError) as e:
         logger.exception("finish_scan persistence failed")
-        return {"success": False, "error": f"Failed to complete scan: {e!s}"}
+        return {"success": False, "error": f"完成扫描失败：{e!s}"}
     else:
         logger.info(
             "finish_scan: completed scan with %d vulnerability report(s)",
@@ -74,7 +74,7 @@ def _do_finish(
         return {
             "success": True,
             "scan_completed": True,
-            "message": "Scan completed successfully",
+            "message": "扫描已成功完成",
             "vulnerabilities_found": vuln_count,
         }
 

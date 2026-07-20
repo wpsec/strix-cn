@@ -39,12 +39,12 @@ _CODE_LOCATION_FIELDS = (
 
 def _validate_file_path(path: str) -> str | None:
     if not path or not path.strip():
-        return "file path cannot be empty"
+        return "文件路径不能为空"
     p = PurePosixPath(path)
     if p.is_absolute():
-        return f"file path must be relative, got absolute: '{path}'"
+        return f"文件路径必须是相对路径，当前为绝对路径：'{path}'"
     if ".." in p.parts:
-        return f"file path must not contain '..': '{path}'"
+        return f"文件路径不能包含 '..'：'{path}'"
     return None
 
 
@@ -83,17 +83,17 @@ def _validate_code_locations(locations: list[dict[str, Any]]) -> list[str]:
     for i, loc in enumerate(locations):
         path_err = _validate_file_path(loc.get("file", ""))
         if path_err:
-            errors.append(f"code_locations[{i}]: {path_err}")
+            errors.append(f"code_locations[{i}]：{path_err}")
         start = loc.get("start_line")
         if not isinstance(start, int) or start < 1:
-            errors.append(f"code_locations[{i}]: start_line must be a positive integer")
+            errors.append(f"code_locations[{i}]：start_line 必须是正整数")
         end = loc.get("end_line")
         if end is None:
-            errors.append(f"code_locations[{i}]: end_line is required")
+            errors.append(f"code_locations[{i}]：缺少 end_line")
         elif not isinstance(end, int) or end < 1:
-            errors.append(f"code_locations[{i}]: end_line must be a positive integer")
+            errors.append(f"code_locations[{i}]：end_line 必须是正整数")
         elif isinstance(start, int) and end < start:
-            errors.append(f"code_locations[{i}]: end_line ({end}) must be >= start_line ({start})")
+            errors.append(f"code_locations[{i}]：end_line ({end}) 必须大于等于 start_line ({start})")
     return errors
 
 
@@ -104,7 +104,7 @@ def _extract_cve(cve: str) -> str:
 
 def _validate_cve(cve: str) -> str | None:
     if not re.match(r"^CVE-\d{4}-\d{4,}$", cve):
-        return f"invalid CVE format: '{cve}' (expected 'CVE-YYYY-NNNNN')"
+        return f"CVE 格式无效：'{cve}'（应为 'CVE-YYYY-NNNNN'）"
     return None
 
 
@@ -115,7 +115,7 @@ def _extract_cwe(cwe: str) -> str:
 
 def _validate_cwe(cwe: str) -> str | None:
     if not re.match(r"^CWE-\d+$", cwe):
-        return f"invalid CWE format: '{cwe}' (expected 'CWE-NNN')"
+        return f"CWE 格式无效：'{cwe}'（应为 'CWE-NNN'）"
     return None
 
 
@@ -140,16 +140,16 @@ def _calculate_cvss(breakdown: dict[str, str]) -> tuple[float, str, str]:
 
 
 _REQUIRED_FIELDS = {
-    "title": "Title cannot be empty",
-    "description": "Description cannot be empty",
-    "impact": "Impact cannot be empty",
-    "target": "Target cannot be empty",
-    "technical_analysis": "Technical analysis cannot be empty",
-    "poc_description": "PoC description cannot be empty",
-    "poc_script_code": "PoC script/code is REQUIRED - provide the actual exploit/payload",
-    "remediation_steps": "Remediation steps cannot be empty",
-    "evidence": "Evidence cannot be empty - provide concrete proof of the finding",
-    "assumptions": "Assumptions cannot be empty - state exploitability prerequisites",
+    "title": "标题不能为空",
+    "description": "漏洞描述不能为空",
+    "impact": "影响不能为空",
+    "target": "目标不能为空",
+    "technical_analysis": "技术分析不能为空",
+    "poc_description": "PoC 说明不能为空",
+    "poc_script_code": "必须提供真实可用的 PoC 脚本 / 代码，不能为空",
+    "remediation_steps": "修复建议不能为空",
+    "evidence": "证据不能为空，请提供可验证的漏洞证据",
+    "assumptions": "前提假设不能为空，请说明漏洞成立所依赖的条件",
 }
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
@@ -198,17 +198,17 @@ async def _do_create(  # noqa: PLR0912
     fix_effort = (fix_effort or "").strip().lower()
     if fix_effort not in _VALID_FIX_EFFORT:
         errors.append(
-            f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
+            f"无效的 fix_effort：{fix_effort!r}。必须是以下之一：{sorted(_VALID_FIX_EFFORT)}"
         )
 
     if not isinstance(cvss_breakdown, dict) or not cvss_breakdown:
-        errors.append("cvss_breakdown: must be an object with the 8 CVSS metrics")
+        errors.append("cvss_breakdown 必须是包含 8 个 CVSS 指标的对象")
         cvss_breakdown = {}
     else:
         for name, valid in _CVSS_VALID.items():
             value = cvss_breakdown.get(name)
             if value not in valid:
-                errors.append(f"Invalid {name}: {value}. Must be one of: {valid}")
+                errors.append(f"无效的 {name}：{value}。必须是以下之一：{valid}")
 
     parsed_locations = _normalize_code_locations(code_locations)
     if parsed_locations:
@@ -225,7 +225,7 @@ async def _do_create(  # noqa: PLR0912
             errors.append(cwe_err)
 
     if errors:
-        return {"success": False, "error": "Validation failed", "errors": errors}
+        return {"success": False, "error": "校验失败", "errors": errors}
 
     cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
 
@@ -237,8 +237,8 @@ async def _do_create(  # noqa: PLR0912
             logger.warning("No global report state; vulnerability report not persisted")
             return {
                 "success": True,
-                "message": f"Vulnerability report '{title}' created (not persisted)",
-                "warning": "Report could not be persisted - report state unavailable",
+                "message": f"漏洞报告“{title}”已创建（未持久化）",
+                "warning": "报告未能持久化：报告状态不可用",
             }
 
         from strix.report.dedupe import check_duplicate
@@ -265,8 +265,8 @@ async def _do_create(  # noqa: PLR0912
             return {
                 "success": False,
                 "error": (
-                    f"Potential duplicate of '{duplicate_title}' "
-                    f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
+                    f"疑似与“{duplicate_title}”重复 "
+                    f"(id={duplicate_id[:8]}...)，请勿重复报告同一漏洞"
                 ),
                 "duplicate_of": duplicate_id,
                 "duplicate_title": duplicate_title,
@@ -300,7 +300,7 @@ async def _do_create(  # noqa: PLR0912
         )
     except (ImportError, AttributeError) as e:
         logger.exception("create_vulnerability_report persistence failed")
-        return {"success": False, "error": f"Failed to create vulnerability report: {e!s}"}
+        return {"success": False, "error": f"创建漏洞报告失败：{e!s}"}
     else:
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
@@ -311,7 +311,7 @@ async def _do_create(  # noqa: PLR0912
         )
         return {
             "success": True,
-            "message": f"Vulnerability report '{title}' created successfully",
+            "message": f"漏洞报告“{title}”创建成功",
             "report_id": report_id,
             "severity": severity,
             "cvss_score": cvss_score,
@@ -707,7 +707,7 @@ async def _do_create_dependency(  # noqa: PLR0912
     }
     for name, value in required.items():
         if not str(value or "").strip():
-            errors.append(f"{name} cannot be empty")
+            errors.append(f"{name} 不能为空")
 
     parsed_cve = _extract_cve(cve or "")
     cve_err = _validate_cve(parsed_cve)
@@ -723,20 +723,19 @@ async def _do_create_dependency(  # noqa: PLR0912
     fix_effort = (fix_effort or "").strip().lower()
     if fix_effort not in _VALID_FIX_EFFORT:
         errors.append(
-            f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
+            f"无效的 fix_effort：{fix_effort!r}。必须是以下之一：{sorted(_VALID_FIX_EFFORT)}"
         )
 
     if advisory_cvss is None:
         errors.append(
-            "advisory_cvss is required: read the published advisory base score "
-            "(0.0-10.0) off the advisory (trivy CVSS / NVD / GHSA). Severity is "
-            "derived solely from it — do not omit it or the finding cannot be rated."
+            "advisory_cvss 是必填项：请从公告（如 Trivy CVSS / NVD / GHSA）读取"
+            " 0.0-10.0 的基础分值。严重度完全依赖该分值计算，缺失时无法评级。"
         )
     elif not 0.0 <= advisory_cvss <= 10.0:
-        errors.append(f"advisory_cvss must be between 0.0 and 10.0, got {advisory_cvss}")
+        errors.append(f"advisory_cvss 必须位于 0.0 到 10.0 之间，当前为 {advisory_cvss}")
 
     if errors:
-        return {"success": False, "error": "Validation failed", "errors": errors}
+        return {"success": False, "error": "校验失败", "errors": errors}
 
     cvss_score, severity = _dependency_severity(advisory_cvss)
     dependency_metadata = _build_dependency_metadata(
@@ -760,8 +759,8 @@ async def _do_create_dependency(  # noqa: PLR0912
             logger.warning("No global report state; dependency report not persisted")
             return {
                 "success": True,
-                "message": f"Dependency finding '{title}' created (not persisted)",
-                "warning": "Report could not be persisted - report state unavailable",
+                "message": f"依赖漏洞“{title}”已创建（未持久化）",
+                "warning": "报告未能持久化：报告状态不可用",
             }
 
         from strix.report.dedupe import check_duplicate
@@ -781,8 +780,8 @@ async def _do_create_dependency(  # noqa: PLR0912
             return {
                 "success": False,
                 "error": (
-                    f"Potential duplicate (id={duplicate_id[:8]}...) — "
-                    "do not re-report the same dependency finding"
+                    f"疑似重复项 (id={duplicate_id[:8]}...)，"
+                    "请勿重复报告相同的依赖漏洞"
                 ),
                 "duplicate_of": duplicate_id,
                 "confidence": dedupe.get("confidence", 0.0),
@@ -810,7 +809,7 @@ async def _do_create_dependency(  # noqa: PLR0912
         )
     except (ImportError, AttributeError) as e:
         logger.exception("create_dependency_report persistence failed")
-        return {"success": False, "error": f"Failed to create dependency report: {e!s}"}
+        return {"success": False, "error": f"创建依赖漏洞报告失败：{e!s}"}
     else:
         logger.info(
             "Dependency report created: id=%s cve=%s package=%s severity=%s",
@@ -821,7 +820,7 @@ async def _do_create_dependency(  # noqa: PLR0912
         )
         return {
             "success": True,
-            "message": f"Dependency finding '{title}' created successfully",
+            "message": f"依赖漏洞“{title}”创建成功",
             "report_id": report_id,
             "severity": severity,
             "cve": parsed_cve,

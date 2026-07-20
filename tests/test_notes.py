@@ -61,7 +61,7 @@ def test_create_note_returns_error_after_repeated_note_id_collisions(
 
     assert result == {
         "success": False,
-        "error": "Failed to generate a unique note ID",
+        "error": "生成唯一笔记 ID 失败",
         "note_id": None,
     }
     assert notes_tools._notes_storage == {"abcdef": {"content": "existing"}}
