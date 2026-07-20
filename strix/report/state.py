@@ -392,19 +392,19 @@ class ReportState:
         self.save_run_data(status=status)
 
     def _format_final_scan_result(self, scan_results: dict[str, Any]) -> str:
-        return f"""# Executive Summary
+        return f"""# 执行摘要
 
 {str(scan_results.get("executive_summary", "")).strip()}
 
-# Methodology
+# 测试方法
 
 {str(scan_results.get("methodology", "")).strip()}
 
-# Technical Analysis
+# 技术分析
 
 {str(scan_results.get("technical_analysis", "")).strip()}
 
-# Recommendations
+# 修复建议
 
 {str(scan_results.get("recommendations", "")).strip()}
 """

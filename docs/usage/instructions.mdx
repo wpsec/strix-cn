@@ -1,73 +1,73 @@
 ---
-title: "Custom Instructions"
-description: "Guide Strix with custom testing instructions"
+title: "自定义说明"
+description: "通过自定义指令引导 Strix 的测试行为"
 ---
 
-Use instructions to provide context, credentials, or focus areas for your scan.
+你可以通过说明（instructions）为扫描补充上下文、凭据或聚焦方向。`strix-cn` 默认推荐直接使用中文编写说明；当前分支也默认输出中文报告。如果你需要英文或双语结果，可以在说明里显式写明。
 
-## Inline Instructions
+## 行内说明
 
 ```bash
-strix --target https://app.com --instruction "Focus on authentication vulnerabilities"
+strix --target https://app.com --instruction "重点测试认证绕过、越权和找回密码流程"
 ```
 
-## File-Based Instructions
+## 文件说明
 
-For complex instructions, use a file:
+如果说明较复杂，建议放到文件中：
 
 ```bash
 strix --target https://app.com --instruction-file ./pentest-instructions.md
 ```
 
-## Common Use Cases
+## 常见使用方式
 
-### Authenticated Testing
-
-```bash
-strix --target https://app.com \
-  --instruction "Login with email: test@example.com, password: TestPass123"
-```
-
-### Focused Scope
-
-```bash
-strix --target https://api.example.com \
-  --instruction "Focus on IDOR vulnerabilities in the /api/users endpoints"
-```
-
-### Exclusions
+### 认证测试
 
 ```bash
 strix --target https://app.com \
-  --instruction "Do not test /admin or /internal endpoints"
+  --instruction "使用测试账号登录：admin@example.com / TestPass123，重点测试会话固定和越权"
 ```
 
-### API Testing
+### 聚焦范围
 
 ```bash
 strix --target https://api.example.com \
-  --instruction "Use API key header: X-API-Key: abc123. Focus on rate limiting bypass."
+  --instruction "重点测试 /api/users 相关接口中的 IDOR、批量赋值和水平越权"
 ```
 
-## Instruction File Example
+### 排除项
+
+```bash
+strix --target https://app.com \
+  --instruction "不要测试 /admin 和 /internal 路径，也不要触发短信与支付相关流程"
+```
+
+### API 测试
+
+```bash
+strix --target https://api.example.com \
+  --instruction "请求头带上 X-API-Key: abc123。重点测试限流绕过、签名校验和重放攻击。"
+```
+
+## 说明文件示例
 
 ```markdown instructions.md
-# Penetration Test Instructions
+# 渗透测试说明
 
-## Credentials
+## 凭据
 - Admin: admin@example.com / AdminPass123
 - User: user@example.com / UserPass123
 
-## Focus Areas
-1. IDOR in user profile endpoints
-2. Privilege escalation between roles
-3. JWT token manipulation
+## 重点关注
+1. 用户资料接口中的 IDOR
+2. 不同角色之间的提权
+3. JWT Token 篡改
 
-## Out of Scope
-- /health endpoints
-- Third-party integrations
+## 不在范围内
+- /health 接口
+- 第三方集成
 ```
 
 <Tip>
-Be specific. Good instructions help Strix prioritize the most valuable attack paths.
+说明越具体，Strix 越能优先探索最有价值的攻击路径。对于中文团队，直接用中文描述范围、账号、约束和输出要求通常最省心。
 </Tip>

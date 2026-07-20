@@ -11,17 +11,17 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Documentation",
+        "tab": "文档",
         "groups": [
           {
-            "group": "Getting Started",
+            "group": "开始使用",
             "pages": [
               "index",
               "quickstart"
             ]
           },
           {
-            "group": "Usage",
+            "group": "使用说明",
             "pages": [
               "usage/cli",
               "usage/scan-modes",
@@ -29,7 +29,7 @@
             ]
           },
           {
-            "group": "LLM Providers",
+            "group": "模型与兼容",
             "pages": [
               "llm-providers/overview",
               "llm-providers/openai",
@@ -43,14 +43,14 @@
             ]
           },
           {
-            "group": "Integrations",
+            "group": "集成",
             "pages": [
               "integrations/github-actions",
               "integrations/ci-cd"
             ]
           },
           {
-            "group": "Tools",
+            "group": "工具",
             "pages": [
               "tools/overview",
               "tools/browser",
@@ -60,7 +60,7 @@
             ]
           },
           {
-            "group": "Advanced",
+            "group": "高级",
             "pages": [
               "advanced/configuration",
               "advanced/skills",
@@ -70,7 +70,7 @@
         ]
       },
       {
-        "tab": "Cloud",
+        "tab": "云平台",
         "groups": [
           {
             "group": "Strix Cloud",
@@ -100,7 +100,7 @@
     "links": [],
     "primary": {
       "type": "button",
-      "label": "Try Strix Cloud",
+      "label": "试用 Strix Cloud",
       "href": "https://app.strix.ai"
     }
   },
@@ -123,7 +123,7 @@
   "appearance": {
     "default": "dark"
   },
-  "description": "Open-source AI Hackers to secure your Apps",
+  "description": "面向中文用户持续维护的 AI 安全代理分支",
   "background": {
     "decoration": "grid"
   }

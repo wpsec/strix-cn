@@ -1,116 +1,127 @@
-# Contributing to Strix
+# 参与贡献 Strix
 
-Thank you for your interest in contributing to Strix! This guide will help you get started with development and contributions.
+感谢你对 Strix 的关注。本文档用于帮助你快速进入开发与贡献流程。
 
-## 🚀 Development Setup
+## 分支定位
 
-### Prerequisites
+`strix-cn` 是面向中文用户的持续维护分支。提交改动时，请优先考虑以下方向：
+
+- 国内可访问、可落地的模型接入与兼容网关
+- Burp Suite / Burp 插件工作流兼容
+- macOS、Linux、Windows 与受限网络环境兼容性
+- 中文文档、中文说明与中文报告体验
+
+## 🚀 开发环境准备
+
+### 前置要求
 
 - Python 3.12+
-- Docker (running)
-- [uv](https://docs.astral.sh/uv/) (for dependency management)
+- Docker 已启动
+- [uv](https://docs.astral.sh/uv/)（用于依赖管理）
 - Git
 
-### Local Development
+### 本地开发
 
-1. **Clone the repository**
+1. **克隆仓库**
    ```bash
    git clone https://github.com/usestrix/strix.git
    cd strix
    ```
 
-2. **Install development dependencies**
+2. **安装开发依赖**
    ```bash
    make setup-dev
 
-   # or manually:
+   # 或手动执行：
    uv sync
    uv run pre-commit install
    ```
 
-3. **Configure your LLM provider**
+3. **配置 LLM 提供商**
    ```bash
-   export STRIX_LLM="openai/gpt-5.4"
+   export STRIX_LLM="openai/your-compatible-model"
    export LLM_API_KEY="your-api-key"
+   export LLM_API_BASE="https://your-gateway.example/v1"
    ```
 
-4. **Run Strix in development mode**
+4. **以开发模式运行 Strix**
    ```bash
    uv run strix --target https://example.com
    ```
 
-## 📚 Contributing Skills
+## 📚 贡献 Skills
 
-Skills are specialized knowledge packages that enhance agent capabilities. See [strix/skills/README.md](strix/skills/README.md) for detailed guidelines.
+Skills 是用于增强代理能力的专业知识包。详细规范请查看 [strix/skills/README.md](strix/skills/README.md)。
 
-### Quick Guide
+### 快速指引
 
-1. **Choose the right category** (`/vulnerabilities`, `/frameworks`, `/technologies`, etc.)
-2. **Create a** `.md` file with your skill content
-3. **Include practical examples** - Working payloads, commands, or test cases
-4. **Provide validation methods** - How to confirm findings and avoid false positives
-5. **Submit via PR** with clear description
+1. **选择合适的分类目录**（如 `/vulnerabilities`、`/frameworks`、`/technologies`）
+2. **创建 `.md` 文件** 并写入 skill 内容
+3. **提供可操作示例**，例如 payload、命令或测试用例
+4. **补充验证方法**，说明如何确认发现结果并避免误报
+5. **通过 PR 提交**，并写清楚背景与目标
 
-## 🔧 Contributing Code
+## 🔧 贡献代码
 
-### Pull Request Process
+### Pull Request 流程
 
-1. **Create an issue first** - Describe the problem or feature
-2. **Fork and branch** - Work from the `main` branch
-3. **Make your changes** - Follow existing code style
-4. **Write/update tests** - Ensure coverage for new features
-5. **Run quality checks** - `make check-all` should pass
-6. **Submit PR** - Link to issue and provide context
+1. **先创建 Issue**：描述问题或功能需求
+2. **Fork 并创建分支**：从你要贡献的维护线开始工作；若同步上游能力，请在描述中说明来源与适配范围
+3. **完成修改**：遵循项目现有代码风格
+4. **编写或更新测试**：确保新功能和修复有覆盖
+5. **运行质量检查**：`make check-all` 应通过
+6. **提交 PR**：关联 Issue，并提供足够上下文
 
-### PR Guidelines
+### PR 规范
 
-- **Clear description** - Explain what and why
-- **Small, focused changes** - One feature/fix per PR
-- **Include examples** - Show before/after behavior
-- **Update documentation** - If adding features
-- **Pass all checks** - Tests, linting, type checking
+- **描述清晰**：说明改了什么、为什么要改
+- **改动聚焦**：一个 PR 尽量只解决一个问题或功能
+- **带上示例**：尽量展示修改前后的行为差异
+- **同步更新文档**：若功能变化影响使用方式，请一起更新文档
+- **通过全部检查**：测试、lint、类型检查都应通过
 
-### Code Style
+### 代码风格
 
-- Follow PEP 8 with 100-character line limit
-- Use type hints for all functions
-- Write docstrings for public methods
-- Keep functions focused and small
-- Use meaningful variable names
+- 遵循 PEP 8，单行长度上限 100
+- 所有函数都应提供类型标注
+- 公共方法应编写 docstring
+- 保持函数职责单一、规模适中
+- 变量命名应清晰可读
 
-## 🐛 Reporting Issues
+## 🐛 提交问题
 
-When reporting bugs, please include:
+提交 Bug 时，请尽量附带以下信息：
 
-- Python version and OS
-- Strix version
-- LLMs being used
-- Full error traceback
-- Steps to reproduce
-- Expected vs actual behavior
+- Python 版本与操作系统
+- Strix 版本
+- 使用的 LLM
+- 完整错误堆栈
+- 复现步骤
+- 预期行为与实际行为
 
-## 💡 Feature Requests
+## 💡 功能建议
 
-We welcome feature ideas! Please:
+欢迎提出功能想法。建议在提交前：
 
-- Check existing issues first
-- Describe the use case clearly
-- Explain why it would benefit users
-- Consider implementation approach
-- Be open to discussion
+- 先搜索是否已有类似 Issue
+- 清楚描述使用场景
+- 说明这个能力能为用户带来什么价值
+- 简要考虑实现方向
+- 保持开放讨论
 
-## 🤝 Community
+## 🤝 社区
 
-- **Discord**: [Join our community](https://discord.gg/strix-ai)
-- **Issues**: [GitHub Issues](https://github.com/usestrix/strix/issues)
+- **Discord**：[加入社区](https://discord.gg/strix-ai)
+- **Issues**：[GitHub Issues](https://github.com/usestrix/strix/issues)
 
-## ✨ Recognition
+## ✨ 致谢
 
-We value all contributions! Contributors will be:
-- Listed in release notes
-- Thanked in our Discord
-- Added to contributors list (coming soon)
+我们重视每一份贡献。贡献者将会：
+
+- 出现在发行说明中
+- 在 Discord 社区中获得感谢
+- 被加入贡献者列表（即将推出）
 
 ---
 
-**Questions?** Reach out on [Discord](https://discord.gg/strix-ai) or create an issue. We're here to help!
+**有问题？** 欢迎前往 [Discord](https://discord.gg/strix-ai) 交流，或直接创建 Issue。

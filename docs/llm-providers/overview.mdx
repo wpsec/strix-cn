@@ -1,70 +1,91 @@
 ---
-title: "Overview"
-description: "Configure your AI model for Strix"
+title: "模型概览"
+description: "为 Strix 配置适合你环境的模型接入方式"
 ---
 
-Strix uses [LiteLLM](https://docs.litellm.ai/docs/providers) for model compatibility, supporting 100+ LLM providers.
+Strix 通过 [LiteLLM](https://docs.litellm.ai/docs/providers) 提供模型兼容层，支持大量 LLM 提供商。`strix-cn` 会优先围绕中文团队常见的三类接入方式持续维护：OpenAI-compatible 网关、可直连的兼容提供商，以及本地 / 内网模型服务。
 
-## Configuration
+## 推荐接入路径
 
-Set your model and API key:
+| 路径 | 适用场景 | 配置方式 |
+|------|----------|----------|
+| OpenAI-compatible 网关 | 国内可访问接口、企业统一网关、自建中转 | `openai/<your-model>` + `LLM_API_BASE` |
+| 兼容提供商 | 想快速接入现成模型服务 | 参考 OpenRouter、Novita 等页面 |
+| 本地模型 | 内网、隐私优先、离线或半离线环境 | `ollama/<model>` 或 `openai/<model>` + 本地 `LLM_API_BASE` |
 
-| Model             | Provider      | Configuration                    |
-| ----------------- | ------------- | -------------------------------- |
-| GPT-5.4           | OpenAI        | `openai/gpt-5.4`                 |
-| Claude Sonnet 4.6 | Anthropic     | `anthropic/claude-sonnet-4-6`    |
-| Gemini 3 Pro      | Google Vertex | `vertex_ai/gemini-3-pro-preview` |
+## OpenAI-compatible 网关
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openai/your-compatible-model"
 export LLM_API_KEY="your-api-key"
+export LLM_API_BASE="https://your-gateway.example/v1"
 ```
 
-## Local Models
+这种方式适合：
 
-Run models locally with [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server:
+- 国内可访问的模型网关
+- 企业自建统一模型入口
+- 已有 OpenAI-compatible 中转或审计层的团队
+
+## 本地模型
+
+你也可以使用 [Ollama](https://ollama.com)、[LM Studio](https://lmstudio.ai) 或其他本地服务：
 
 ```bash
-export STRIX_LLM="ollama/llama4"
+export STRIX_LLM="ollama/qwen3-vl"
 export LLM_API_BASE="http://localhost:11434"
 ```
 
-See the [Local Models guide](/llm-providers/local) for setup instructions and recommended models.
+如果你使用 LM Studio、vLLM 或其他 OpenAI-compatible 本地服务，也可以采用：
 
-## Provider Guides
+```bash
+export STRIX_LLM="openai/local-model"
+export LLM_API_BASE="http://localhost:1234/v1"
+```
+
+更多细节可查看 [本地模型指南](/llm-providers/local)。
+
+## 推荐阅读
 
 <CardGroup cols={2}>
-  <Card title="OpenAI" href="/llm-providers/openai">
-    GPT-5.4 models.
-  </Card>
-  <Card title="Anthropic" href="/llm-providers/anthropic">
-    Claude Opus, Sonnet, and Haiku.
+  <Card title="OpenAI / 兼容接口" href="/llm-providers/openai">
+    查看标准 OpenAI 配置和兼容 base URL 用法。
   </Card>
   <Card title="OpenRouter" href="/llm-providers/openrouter">
-    Access 100+ models through a single API.
+    通过单一入口访问多家模型提供商。
+  </Card>
+  <Card title="Novita AI" href="/llm-providers/novita">
+    使用 OpenAI-compatible 方式接入兼容模型服务。
+  </Card>
+  <Card title="本地模型" href="/llm-providers/local">
+    查看 Ollama、LM Studio 和本地部署建议。
+  </Card>
+  <Card title="Anthropic" href="/llm-providers/anthropic">
+    如果你的环境可直接访问上游，可继续使用 Claude 系列。
   </Card>
   <Card title="Google Vertex AI" href="/llm-providers/vertex">
-    Gemini 3 models via Google Cloud.
+    如果你的环境已接入 GCP，可继续使用 Gemini。
   </Card>
   <Card title="AWS Bedrock" href="/llm-providers/bedrock">
-    Claude and Titan models via AWS.
+    适合已在 AWS 内部统一管理模型访问的团队。
   </Card>
   <Card title="Azure OpenAI" href="/llm-providers/azure">
-    GPT-5.4 via Azure.
-  </Card>
-  <Card title="Local Models" href="/llm-providers/local">
-    Llama 4, Mistral, and self-hosted models.
+    适合 Azure 内部合规与资源管理场景。
   </Card>
 </CardGroup>
 
-## Model Format
+## 模型格式
 
-Use LiteLLM's `provider/model-name` format:
+统一使用 LiteLLM 的 `provider/model-name` 形式：
 
 ```
-openai/gpt-5.4
+openai/your-compatible-model
 anthropic/claude-sonnet-4-6
 vertex_ai/gemini-3-pro-preview
 bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0
-ollama/llama4
+ollama/qwen3-vl
 ```
+
+<Tip>
+  如果你更关心国内可达性与稳定性，优先从 OpenAI-compatible 网关、本地模型和兼容提供商开始接入，通常比直接依赖单一海外上游更容易落地。
+</Tip>

@@ -1,9 +1,9 @@
 ---
-title: "Scan Modes"
-description: "Choose the right scan depth for your use case"
+title: "扫描模式"
+description: "根据场景选择合适的扫描深度"
 ---
 
-Strix offers three scan modes to balance speed and thoroughness.
+Strix 提供三种扫描模式，用于平衡速度与完整性。
 
 ## Quick
 
@@ -11,12 +11,12 @@ Strix offers three scan modes to balance speed and thoroughness.
 strix --target ./app --scan-mode quick
 ```
 
-Fast checks for obvious vulnerabilities. Best for:
-- CI/CD pipelines
-- Pull request validation
-- Rapid smoke tests
+用于快速发现明显漏洞。适合：
+- CI/CD 流水线
+- Pull Request 校验
+- 快速冒烟测试
 
-**Duration**: Minutes
+**耗时**：数分钟
 
 ## Standard
 
@@ -24,14 +24,14 @@ Fast checks for obvious vulnerabilities. Best for:
 strix --target ./app --scan-mode standard
 ```
 
-Balanced testing for routine security reviews. Best for:
-- Regular security assessments
-- Pre-release validation
-- Development milestones
+在速度和覆盖之间取得平衡，适合常规安全评审。适用于：
+- 周期性安全检查
+- 发布前验证
+- 研发阶段里程碑检查
 
-**Duration**: 30 minutes to 1 hour
+**耗时**：约 30 分钟到 1 小时
 
-**White-box behavior**: Uses source-aware mapping and static triage to prioritize dynamic exploit validation paths.
+**白盒行为**：使用源码感知映射与静态预筛选，优先验证最值得动态利用的路径。
 
 ## Deep
 
@@ -39,24 +39,24 @@ Balanced testing for routine security reviews. Best for:
 strix --target ./app --scan-mode deep
 ```
 
-Thorough penetration testing. Best for:
-- Comprehensive security audits
-- Pre-production reviews
-- Critical application assessments
+面向更完整的渗透测试流程。适合：
+- 全面安全审计
+- 生产前评审
+- 关键应用安全评估
 
-**Duration**: 1-4 hours depending on target complexity
+**耗时**：通常为 1 到 4 小时，取决于目标复杂度
 
-**White-box behavior**: Runs broad source-aware triage (`semgrep`, AST structural search, secrets, supply-chain checks) and then systematically validates top candidates dynamically.
+**白盒行为**：执行更广泛的源码感知预筛选（`semgrep`、AST 结构搜索、密钥检查、供应链检查等），随后系统化地对高优先级候选点做动态验证。
 
 <Note>
-Deep mode is the default. It explores edge cases, chained vulnerabilities, and complex attack paths.
+`deep` 是默认模式。它会更积极地探索边界情况、漏洞链和复杂攻击路径。
 </Note>
 
-## Choosing a Mode
+## 如何选择
 
-| Scenario | Recommended Mode |
-|----------|------------------|
-| Every PR | Quick |
-| Weekly scans | Standard |
-| Before major release | Deep |
-| Bug bounty hunting | Deep |
+| 场景 | 推荐模式 |
+|------|----------|
+| 每个 PR | Quick |
+| 每周扫描 | Standard |
+| 大版本发布前 | Deep |
+| 漏洞赏金研究 | Deep |

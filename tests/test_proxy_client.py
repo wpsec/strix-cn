@@ -154,3 +154,38 @@ def test_ctx_client_returns_client_when_present() -> None:
 def test_ctx_client_returns_none_without_client() -> None:
     assert tools._ctx_client(cast("Any", _Ctx({}))) is None
     assert tools._ctx_client(cast("Any", _Ctx(None))) is None
+
+
+def test_coerce_sitemap_entry_id_accepts_numeric_string() -> None:
+    value, error = caido_api._coerce_sitemap_entry_id("42", field_name="parent_id")
+    assert value == 42
+    assert error is None
+
+
+def test_coerce_sitemap_entry_id_rejects_request_style_id() -> None:
+    value, error = caido_api._coerce_sitemap_entry_id("req_123", field_name="parent_id")
+    assert value is None
+    assert error is not None
+    assert "numeric sitemap entry ID" in error
+
+
+async def test_list_sitemap_with_client_rejects_invalid_parent_id_without_querying() -> None:
+    class _GraphQL:
+        def __init__(self) -> None:
+            self.called = False
+
+        async def query(self, *_args: Any, **_kwargs: Any) -> Any:
+            self.called = True
+            raise AssertionError("query should not run for invalid parent_id")
+
+    class _SitemapClient:
+        def __init__(self) -> None:
+            self.graphql = _GraphQL()
+
+    client = _SitemapClient()
+
+    result = await caido_api.list_sitemap_with_client(cast("Any", client), parent_id="req_123")
+
+    assert result["success"] is False
+    assert "numeric sitemap entry ID" in result["error"]
+    assert client.graphql.called is False

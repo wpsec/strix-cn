@@ -369,6 +369,11 @@ async def create_vulnerability_report(
       prompts, internal errors / stack traces, or tester environment.
       Never leak internal identifiers (proxy request IDs, internal
       report IDs) into any field.
+    - **Language**: unless the user explicitly requests another
+      language, every customer-facing narrative field must be written in
+      Simplified Chinese. Keep literal technical identifiers unchanged,
+      including CVE/CWE IDs, URLs, code, payloads, headers, and file
+      paths.
     - Tone: formal, objective, third-person, vendor-neutral, concise.
       Avoid internal-guidance headings like "QUICK", "Approach", or
       "Techniques" that read like an engineering runbook rather than a
@@ -660,11 +665,11 @@ def _build_dependency_evidence(
     fixed_version: str | None,
 ) -> str:
     evidence = (
-        f"**Advisory evidence:** `{cve}` applies to `{package_name}` "
-        f"at installed version `{installed_version}`."
+        f"**公告证据：** `{cve}` 影响当前安装的 `{package_name}` "
+        f"版本 `{installed_version}`。"
     )
     if fixed_version and fixed_version.strip():
-        evidence += f" The advisory is fixed in `{fixed_version.strip()}`."
+        evidence += f" 该公告显示可通过升级到 `{fixed_version.strip()}` 修复。"
     return evidence
 
 
@@ -872,6 +877,9 @@ async def create_dependency_report(
     **Formatting**: use markdown in text fields (``**bold**``, ``inline
     code`` for package/version identifiers, fenced code blocks for
     manifest excerpts). No internal paths/tooling/agent references.
+    Unless the user explicitly requests another language, write all
+    customer-facing narrative fields in Simplified Chinese while keeping
+    package names, CVE/CWE IDs, URLs, and code snippets unchanged.
 
     Args:
         title: e.g. ``"CVE-2024-1234 in lodash 4.17.20 (prototype pollution)"``.

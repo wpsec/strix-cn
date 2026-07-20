@@ -612,6 +612,29 @@ def _clean_sitemap_response(resp: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _coerce_sitemap_entry_id(raw_id: str | int | None, *, field_name: str) -> tuple[int | None, str | None]:
+    """Normalize a sitemap entry ID to the numeric form Caido expects."""
+    if raw_id is None:
+        return None, None
+    if isinstance(raw_id, bool):
+        return None, (
+            f"Invalid {field_name}: {raw_id!r}. Expected a numeric sitemap entry ID "
+            "returned by list_sitemap."
+        )
+    if isinstance(raw_id, int):
+        return raw_id, None
+
+    value = str(raw_id).strip()
+    if not value:
+        return None, f"Invalid {field_name}: empty value. Expected a numeric sitemap entry ID."
+    if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
+        return int(value), None
+    return None, (
+        f"Invalid {field_name}: {raw_id!r}. Expected a numeric sitemap entry ID "
+        "returned by list_sitemap, not a request ID."
+    )
+
+
 async def list_sitemap_with_client(
     client: CaidoClient,
     *,
@@ -628,9 +651,12 @@ async def list_sitemap_with_client(
     client-side.
     """
     if parent_id:
+        normalized_parent_id, error = _coerce_sitemap_entry_id(parent_id, field_name="parent_id")
+        if error is not None:
+            return {"success": False, "error": error}
         raw = await client.graphql.query(
             _SITEMAP_DESCENDANTS_QUERY,
-            variables={"parentId": parent_id, "depth": depth},
+            variables={"parentId": normalized_parent_id, "depth": depth},
         )
         data = raw.get("sitemapDescendantEntries") or {}
     else:
@@ -669,7 +695,11 @@ async def view_sitemap_entry_with_client(
     client: CaidoClient,
     entry_id: str,
 ) -> dict[str, Any]:
-    raw = await client.graphql.query(_SITEMAP_ENTRY_QUERY, variables={"id": entry_id})
+    normalized_entry_id, error = _coerce_sitemap_entry_id(entry_id, field_name="entry_id")
+    if error is not None:
+        return {"success": False, "error": error}
+
+    raw = await client.graphql.query(_SITEMAP_ENTRY_QUERY, variables={"id": normalized_entry_id})
     entry = raw.get("sitemapEntry")
     if not entry:
         return {"success": False, "error": f"Sitemap entry {entry_id} not found"}

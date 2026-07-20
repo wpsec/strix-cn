@@ -1,36 +1,46 @@
 ---
-title: "HTTP Proxy"
-description: "Caido-powered proxy for request interception and replay"
+title: "HTTP 代理"
+description: "基于 Caido 的请求拦截与重放，并兼顾 Burp 工作流兼容"
 ---
 
-Strix includes [Caido](https://caido.io), a modern HTTP proxy built for security testing. All browser traffic flows through Caido, giving the agent full control over requests and responses.
+Strix 当前内置 [Caido](https://caido.io) 作为自动化 HTTP 代理。所有浏览器流量都会经过它，代理因此可以完整观察和操作请求与响应。
 
-## Capabilities
+`strix-cn` 对这块的维护策略是：
 
-| Feature          | Description                                  |
-| ---------------- | -------------------------------------------- |
-| Request Capture  | Log all HTTP/HTTPS traffic automatically     |
-| Request Replay   | Repeat any request with modifications        |
-| HTTPQL           | Query captured traffic with powerful filters |
-| Scope Management | Focus on specific domains or paths           |
-| Sitemap          | Visualize the discovered attack surface      |
+- 自动化扫描与回放能力继续以 Caido 为核心
+- 文档和使用方式优先兼容 Burp Suite 及其常见手工测试流程
+- 对“代理链路、系统代理、网络受限环境、跨平台运行差异”持续做兼容性修复
 
-## HTTPQL Filtering
+<Note>
+  这里说的 “Burp 工作流兼容” 指的是优先让 Strix 更容易和现有 Burp 手工验证流程配合使用，并不表示当前已经内置所有 Burp 插件或完全替代 Burp。
+</Note>
 
-Query captured requests using Caido's HTTPQL syntax
+## 能力概览
 
-## Request Replay
+| 能力 | 说明 |
+|------|------|
+| 请求捕获 | 自动记录 HTTP / HTTPS 流量 |
+| 请求重放 | 带修改重新发送已捕获请求 |
+| HTTPQL | 用过滤语法查询代理流量 |
+| Scope 管理 | 聚焦指定域名、路径或资产 |
+| Sitemap | 以树结构浏览发现到的攻击面 |
 
-The agent can take any captured request and replay it with modifications:
+## HTTPQL 过滤
 
-- Change path parameters (test for IDOR)
-- Modify request body (test for injection)
-- Add/remove headers (test for auth bypass)
-- Alter cookies (test for session issues)
+你可以使用 Caido 的 HTTPQL 语法查询已捕获请求，用于快速定位登录流、敏感接口、异常状态码和候选攻击面。
 
-## Python Integration
+## 请求重放
 
-Proxy helpers are available to sandbox Python scripts through the image-baked `caido_api` module. This enables powerful scripted security testing:
+代理可以取任意一条已捕获请求并带修改重放，例如：
+
+- 修改路径参数，测试 IDOR
+- 修改请求体，测试注入类问题
+- 增删请求头，测试鉴权绕过
+- 调整 Cookie，测试会话问题
+
+## Python 集成
+
+沙箱内的 Python 脚本可以直接使用镜像内置的 `caido_api` 模块，从而执行脚本化安全测试：
 
 ```python
 import asyncio
@@ -39,16 +49,16 @@ from caido_api import list_requests, repeat_request, view_request
 
 
 async def main():
-    # List recent POST requests
+    # 列出最近的 POST 请求
     post_requests = await list_requests(
         httpql_filter='req.method.eq:"POST"',
         first=20,
     )
 
-    # View a specific request
+    # 查看一条指定请求
     request_details = await view_request("req_123", part="request")
 
-    # Replay with modified payload
+    # 带修改重放
     response = await repeat_request(
         "req_123",
         modifications={"body": '{"user_id": "admin"}'},
@@ -59,28 +69,25 @@ async def main():
 asyncio.run(main())
 ```
 
-### Available Functions
+### 可用函数
 
-| Function               | Description                                |
-| ---------------------- | ------------------------------------------ |
-| `list_requests()`      | Query captured traffic with HTTPQL filters |
-| `view_request()`       | Get full request/response details          |
-| `repeat_request()`     | Replay a request with modifications        |
-| `list_sitemap()`       | Browse the request-tree view of discovered surface |
-| `view_sitemap_entry()` | Inspect one sitemap entry + its related requests |
-| `scope_rules()`        | Manage proxy scope (allowlist/denylist)    |
+| 函数 | 说明 |
+|------|------|
+| `list_requests()` | 使用 HTTPQL 过滤并查询已捕获流量 |
+| `view_request()` | 查看完整请求 / 响应内容 |
+| `repeat_request()` | 带修改重放请求 |
+| `list_sitemap()` | 浏览按树组织的攻击面结构 |
+| `view_sitemap_entry()` | 查看单个 sitemap 节点及相关请求 |
+| `scope_rules()` | 管理代理 scope（allowlist / denylist） |
 
-For one-off arbitrary requests, use shell tooling like `curl` — the
-sandbox's `HTTP_PROXY` env routes the traffic through Caido
-automatically, so it lands in `list_requests` and can be replayed via
-`repeat_request`.
+如果你只是想发一条临时请求，也可以直接使用 `curl` 等 Shell 工具。沙箱里的 `HTTP_PROXY` 环境变量会自动把这类流量送入 Caido，因此它同样会出现在 `list_requests` 结果中，也能继续用 `repeat_request` 重放。
 
-### Example: Automated IDOR Testing
+### 示例：自动化 IDOR 测试
 
 ```python
 import asyncio
 
-# Get all requests to user endpoints
+# 获取所有用户相关接口请求
 from caido_api import list_requests, repeat_request
 
 
@@ -104,30 +111,36 @@ async def main():
 asyncio.run(main())
 ```
 
-## Human-in-the-Loop
+## 人机协同
 
-Strix exposes the Caido proxy to your host machine, so you can interact with it alongside the automated scan. When the sandbox starts, the Caido URL is displayed in the TUI sidebar — click it to copy, then open it in Caido Desktop.
+Strix 会把 Caido 代理暴露给宿主机，因此你可以在自动化扫描进行的同时接入手工验证流程。沙箱启动后，TUI 侧边栏会显示 Caido URL；复制后可直接在 Caido Desktop 中打开。
 
-### Accessing Caido
+### 访问 Caido
 
-1. Start a scan as usual
-2. Look for the **Caido** URL in the sidebar stats panel (e.g. `localhost:52341`)
-3. Open the URL in Caido Desktop
-4. Click **Continue as guest** to access the instance
+1. 像平常一样启动扫描
+2. 在侧边栏状态面板里找到 **Caido** URL，例如 `localhost:52341`
+3. 在 Caido Desktop 中打开该地址
+4. 点击 **Continue as guest** 进入实例
 
-### What You Can Do
+### 可以做什么
 
-- **Inspect traffic** — Browse all HTTP/HTTPS requests the agent is making in real time
-- **Replay requests** — Take any captured request and resend it with your own modifications
-- **Intercept and modify** — Pause requests mid-flight, edit them, then forward
-- **Explore the sitemap** — See the full attack surface the agent has discovered
-- **Manual testing** — Use Caido's tools to test findings the agent reports, or explore areas it hasn't reached
+- **检查流量**：实时查看代理正在发出的 HTTP / HTTPS 请求
+- **重放请求**：拿任意捕获请求自行修改后重发
+- **拦截与编辑**：在转发前暂停并修改请求
+- **浏览 sitemap**：查看代理已经发现的攻击面树
+- **手工验证**：围绕代理已发现的问题继续深入测试
 
-This turns Strix from a fully automated scanner into a collaborative tool — the agent handles the heavy lifting while you focus on the interesting parts.
+这样一来，Strix 就不只是全自动扫描器，而是可以和人工验证配合使用的协作式工具：代理负责铺开攻击面、收集流量和执行批量测试，你可以把精力放在高价值的手工确认上。
+
+## 与 Burp 工作流的关系
+
+- **当前内置引擎**：自动化代理能力由 Caido 提供。
+- **推荐配合方式**：用 Strix 负责发现与批量回放，用 Burp Suite 负责团队已经沉淀好的手工测试步骤、插件验证和深度分析。
+- **文档维护方向**：后续会优先补齐 Caido 与 Burp 之间的协作说明、数据口径和常见操作习惯差异。
 
 ## Scope
 
-Create scopes to filter traffic to relevant domains:
+你可以通过 scope 规则把流量聚焦到相关域名：
 
 ```
 Allowlist: ["api.example.com", "*.example.com"]

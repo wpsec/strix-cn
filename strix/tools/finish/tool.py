@@ -150,6 +150,11 @@ async def finish_scan(
       Never leak internal identifiers (proxy request IDs, internal
       vulnerability report IDs, or any system-generated IDs) into any
       field.
+    - **Language**: unless the user explicitly requests another
+      language, all customer-facing report prose, headings, labels, and
+      lists must be written in Simplified Chinese. Keep CVE/CWE IDs,
+      URLs, payloads, code, protocol fields, and other literal
+      technical identifiers unchanged.
     - Tone: formal, third-person, objective, concise. This is a
       consultant deliverable, not an engineering log.
     - Each section has a specific role:
@@ -171,11 +176,13 @@ async def finish_scan(
 
     - **Formatting — use markdown in every field.** These fields may be
       rendered into generated reports, so structure them clearly: lead
-      each section with a short ``# Heading``, use ``**bold**`` for labels/emphasis,
-      ``inline code`` for identifiers/paths/parameters, bullet or
-      numbered lists for enumerations, and fenced code blocks
-      (```` ```language ````) for any code/payload excerpts. Never emit
-      one flat wall of prose or leave code unformatted.
+      each section with a short ``# 标题`` (for default Chinese output,
+      use headings such as ``# 执行摘要`` / ``# 测试方法`` / ``# 技术分析`` /
+      ``# 修复建议``), use ``**bold**`` for labels/emphasis, ``inline
+      code`` for identifiers/paths/parameters, bullet or numbered lists
+      for enumerations, and fenced code blocks (```` ```language ````)
+      for any code/payload excerpts. Never emit one flat wall of prose
+      or leave code unformatted.
     - If **zero** vulnerabilities were found, say so plainly and
       characterize the posture positively; ``technical_analysis`` should
       summarize the areas tested and confirm no issues, and
@@ -184,7 +191,7 @@ async def finish_scan(
     Example (abbreviated — mirror this structure, not the wording)::
 
         executive_summary:
-            # Executive Summary
+            # 执行摘要
 
             An external assessment of the **Acme Customer Portal**
             identified multiple weaknesses that could lead to
@@ -201,7 +208,7 @@ async def finish_scan(
             - Potential exposure of customer records across tenants.
 
         methodology:
-            # Methodology
+            # 测试方法
 
             Conducted per the **OWASP WSTG**.
 
@@ -212,7 +219,7 @@ async def finish_scan(
             and tenant-isolation testing, input/SSRF testing.
 
         technical_analysis:
-            # Technical Analysis
+            # 技术分析
 
             **Severity model** reflects exploitability x impact.
 
@@ -225,7 +232,7 @@ async def finish_scan(
             no deny-by-default egress policy.
 
         recommendations:
-            # Recommendations
+            # 修复建议
 
             **Immediate**
             1. Remediate SSRF: enforce a destination allowlist,

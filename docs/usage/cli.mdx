@@ -1,120 +1,118 @@
 ---
-title: "CLI Reference"
-description: "Command-line options for Strix"
+title: "CLI 参考"
+description: "Strix 的命令行选项说明"
 ---
 
-## Basic Usage
+## 基本用法
 
 ```bash
 strix (--target <target> | --target-list <path> | --mount <path>) [options]
 ```
 
-## Options
+## 选项
 
 <ParamField path="--target, -t" type="string">
-  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target`, `--target-list`, or `--mount`.
+  指定测试目标。支持 URL、仓库、本地目录、域名或 IP 地址。可重复传入多个 `--target`。新建扫描时，`--target`、`--target-list` 或 `--mount` 三者至少提供一个。
 </ParamField>
 
 <ParamField path="--target-list" type="string">
-  Path to a file containing targets, one per non-empty, non-comment line. Lines starting with `#` are ignored. Can be specified multiple times and combined with `--target`.
+  指向目标列表文件的路径。文件中每个非空、非注释行表示一个目标。以 `#` 开头的行会被忽略。可重复传入，并可与 `--target` 组合使用。
 </ParamField>
 
 <ParamField path="--mount" type="string">
-  Bind-mount a local directory into the sandbox (read-only) instead of copying it in file-by-file. Use this for large repositories that are too big to stream into the container. Can be specified multiple times.
+  将本地目录以只读方式 bind-mount 到沙箱，而不是逐文件复制。适用于体积过大、不适合流式复制进容器的大型仓库。可重复传入。
 
-  Strix copies local `--target` directories into the sandbox one file at a time, which stalls on very large trees. When a local target exceeds the copy limit (see `STRIX_MAX_LOCAL_COPY_MB`, default 1024 MB) Strix exits early and asks you to re-run with `--mount`.
+  对于本地 `--target` 目录，Strix 默认逐文件复制到沙箱。当目录体积超过复制上限（见 `STRIX_MAX_LOCAL_COPY_MB`，默认 1024 MB）时，Strix 会提前退出，并提示你改用 `--mount` 重新执行。
 
   <Note>
-    The mount is read-only to protect your source from accidental modification. This is not a hard security boundary: a root process inside the container can remount it writable, so treat `--mount` as "scan my own code", not as isolation from untrusted code.
+    该挂载默认是只读的，用于降低误修改源码的风险。但它不是强安全隔离边界：容器内的 root 进程理论上可以重新挂载为可写。因此 `--mount` 更适合“扫描我自己的代码”，而不是“把不可信代码与主机彻底隔离”。
   </Note>
 
   <Note>
-    The size pre-flight only covers local directory targets. Remote repositories (cloned at scan time) are not size-checked.
+    预检测仅覆盖本地目录目标。远程仓库（扫描时动态克隆）不会做体积检查。
   </Note>
 </ParamField>
 
 <ParamField path="--instruction" type="string">
-  Custom instructions for the scan. Use for credentials, focus areas, or specific testing approaches.
+  为本次扫描提供自定义说明。可用于传递凭据、聚焦测试范围或指定测试方式。当前分支推荐直接使用中文编写，报告默认也会输出为中文。
 </ParamField>
 
 <ParamField path="--instruction-file" type="string">
-  Path to a file containing detailed instructions.
+  指向详细说明文件的路径。适合保存较长的中文测试范围、凭据、排除项和输出要求。
 </ParamField>
 
 <ParamField path="--scan-mode, -m" type="string" default="deep">
-  Scan depth: `quick`, `standard`, or `deep`.
+  扫描深度，可选 `quick`、`standard` 或 `deep`。
 </ParamField>
 
 <ParamField path="--scope-mode" type="string" default="auto">
-  Code scope mode: `auto` (enable PR diff-scope in CI/headless runs), `diff` (force changed-files scope), or `full` (disable diff-scope).
+  代码范围模式：`auto`（在 CI / 无头模式下自动启用 PR diff-scope）、`diff`（强制只看变更文件）、`full`（关闭 diff-scope）。
 </ParamField>
 
 <ParamField path="--diff-base" type="string">
-  Target branch or commit to compare against (e.g., `origin/main`). Defaults to the repository's default branch.
+  指定比对的目标分支或提交，例如 `origin/main`。默认使用仓库的默认分支。
 </ParamField>
 
 <ParamField path="--non-interactive, -n" type="boolean">
-  Run in headless mode without TUI. Ideal for CI/CD.
+  以无头模式运行，不启动 TUI。适合 CI/CD。
 </ParamField>
 
 <ParamField path="--config" type="string">
-  Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
+  指向自定义配置文件（JSON）的路径，用于替代 `~/.strix/cli-config.json`。
 </ParamField>
 
 <ParamField path="--max-budget-usd" type="number">
-  Maximum LLM spend in USD for the whole scan, counted cumulatively across the
-  root agent and every child agent. The budget is checked after each model
-  response; once the running cost reaches the threshold, the scan stops cleanly
-  with a `stopped` status (not a failure) and the sandbox is torn down.
+  为整次扫描设置 LLM 总预算上限（美元）。该预算会累计统计根代理与所有子代理的消耗。系统会在每次模型响应结束后检查预算；一旦累计成本达到阈值，扫描会以 `stopped` 状态干净停止，而不是失败，并同时销毁沙箱。
 
-  Must be greater than `0`. Omit the flag for no limit.
+  该值必须大于 `0`。不传入则表示不限制预算。
 
-  **Limitations**
+  **限制说明**
 
-  - The check fires *after* a response is returned, so the final spend can
-    slightly overshoot the limit by any calls already in flight when the
-    threshold is crossed (most relevant with several child agents running
-    concurrently).
-  - Cost is a best-effort estimate derived from token usage and model pricing;
-    providers that do not expose priced usage may under-count.
-  - For LiteLLM-routed models, Strix enables streaming success callbacks to
-    capture provider-reported cost. Message content remains excluded, but
-    third-party LiteLLM callbacks configured in the same process can receive
-    other streaming metadata such as model names, request IDs, and token
-    counts.
+  - 检查发生在响应返回之后，因此若阈值被跨越时仍有请求在飞，最终花费可能会略微超出预算，尤其是在多个子代理并发运行时更明显。
+  - 成本是基于 token 使用量与模型价格进行的尽力估算；若某些提供商不返回带价格的信息，统计可能偏低。
+  - 对于通过 LiteLLM 路由的模型，Strix 会开启流式成功回调来捕获提供商上报的成本。消息正文不会被纳入，但同一进程中配置的第三方 LiteLLM 回调可能会收到其他流式元数据，例如模型名、请求 ID 和 token 计数。
 </ParamField>
 
-## Examples
+## 示例
+
+<Note>
+  如果你使用国内可访问的兼容网关、自建模型入口或本地模型，优先通过 `STRIX_LLM` + `LLM_API_BASE` 配置模型；如果安装源或模型接口需要代理，可在运行前设置 `HTTP_PROXY`、`HTTPS_PROXY` 和 `ALL_PROXY`。
+</Note>
 
 ```bash
-# Basic scan
+# 基础扫描
 strix --target https://example.com
 
-# Authenticated testing
+# 认证测试
 strix --target https://app.com --instruction "Use credentials: user:pass"
 
-# Focused testing
+# 聚焦测试
 strix --target api.example.com --instruction "Focus on IDOR and auth bypass"
 
-# CI/CD mode
+# CI/CD 模式
 strix -n --target ./ --scan-mode quick
 
-# Force diff-scope against a specific base ref
+# 针对指定基线强制启用 diff-scope
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
-# Multi-target white-box testing
+# 多目标白盒测试
 strix -t https://github.com/org/app -t https://staging.example.com
 
-# Targets from a file
+# 从文件读取目标
 strix --target-list ./targets.txt
 
-# Large local repository — bind-mount instead of copying it in
+# 大型本地仓库，使用 bind-mount 代替复制
 strix --mount ./huge-monorepo
+
+# 使用兼容网关
+export STRIX_LLM="openai/your-compatible-model"
+export LLM_API_BASE="https://your-gateway.example/v1"
+strix --target ./app-directory
 ```
 
-## Exit Codes
+## 退出码
 
-| Code | Meaning |
-|------|---------|
-| 0 | Scan completed, no vulnerabilities found |
-| 2 | Vulnerabilities found (headless mode only) |
+| 代码 | 含义 |
+|------|------|
+| 0 | 扫描完成，未发现漏洞 |
+| 2 | 发现漏洞（仅无头模式） |

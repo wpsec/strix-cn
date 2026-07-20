@@ -110,7 +110,12 @@ def stage_symlink_safe_dir(src_root: Path) -> tuple[Path, Path | None]:
     if not tree_has_symlink(root):
         return root, None
 
-    staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX))
+    # On macOS ``tempfile`` commonly returns ``/var/folders/...`` while ``/var``
+    # itself is a symlink to ``/private/var``. The sandbox SDK rejects any
+    # symlink in the LocalDir source path chain, so resolve the temp root first
+    # and create the staging dir under the canonical path.
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=str(tmp_root)))
     try:
         _stage_dir(root, staged, root, frozenset({root}))
     except OSError:

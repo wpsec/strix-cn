@@ -1,33 +1,40 @@
 ---
-title: "Agent Tools"
-description: "How Strix agents interact with targets"
+title: "代理工具"
+description: "Strix 代理如何与目标交互，以及这个分支关注的兼容工作流"
 ---
 
-Strix agents use specialized tools to test your applications like a real penetration tester would.
+Strix 代理会使用专门化工具，以接近真实渗透测试人员的方式测试你的应用。`strix-cn` 在工具层面除了保留上游自动化能力，也会持续优先处理国内环境、中文使用习惯，以及 Burp Suite 等既有手工测试工作流的兼容问题。
 
-## Core Tools
+## 核心工具
 
 <CardGroup cols={2}>
   <Card title="Browser" icon="globe" href="/tools/browser">
-    Playwright-powered Chrome for interacting with web UIs.
+    基于 Playwright 的 Chrome 浏览器，用于与 Web 界面交互。
   </Card>
   <Card title="HTTP Proxy" icon="network-wired" href="/tools/proxy">
-    Caido-powered proxy for intercepting and replaying requests.
+    当前基于 Caido，并持续补齐与 Burp 工作流的兼容适配。
   </Card>
   <Card title="Terminal" icon="terminal" href="/tools/terminal">
-    Bash shell for running commands and security tools.
+    Bash Shell，可运行命令与安全工具。
   </Card>
   <Card title="Sandbox Tools" icon="toolbox" href="/tools/sandbox">
-    Pre-installed security tools: Nuclei, ffuf, and more.
+    预装安全工具，如 Nuclei、ffuf 等。
   </Card>
 </CardGroup>
 
-## Additional Tools
+## 其他工具
 
-| Tool           | Purpose                                  |
-| -------------- | ---------------------------------------- |
-| Python Runtime | Write and execute custom exploit scripts |
-| File Editor    | Read and modify source code              |
-| Web Search     | Real-time OSINT via Perplexity           |
-| Notes          | Document findings during the scan        |
-| Reporting      | Generate vulnerability reports with PoCs |
+| 工具 | 作用 |
+|------|------|
+| Python Runtime | 编写并执行自定义利用脚本 |
+| File Editor | 读取并修改源代码 |
+| Web Search | 通过 Perplexity 获取实时 OSINT |
+| Notes | 在扫描过程中记录发现 |
+| Reporting | 生成带 PoC 的漏洞报告 |
+
+## 当前兼容方向
+
+- **模型兼容**：优先验证 OpenAI-compatible 网关、LiteLLM 路由与本地模型的工具调用稳定性。
+- **代理工作流兼容**：当前自动化流量能力由 Caido 提供，本分支持续补齐与 Burp Suite / Burp 插件协作时的使用体验。
+- **语言兼容**：文档、指令和报告优先围绕中文使用场景优化。
+- **环境兼容**：优先修复 macOS、Linux、Windows 以及代理网络环境下的运行细节问题。

@@ -1,96 +1,99 @@
 ---
-title: "Contributing"
-description: "Contribute to Strix development"
+title: "参与贡献"
+description: "为 Strix 的开发做出贡献"
 ---
 
-## Development Setup
+`strix-cn` 是面向中文用户的持续维护分支。这里的贡献会优先围绕国内模型接入、Burp 工作流兼容、环境适配，以及中文文档和中文报告体验展开。
 
-### Prerequisites
+## 开发环境准备
+
+### 前置要求
 
 - Python 3.12+
-- Docker (running)
+- Docker 已启动
 - [uv](https://docs.astral.sh/uv/)
 - Git
 
-### Local Development
+### 本地开发
 
 <Steps>
-  <Step title="Clone the repository">
+  <Step title="克隆仓库">
     ```bash
     git clone https://github.com/usestrix/strix.git
     cd strix
     ```
   </Step>
-  <Step title="Install dependencies">
+  <Step title="安装依赖">
     ```bash
     make setup-dev
 
-    # or manually:
+    # 或手动执行：
     uv sync
     uv run pre-commit install
     ```
   </Step>
-  <Step title="Configure LLM">
+  <Step title="配置 LLM">
     ```bash
-    export STRIX_LLM="openai/gpt-5.4"
+    export STRIX_LLM="openai/your-compatible-model"
     export LLM_API_KEY="your-api-key"
+    export LLM_API_BASE="https://your-gateway.example/v1"
     ```
   </Step>
-  <Step title="Run Strix">
+  <Step title="运行 Strix">
     ```bash
     uv run strix --target https://example.com
     ```
   </Step>
 </Steps>
 
-## Contributing Skills
+## 贡献 Skills
 
-Skills are specialized knowledge packages that enhance agent capabilities. They live in `strix/skills/`
+Skills 是用于增强代理能力的专业知识包，存放在 `strix/skills/` 目录下。
 
-### Creating a Skill
+### 创建一个 Skill
 
-1. Choose the right category
-2. Create a `.md` file with YAML frontmatter (`name` and `description` fields)
-3. Include practical examples—working payloads, commands, test cases
-4. Provide validation methods to confirm findings
-5. Submit via PR
+1. 选择合适的分类目录
+2. 创建带有 YAML frontmatter（`name` 与 `description`）的 `.md` 文件
+3. 提供实战示例，例如 payload、命令或测试用例
+4. 补充验证方法，说明如何确认发现结果
+5. 通过 PR 提交
 
-## Contributing Code
+## 贡献代码
 
-### Pull Request Process
+### Pull Request 流程
 
-1. **Create an issue first** — Describe the problem or feature
-2. **Fork and branch** — Work from `main`
-3. **Make changes** — Follow existing code style
-4. **Write tests** — Ensure coverage for new features
-5. **Run checks** — `make check-all` should pass
-6. **Submit PR** — Link to issue and provide context
+1. **先创建 Issue**：描述问题或需求
+2. **Fork 并创建分支**：从当前维护线开始工作；如果是同步上游能力，请说明适配边界
+3. **完成修改**：遵循现有代码风格
+4. **编写测试**：确保新功能和修复有覆盖
+5. **运行检查**：`make check-all` 应通过
+6. **提交 PR**：关联 Issue 并提供背景说明
 
-### Code Style
+### 代码风格
 
-- PEP 8 with 100-character line limit
-- Type hints for all functions
-- Docstrings for public methods
-- Small, focused functions
-- Meaningful variable names
+- 遵循 PEP 8，单行长度不超过 100
+- 所有函数都应带类型标注
+- 公共方法应有 docstring
+- 保持函数简洁、职责单一
+- 变量命名应清晰可读
 
-## Reporting Issues
+## 提交问题
 
-Include:
+建议包含以下信息：
 
-- Python version and OS
-- Strix version (`strix --version`)
-- LLM being used
-- Full error traceback
-- Steps to reproduce
+- Python 版本与操作系统
+- Strix 版本（`strix --version`）
+- 使用的 LLM
+- 完整错误堆栈
+- 复现步骤
 
-## Community
+## 社区
 
 <CardGroup cols={2}>
   <Card title="Discord" icon="discord" href="https://discord.gg/strix-ai">
-    Join the community for help and discussion.
+    加入社区，获取帮助并参与讨论。
   </Card>
   <Card title="GitHub Issues" icon="github" href="https://github.com/usestrix/strix/issues">
-    Report bugs and request features.
+    报告 Bug 或提出功能建议。
   </Card>
 </CardGroup>

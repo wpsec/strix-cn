@@ -153,8 +153,8 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
     assert report["cve"] == "CVE-2021-23337"
     assert report["severity"] == "high"
     assert report["evidence"] == (
-        "**Advisory evidence:** `CVE-2021-23337` applies to `lodash` "
-        "at installed version `4.17.20`. The advisory is fixed in `4.17.21`."
+        "**公告证据：** `CVE-2021-23337` 影响当前安装的 `lodash` "
+        "版本 `4.17.20`。 该公告显示可通过升级到 `4.17.21` 修复。"
     )
     assert report["dependency_metadata"] == {
         "package_name": "lodash",
@@ -541,14 +541,35 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
     vuln_desc = create_vulnerability_report.description
     assert "markdown" in vuln_desc.lower()
     assert "fenced code" in vuln_desc.lower()
+    assert "simplified chinese" in vuln_desc.lower()
 
     finish_desc = finish_scan.description
     assert "markdown" in finish_desc.lower()
-    assert "# Executive Summary" in finish_desc
+    assert "# 执行摘要" in finish_desc
+    assert "simplified chinese" in finish_desc.lower()
 
     dep_desc = create_dependency_report.description
     assert "cve" in dep_desc.lower()
     assert "reachab" in dep_desc.lower()
+    assert "simplified chinese" in dep_desc.lower()
+
+
+def test_report_state_formats_final_scan_result_with_chinese_sections() -> None:
+    state = ReportState(run_name="lang-test")
+
+    rendered = state._format_final_scan_result(
+        {
+            "executive_summary": "摘要",
+            "methodology": "方法",
+            "technical_analysis": "分析",
+            "recommendations": "建议",
+        }
+    )
+
+    assert "# 执行摘要" in rendered
+    assert "# 测试方法" in rendered
+    assert "# 技术分析" in rendered
+    assert "# 修复建议" in rendered
 
 
 def test_vuln_tool_exposes_new_params() -> None:

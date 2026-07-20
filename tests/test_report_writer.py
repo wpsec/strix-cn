@@ -70,13 +70,13 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
         ),
     )
     assert "# SQL Injection" in md
-    assert "**Severity:** HIGH" in md
-    assert "## Description" in md
-    assert "## Impact" in md
-    assert "## Technical Analysis" in md
-    assert "## Proof of Concept" in md
-    assert "## Remediation" in md
-    assert "**Endpoint:** /api/login" in md
+    assert "**严重性：** 高危" in md
+    assert "## 漏洞描述" in md
+    assert "## 影响" in md
+    assert "## 技术分析" in md
+    assert "## 利用方式" in md
+    assert "## 修复建议" in md
+    assert "**接口：** /api/login" in md
 
 
 def test_render_vulnerability_md_includes_dependency_fields() -> None:
@@ -92,7 +92,7 @@ def test_render_vulnerability_md_includes_dependency_fields() -> None:
             cvss=7.2,
             fix_effort="trivial",
             finding_class="dependency_cve",
-            evidence="**Advisory evidence:** `CVE-2021-23337` applies to `lodash`.",
+            evidence="**公告证据：** `CVE-2021-23337` 影响当前安装的 `lodash` 版本 `4.17.20`。",
             assumptions="Assumes lodash ships in deployed builds.",
             dependency_metadata={
                 "package_name": "lodash",
@@ -103,14 +103,14 @@ def test_render_vulnerability_md_includes_dependency_fields() -> None:
             remediation_steps="Upgrade to 4.17.21.",
         ),
     )
-    assert "**Package:** lodash" in md
-    assert "**Ecosystem:** npm" in md
-    assert "**Installed Version:** 4.17.20" in md
-    assert "**Fixed Version:** 4.17.21" in md
-    assert "**CWE:** CWE-94" in md
-    assert "**Fix Effort:** Trivial" in md
-    assert "## Evidence" in md
-    assert "## Assumptions" in md
+    assert "**组件：** lodash" in md
+    assert "**组件生态：** npm" in md
+    assert "**当前版本：** 4.17.20" in md
+    assert "**修复版本：** 4.17.21" in md
+    assert "**CWE：** CWE-94" in md
+    assert "**修复成本：** 极低" in md
+    assert "## 证据" in md
+    assert "## 前提假设" in md
 
 
 def test_write_vulnerabilities_creates_markdown_csv_and_json(tmp_path: Path) -> None:
@@ -153,5 +153,6 @@ def test_write_vulnerabilities_skips_already_saved_ids(tmp_path: Path) -> None:
 def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     write_executive_report(tmp_path, "Scan complete. No critical issues.")
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
-    assert "# Security Penetration Test Report" in content
+    assert "# 安全渗透测试报告" in content
+    assert "**生成时间：**" in content
     assert "Scan complete. No critical issues." in content

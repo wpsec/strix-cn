@@ -1,14 +1,16 @@
 ---
-title: "Quick Start"
-description: "Install Strix and run your first security scan"
+title: "快速开始"
+description: "安装 Strix 并完成第一次安全扫描"
 ---
 
-## Prerequisites
+`strix-cn` 是面向中文用户的持续维护分支。快速开始会优先展示国内可访问模型、OpenAI-compatible 网关、本地模型，以及中文说明和环境兼容相关的推荐配置。
 
-- Docker (running)
-- An LLM API key from any [supported provider](/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+## 前置要求
 
-## Installation
+- Docker 已启动
+- 一个可用的 LLM 接入方式。优先推荐 OpenAI-compatible 网关、LiteLLM 路由或本地模型；仍兼容 OpenAI、Anthropic、Google 等上游提供商。
+
+## 安装
 
 <Tabs>
   <Tab title="curl">
@@ -23,57 +25,85 @@ description: "Install Strix and run your first security scan"
   </Tab>
 </Tabs>
 
-## Configuration
+## 配置
 
-Set your LLM provider:
+优先选择你当前网络环境最容易稳定访问的模型路径：
 
-```bash
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
-```
+<Tabs>
+  <Tab title="兼容网关">
+    ```bash
+    export STRIX_LLM="openai/your-compatible-model"
+    export LLM_API_KEY="your-api-key"
+    export LLM_API_BASE="https://your-gateway.example/v1"
+    ```
+  </Tab>
+  <Tab title="本地模型">
+    ```bash
+    export STRIX_LLM="ollama/qwen3-vl"
+    export LLM_API_BASE="http://localhost:11434"
+    ```
+  </Tab>
+</Tabs>
 
 <Tip>
-For best results, use `openai/gpt-5.4`, `anthropic/claude-opus-4-6`, or `openai/gpt-5.2`.
+如果你已经有 OpenAI-compatible 中转、企业网关、LM Studio、vLLM 或 Ollama，这个分支会优先围绕这些接入方式做兼容性维护。
 </Tip>
 
-## Run Your First Scan
+## 执行第一次扫描
 
 ```bash
 strix --target ./your-app
 ```
 
 <Note>
-First run pulls the Docker sandbox image automatically. Results are saved to `strix_runs/<run-name>`.
+首次运行会自动拉取 Docker 沙箱镜像。结果会保存到 `strix_runs/<run-name>`。
 </Note>
 
-## Target Types
+<Note>
+当前分支默认输出中文报告，也支持直接使用中文 `--instruction` 或 `--instruction-file` 描述测试要求。
+</Note>
 
-Strix accepts multiple target types:
+## 支持的目标类型
+
+Strix 支持多种扫描目标：
 
 ```bash
-# Local codebase
+# 本地代码库
 strix --target ./app-directory
 
-# GitHub repository
+# GitHub 仓库
 strix --target https://github.com/org/repo
 
-# Live web application
+# 在线 Web 应用
 strix --target https://your-app.com
 
-# Multiple targets (white-box testing)
+# 多目标（白盒测试）
 strix -t https://github.com/org/repo -t https://your-app.com
 
-# Targets from a file, one target per non-empty, non-comment line
+# 从文件读取目标，每行一个，忽略空行和注释
 strix --target-list ./targets.txt
 ```
 
-## Next Steps
+## 国内 / 受限网络环境建议
+
+```bash
+# 如果安装源或模型接口需要代理，可按需设置
+export HTTP_PROXY="http://127.0.0.1:7897"
+export HTTPS_PROXY="http://127.0.0.1:7897"
+export ALL_PROXY="socks5://127.0.0.1:7897"
+```
+
+- 模型接口走兼容网关时，优先通过 `LLM_API_BASE` 指向你当前可访问的地址。
+- 如果团队更关注数据不出网，可优先使用 Ollama、LM Studio、vLLM 等本地或内网模型服务。
+- 如果本地源码目录包含 symlink 或平台特殊临时目录，这个分支会持续补齐 macOS、Linux、Windows 的兼容性问题。
+
+## 下一步
 
 <CardGroup cols={2}>
-  <Card title="CLI Options" icon="terminal" href="/usage/cli">
-    Explore all command-line options.
+  <Card title="CLI 选项" icon="terminal" href="/usage/cli">
+    查看全部命令行参数。
   </Card>
-  <Card title="Scan Modes" icon="gauge" href="/usage/scan-modes">
-    Choose the right scan depth.
+  <Card title="扫描模式" icon="gauge" href="/usage/scan-modes">
+    选择适合你的扫描深度。
   </Card>
 </CardGroup>

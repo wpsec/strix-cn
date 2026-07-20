@@ -80,6 +80,7 @@ agent_runs/
 *.temp
 .DS_Store
 Thumbs.db
+.codegraph/
 
 *.schema.graphql
 schema.graphql

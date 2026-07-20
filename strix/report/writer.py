@@ -17,6 +17,19 @@ from strix.core.paths import run_record_path
 logger = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+_SEVERITY_LABELS_ZH = {
+    "critical": "严重",
+    "high": "高危",
+    "medium": "中危",
+    "low": "低危",
+    "info": "信息",
+}
+_FIX_EFFORT_LABELS_ZH = {
+    "trivial": "极低",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+}
 
 
 def read_run_record(run_dir: Path) -> dict[str, Any]:
@@ -42,8 +55,8 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
     path = run_dir / "penetration_test_report.md"
     with path.open("w", encoding="utf-8") as f:
-        f.write("# Security Penetration Test Report\n\n")
-        f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
+        f.write("# 安全渗透测试报告\n\n")
+        f.write(f"**生成时间：** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
         f.write(f"{final_scan_result}\n")
     logger.info("Saved final penetration test report to: %s", path)
 
@@ -117,22 +130,26 @@ def _atomic_write_text(path: Path, payload: str) -> None:
 
 
 def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PLR0915
+    severity = _SEVERITY_LABELS_ZH.get(
+        str(report.get("severity", "")).strip().lower(),
+        str(report.get("severity", "未知")) or "未知",
+    )
     lines: list[str] = [
-        f"# {report.get('title', 'Untitled Vulnerability')}\n",
-        f"**ID:** {report.get('id', 'unknown')}",
-        f"**Severity:** {report.get('severity', 'unknown').upper()}",
-        f"**Found:** {report.get('timestamp', 'unknown')}",
+        f"# {report.get('title', '未命名漏洞')}\n",
+        f"**编号：** {report.get('id', 'unknown')}",
+        f"**严重性：** {severity}",
+        f"**发现时间：** {report.get('timestamp', 'unknown')}",
     ]
 
     dep_meta = report.get("dependency_metadata") or {}
     metadata: list[tuple[str, Any]] = [
-        ("Target", report.get("target")),
-        ("Package", dep_meta.get("package_name")),
-        ("Ecosystem", dep_meta.get("package_ecosystem")),
-        ("Installed Version", dep_meta.get("installed_version")),
-        ("Fixed Version", dep_meta.get("fixed_version")),
-        ("Endpoint", report.get("endpoint")),
-        ("Method", report.get("method")),
+        ("目标", report.get("target")),
+        ("组件", dep_meta.get("package_name")),
+        ("组件生态", dep_meta.get("package_ecosystem")),
+        ("当前版本", dep_meta.get("installed_version")),
+        ("修复版本", dep_meta.get("fixed_version")),
+        ("接口", report.get("endpoint")),
+        ("请求方法", report.get("method")),
         ("CVE", report.get("cve")),
         ("CWE", report.get("cwe")),
     ]
@@ -140,33 +157,37 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if cvss is not None:
         metadata.append(("CVSS", cvss))
     if report.get("fix_effort"):
-        metadata.append(("Fix Effort", str(report["fix_effort"]).title()))
+        fix_effort = _FIX_EFFORT_LABELS_ZH.get(
+            str(report["fix_effort"]).strip().lower(),
+            str(report["fix_effort"]),
+        )
+        metadata.append(("修复成本", fix_effort))
     for label, value in metadata:
         if value:
-            lines.append(f"**{label}:** {value}")
+            lines.append(f"**{label}：** {value}")
 
     lines.append("")
-    lines.append("## Description\n")
-    lines.append(report.get("description") or "No description provided.")
+    lines.append("## 漏洞描述\n")
+    lines.append(report.get("description") or "未提供漏洞描述。")
     lines.append("")
 
     if report.get("evidence"):
-        lines.append("## Evidence\n")
+        lines.append("## 证据\n")
         lines.append(str(report["evidence"]))
         lines.append("")
 
     if report.get("impact"):
-        lines.append("## Impact\n")
+        lines.append("## 影响\n")
         lines.append(str(report["impact"]))
         lines.append("")
 
     if report.get("technical_analysis"):
-        lines.append("## Technical Analysis\n")
+        lines.append("## 技术分析\n")
         lines.append(str(report["technical_analysis"]))
         lines.append("")
 
     if report.get("poc_description") or report.get("poc_script_code"):
-        lines.append("## Proof of Concept\n")
+        lines.append("## 利用方式\n")
         if report.get("poc_description"):
             lines.append(str(report["poc_description"]))
             lines.append("")
@@ -177,22 +198,22 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append("")
 
     if report.get("code_locations"):
-        lines.append("## Code Analysis\n")
+        lines.append("## 代码分析\n")
         for i, loc in enumerate(report["code_locations"]):
             file_ref = loc.get("file", "unknown")
             line_ref = ""
             if loc.get("start_line") is not None:
                 if loc.get("end_line") and loc["end_line"] != loc["start_line"]:
-                    line_ref = f" (lines {loc['start_line']}-{loc['end_line']})"
+                    line_ref = f"（第 {loc['start_line']}-{loc['end_line']} 行）"
                 else:
-                    line_ref = f" (line {loc['start_line']})"
-            lines.append(f"**Location {i + 1}:** `{file_ref}`{line_ref}")
+                    line_ref = f"（第 {loc['start_line']} 行）"
+            lines.append(f"**位置 {i + 1}：** `{file_ref}`{line_ref}")
             if loc.get("label"):
                 lines.append(f"  {loc['label']}")
             if loc.get("snippet"):
                 lines.append(f"  ```\n  {loc['snippet']}\n  ```")
             if loc.get("fix_before") or loc.get("fix_after"):
-                lines.append("\n  **Suggested Fix:**")
+                lines.append("\n  **建议修复：**")
                 lines.append("```diff")
                 if loc.get("fix_before"):
                     lines.extend(f"- {ln}" for ln in str(loc["fix_before"]).splitlines())
@@ -202,12 +223,12 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append("")
 
     if report.get("remediation_steps"):
-        lines.append("## Remediation\n")
+        lines.append("## 修复建议\n")
         lines.append(str(report["remediation_steps"]))
         lines.append("")
 
     if report.get("assumptions"):
-        lines.append("## Assumptions\n")
+        lines.append("## 前提假设\n")
         lines.append(str(report["assumptions"]))
         lines.append("")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from typing import TYPE_CHECKING
 
 from strix.runtime.local_dir_staging import stage_symlink_safe_dir, tree_has_symlink
@@ -106,3 +107,24 @@ def test_nested_symlinks_inside_linked_dir(tmp_path: Path) -> None:
     assert (staged / "pkg" / "shared_link" / "conf.json").read_text() == "{}\n"
     assert not (staged / "pkg" / "shared_link" / "escape").exists()
     assert not (staged / "shared" / "escape").exists()
+
+
+def test_staged_dir_uses_canonical_temp_root_when_tempdir_is_symlink(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / "link.py").symlink_to(repo / "pkg" / "mod.py")
+
+    real_tmp = tmp_path / "real-tmp"
+    real_tmp.mkdir()
+    symlink_tmp = tmp_path / "tmp-link"
+    symlink_tmp.symlink_to(real_tmp, target_is_directory=True)
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(symlink_tmp))
+
+    upload_path, staged = stage_symlink_safe_dir(repo)
+
+    assert staged is not None
+    assert upload_path == staged
+    assert staged.parent == real_tmp.resolve()
+    assert not str(staged).startswith(str(symlink_tmp))
