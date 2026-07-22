@@ -19,6 +19,7 @@ from strix.runtime import session_manager
 
 from .utils import (
     build_live_stats_text,
+    build_target_summary_text,
     format_vulnerability_report,
 )
 
@@ -41,16 +42,10 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     start_text = Text()
     start_text.append("渗透测试已启动", style="bold #22c55e")
 
-    target_text = Text()
-    target_text.append("目标", style="dim")
-    target_text.append("  ")
-    if len(args.targets_info) == 1:
-        target_text.append(args.targets_info[0]["original"], style="bold white")
-    else:
-        target_text.append(f"{len(args.targets_info)} 个目标", style="bold white")
-        for target_info in args.targets_info:
-            target_text.append("\n        ")
-            target_text.append(target_info["original"], style="white")
+    target_text = build_target_summary_text(
+        args.targets_info,
+        burp_port=getattr(args, "burp_port", None),
+    )
 
     results_text = Text()
     results_text.append("输出目录", style="dim")
@@ -93,6 +88,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "local_sources": getattr(args, "local_sources", None) or [],
         "scope_mode": getattr(args, "scope_mode", "auto"),
         "diff_base": getattr(args, "diff_base", None),
+        "burp_port": getattr(args, "burp_port", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
     }
 

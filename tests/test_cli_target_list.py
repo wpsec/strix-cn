@@ -70,6 +70,31 @@ def test_parse_arguments_combines_target_and_target_list(
     ]
 
 
+def test_parse_arguments_accepts_burp_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "-t", "https://test1.com/", "--burp-port", "8081", "-n"],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.burp_port == 8081
+
+
+def test_parse_arguments_accepts_burp_port_without_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["strix", "--burp-port", "8081", "-n"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.burp_port == 8081
+    assert args.targets_info == []
+
+
 def test_parse_arguments_rejects_resume_with_target_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -98,3 +123,5 @@ def test_help_output_is_localized(monkeypatch: pytest.MonkeyPatch, capsys: pytes
     assert "Strix 多代理网络安全渗透测试工具" in help_text
     assert "扫描模式" in help_text
     assert "自定义指令" in help_text
+    assert "--burp-port" in help_text
+    assert "strix --burp-port 8081" in help_text

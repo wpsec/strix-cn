@@ -65,6 +65,28 @@ AUTHORIZED TARGETS:
 {% for target in system_prompt_context.authorized_targets %}
 - {{ target.type }}: {{ target.value }}{% if target.workspace_path %} (workspace: {{ target.workspace_path }}){% endif %}
 {% endfor %}
+{% elif system_prompt_context and system_prompt_context.proxy_passive_mode %}
+SYSTEM-VERIFIED OPERATION MODE:
+- No static target list was provided for this run
+- Scope source: {{ system_prompt_context.scope_source }}
+- Authorization source: {{ system_prompt_context.authorization_source }}
+- You may work only from HTTP(S) traffic that enters through the configured Burp upstream proxy
+- Treat observed proxy history as the sole in-scope source of hosts, URLs, sessions, and workflows
+- Do not invent, broaden, or probe unrelated hosts, domains, repositories, or IPs that have not appeared in observed traffic
+- Treat each observed hostname as individually scoped; do not widen one hostname into sibling subdomains, a parent domain wildcard, or other same-company assets unless the operator explicitly authorized that broader pattern
+- Prioritize authenticated traffic and operator-driven workflows captured through the proxy
+{% if system_prompt_context.proxy_scope_allowlist %}
+- Strix-enforced proxy allowlist is active; only these hostname patterns are in scope:
+{% for pattern in system_prompt_context.proxy_scope_allowlist %}
+- {{ pattern }}
+{% endfor %}
+{% endif %}
+{% if system_prompt_context.proxy_scope_denylist %}
+- Strix-enforced proxy denylist is active; ignore these known noise domains even if they appear in proxy history:
+{% for pattern in system_prompt_context.proxy_scope_denylist %}
+- {{ pattern }}
+{% endfor %}
+{% endif %}
 {% endif %}
 
 AUTHORIZATION STATUS:

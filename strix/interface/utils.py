@@ -318,6 +318,61 @@ def _build_llm_usage_stats(
         stats_text.append(f"${cost:.4f}", style="#fbbf24")
 
 
+def _format_burp_upstream_endpoint(caido_url: str) -> str:
+    parsed = urlparse(caido_url)
+    host = parsed.hostname or caido_url
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parsed.port is not None:
+        return f"{host}:{parsed.port}"
+    return host
+
+
+def build_target_summary_text(
+    targets_info: list[dict[str, Any]] | None,
+    *,
+    burp_port: int | None = None,
+) -> Text:
+    target_text = Text()
+    target_text.append("目标", style="dim")
+    target_text.append("  ")
+
+    targets = targets_info or []
+    if not targets and burp_port is not None:
+        target_text.append("Burp 被动模式", style="bold white")
+        target_text.append("\n        ")
+        target_text.append("仅基于 Burp 转发流量建立作用域", style="white")
+        return target_text
+
+    if len(targets) == 1:
+        target_text.append(targets[0]["original"], style="bold white")
+        return target_text
+
+    target_text.append(f"{len(targets)} 个目标", style="bold white")
+    for target_info in targets:
+        target_text.append("\n        ")
+        target_text.append(target_info["original"], style="white")
+    return target_text
+
+
+def _append_burp_upstream_status(stats_text: Text, report_state: Any) -> None:
+    caido_url = getattr(report_state, "caido_url", None)
+    unavailable_reason = getattr(report_state, "burp_upstream_unavailable_reason", None)
+
+    if isinstance(caido_url, str) and caido_url:
+        stats_text.append("\n")
+        stats_text.append("Burp 上游代理: ", style="bold white")
+        stats_text.append(_format_burp_upstream_endpoint(caido_url), style="white")
+        stats_text.append("\n")
+        stats_text.append("仅本机可访问", style="dim white")
+        return
+
+    if isinstance(unavailable_reason, str) and unavailable_reason:
+        stats_text.append("\n")
+        stats_text.append("Burp 上游代理: ", style="bold white")
+        stats_text.append(unavailable_reason, style="dim white")
+
+
 def build_final_stats_text(report_state: Any) -> Text:
     stats_text = Text()
     if not report_state:
@@ -368,6 +423,7 @@ def build_live_stats_text(report_state: Any) -> Text:
         stats_text.append("\n")
 
     _build_llm_usage_stats(stats_text, report_state, live=True)
+    _append_burp_upstream_status(stats_text, report_state)
 
     return stats_text
 
@@ -392,11 +448,7 @@ def build_tui_stats_text(report_state: Any) -> Text:
             stats_text.append(" · ", style="white")
             stats_text.append(f"${cost:.2f}", style="white")
 
-    caido_url = getattr(report_state, "caido_url", None)
-    if caido_url:
-        stats_text.append("\n")
-        stats_text.append("Caido: ", style="bold white")
-        stats_text.append(caido_url, style="white")
+    _append_burp_upstream_status(stats_text, report_state)
 
     return stats_text
 

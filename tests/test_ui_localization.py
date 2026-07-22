@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from rich.text import Text
 
+from strix.interface.tui.app import StrixTUIApp
 from strix.interface.tui.renderers.finish_renderer import FinishScanRenderer
 from strix.interface.tui.renderers.load_skill_renderer import LoadSkillRenderer
 from strix.interface.tui.renderers.notes_renderer import CreateNoteRenderer, ListNotesRenderer
@@ -98,3 +99,7 @@ def test_finish_and_load_skill_renderers_use_chinese_labels() -> None:
     assert "正在生成最终报告..." in finish
     assert "正在加载 skill" in load_skill
     assert "正在加载..." in load_skill
+
+
+def test_tui_bindings_include_terminal_copy_mode_toggle() -> None:
+    assert any(binding.key == "f2" for binding in StrixTUIApp.BINDINGS)

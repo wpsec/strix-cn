@@ -15,6 +15,7 @@ from strix.config.models import (
     request_timeout_extra_args,
 )
 from strix.core.sessions import scrub_images_from_items
+from strix.core.proxy_scope import build_proxy_scope_constraints
 
 
 if TYPE_CHECKING:
@@ -35,8 +36,10 @@ def _accepts_required_tool_choice(model_name: str | None) -> bool:
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
+    burp_port = scan_config.get("burp_port")
     diff_scope = scan_config.get("diff_scope") or {}
     user_instructions = scan_config.get("user_instructions", "") or ""
+    proxy_scope = build_proxy_scope_constraints(scan_config)
 
     sections: dict[str, list[str]] = {
         "Repositories": [],
@@ -72,6 +75,28 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             parts.append(f"\n\n{label}:")
             parts.extend(items)
 
+    if not targets and burp_port is not None:
+        parts.append("\n\nPassive Proxy Mode:")
+        parts.append("- No static target list was provided for this run.")
+        parts.append("- Observe only HTTP(S) traffic captured through the configured Burp upstream proxy.")
+        parts.append("- Derive in-scope hosts, URLs, sessions, and workflows only from captured proxy history.")
+        parts.append("- Do not invent, broaden, or probe unrelated hosts that have not appeared in observed traffic.")
+        parts.append(
+            "- Treat each observed hostname as individually scoped; do not widen one host into sibling hosts or a whole parent domain unless the operator explicitly listed that broader scope."
+        )
+        parts.append("- Prioritize authenticated traffic and operator-driven workflows captured from Burp.")
+        if proxy_scope["proxy_scope_denylist"]:
+            parts.append(
+                f"- Ignore known proxy/browser noise domains: {', '.join(proxy_scope['proxy_scope_denylist'])}."
+            )
+    elif burp_port is not None and proxy_scope["proxy_scope_allowlist"]:
+        parts.append("\n\nBurp Proxy Scope:")
+        parts.append(
+            "- Only test proxy traffic whose hostname matches the Strix-side scope allowlist derived from explicit targets."
+        )
+        for pattern in proxy_scope["proxy_scope_allowlist"]:
+            parts.append(f"- Allowed host pattern: {pattern}")
+
     if diff_scope.get("active"):
         parts.append("\n\nScope Constraints:")
         parts.append(
@@ -95,6 +120,18 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
 
 
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
+    targets = scan_config.get("targets", []) or []
+    proxy_scope = build_proxy_scope_constraints(scan_config)
+    if not targets and scan_config.get("burp_port") is not None:
+        return {
+            "scope_source": "burp_upstream_proxy",
+            "authorization_source": "operator_routed_proxy_traffic",
+            "authorized_targets": [],
+            "proxy_passive_mode": True,
+            **proxy_scope,
+            "user_instructions_do_not_expand_scope": True,
+        }
+
     authorized: list[dict[str, str]] = []
     value_keys = {
         "repository": "target_repo",
@@ -102,7 +139,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "web_application": "target_url",
         "ip_address": "target_ip",
     }
-    for target in scan_config.get("targets", []) or []:
+    for target in targets:
         ttype = target.get("type", "unknown")
         details = target.get("details") or {}
         key = value_keys.get(ttype)
@@ -118,6 +155,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "scope_source": "system_scan_config",
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": authorized,
+        **proxy_scope,
         "user_instructions_do_not_expand_scope": True,
     }
 

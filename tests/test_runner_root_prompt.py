@@ -46,7 +46,8 @@ def _patch_engine_scaffold(
             reasoning_effort="high",
             force_required_tool_choice=False,
             timeout=300,
-        )
+        ),
+        runtime=types.SimpleNamespace(max_context_images=3),
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
@@ -172,3 +173,38 @@ async def test_root_prompt_options_default_to_none(
     kwargs = captured["kwargs"]
     assert kwargs["instructions_override"] is None
     assert kwargs["system_prompt_context"] == {"scope": "built-in"}
+
+
+@pytest.mark.asyncio
+async def test_root_prompt_includes_burp_passive_mode_constraints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    scope_context = {
+        "scope_source": "burp_upstream_proxy",
+        "authorization_source": "operator_routed_proxy_traffic",
+        "authorized_targets": [],
+        "proxy_passive_mode": True,
+        "proxy_scope_enforced": True,
+        "proxy_scope_allowlist": ["app.example.com"],
+        "proxy_scope_denylist": ["caido.io", "*.caido.io"],
+        "user_instructions_do_not_expand_scope": True,
+    }
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep", "burp_port": 8081},
+        scan_id="scan-burp-passive",
+        image="img",
+        coordinator=AgentCoordinator(),
+        root_instructions_override="PASSIVE BURP MODE",
+    )
+
+    instructions_override = captured["kwargs"]["instructions_override"]
+    assert "SYSTEM-VERIFIED OPERATION MODE" in instructions_override
+    assert "sole in-scope source of hosts, URLs, sessions, and workflows" in instructions_override
+    assert "Burp upstream proxy" in instructions_override
+    assert "individually scoped" in instructions_override
+    assert "app.example.com" in instructions_override
+    assert "*.caido.io" in instructions_override
+    assert "PASSIVE BURP MODE" in instructions_override

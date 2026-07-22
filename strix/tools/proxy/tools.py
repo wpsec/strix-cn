@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from agents import RunContextWrapper, function_tool
 
+from strix.core.proxy_scope import host_matches_scope
 from strix.tools.proxy import caido_api
 
 
@@ -50,6 +51,21 @@ _CAIDO_CALL_LOCK = asyncio.Lock()
 def _ctx_client(ctx: RunContextWrapper) -> Client | None:
     inner = ctx.context if isinstance(ctx.context, dict) else {}
     return inner.get("caido_client")
+
+
+def _ctx_scope_id(ctx: RunContextWrapper) -> str | None:
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    scope_id = inner.get("caido_scope_id")
+    return scope_id if isinstance(scope_id, str) and scope_id else None
+
+
+def _ctx_scope_patterns(ctx: RunContextWrapper) -> tuple[list[str], list[str]]:
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    allowlist = inner.get("caido_scope_allowlist") or []
+    denylist = inner.get("caido_scope_denylist") or []
+    allow = [str(pattern) for pattern in allowlist if isinstance(pattern, str) and pattern]
+    deny = [str(pattern) for pattern in denylist if isinstance(pattern, str) and pattern]
+    return allow, deny
 
 
 async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
@@ -160,6 +176,7 @@ async def list_requests(
         return _no_client()
 
     try:
+        resolved_scope_id = scope_id or _ctx_scope_id(ctx)
         connection = await _call(
             client,
             lambda client: caido_api.list_requests_with_client(
@@ -169,7 +186,7 @@ async def list_requests(
                 after=after,
                 sort_by=sort_by,
                 sort_order=sort_order,
-                scope_id=scope_id,
+                scope_id=resolved_scope_id,
             ),
         )
 
@@ -383,11 +400,16 @@ async def repeat_request(
     if client is None:
         return _no_client()
     mods = modifications or {}
+    allowlist, denylist = _ctx_scope_patterns(ctx)
 
     async def _do(client: Client) -> dict[str, Any] | None:
         result = await caido_api.get_request_with_client(client, request_id, part="request")
         if result is None or result.request.raw is None:
             return None
+        if not host_matches_scope(result.request.host, allowlist=allowlist, denylist=denylist):
+            raise ValueError(
+                f"请求 {request_id} 的主机 {result.request.host} 不在当前 Strix 代理作用域内，已拒绝重放"
+            )
         original = result.request
         raw_str = result.request.raw.decode("utf-8", errors="replace")
         components = caido_api.parse_raw_request(raw_str)
@@ -465,11 +487,12 @@ async def list_sitemap(
     if client is None:
         return _no_client()
     try:
+        resolved_scope_id = scope_id or _ctx_scope_id(ctx)
         payload = await _call(
             client,
             lambda client: caido_api.list_sitemap_with_client(
                 client,
-                scope_id=scope_id,
+                scope_id=resolved_scope_id,
                 parent_id=parent_id,
                 depth=depth,
                 page=page,

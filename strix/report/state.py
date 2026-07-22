@@ -130,6 +130,7 @@ class ReportState:
         self._saved_vuln_ids: set[str] = set()
 
         self.caido_url: str | None = None
+        self.burp_upstream_unavailable_reason: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
 
         self._sarif_repo_ctx: dict[str, Any] | None = None
@@ -174,6 +175,9 @@ class ReportState:
                 self.start_time = data["start_time"]
             if isinstance(data.get("end_time"), str):
                 self.end_time = data["end_time"]
+            caido_url = data.get("caido_url")
+            self.caido_url = caido_url.strip() if isinstance(caido_url, str) and caido_url else None
+            self.burp_upstream_unavailable_reason = None
             scan_results = data.get("scan_results")
             if isinstance(scan_results, dict):
                 self.scan_results = scan_results
@@ -352,9 +356,12 @@ class ReportState:
 
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
+        self.caido_url = None
+        self.burp_upstream_unavailable_reason = None
         self.run_record["status"] = "running"
         self.run_record["end_time"] = None
         self.run_record.pop("scan_results", None)
+        self.run_record.pop("caido_url", None)
         self.end_time = None
         self.scan_results = None
         self.final_scan_result = None
@@ -368,8 +375,28 @@ class ReportState:
                 "local_sources": config.get("local_sources", []),
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
+                "burp_port": config.get("burp_port"),
             }
         )
+
+    def set_caido_connection(
+        self,
+        caido_url: str | None,
+        *,
+        unavailable_reason: str | None = None,
+    ) -> None:
+        self.caido_url = caido_url.strip() if isinstance(caido_url, str) and caido_url else None
+        if self.caido_url:
+            self.run_record["caido_url"] = self.caido_url
+        else:
+            self.run_record.pop("caido_url", None)
+
+        self.burp_upstream_unavailable_reason = (
+            unavailable_reason.strip()
+            if isinstance(unavailable_reason, str) and unavailable_reason
+            else None
+        )
+        self.save_run_data()
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
         if mark_complete:

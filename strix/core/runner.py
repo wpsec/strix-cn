@@ -36,8 +36,10 @@ from strix.core.inputs import (
     build_scope_context,
     make_model_settings,
 )
+from strix.core.proxy_scope import ensure_caido_proxy_scope
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 
@@ -200,8 +202,16 @@ async def run_strix_scan(
         scan_id,
         image=image,
         local_sources=local_sources or [],
+        burp_port=scan_config.get("burp_port"),
     )
     logger.info("Sandbox ready for scan %s", scan_id)
+
+    report_state = get_global_report_state()
+    if report_state is not None:
+        report_state.set_caido_connection(
+            bundle.get("caido_url"),
+            unavailable_reason=bundle.get("burp_upstream_unavailable_reason"),
+        )
 
     sessions_to_close: list[SQLiteSession] = []
 
@@ -227,6 +237,19 @@ async def run_strix_scan(
         hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
 
         scope_context = build_scope_context(scan_config)
+        proxy_scope = bundle.get("proxy_scope")
+        if proxy_scope is None and bundle.get("caido_client") is not None:
+            proxy_scope = await ensure_caido_proxy_scope(
+                bundle["caido_client"],
+                scan_id=scan_id,
+                allowlist=scope_context.get("proxy_scope_allowlist") or [],
+                denylist=scope_context.get("proxy_scope_denylist") or [],
+            )
+            bundle["proxy_scope"] = proxy_scope
+        if proxy_scope is not None:
+            scope_context["proxy_scope_id"] = proxy_scope.scope_id
+            scope_context["proxy_scope_name"] = proxy_scope.scope_name
+
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,
@@ -284,6 +307,9 @@ async def run_strix_scan(
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
             "caido_client": bundle["caido_client"],
+            "caido_scope_id": scope_context.get("proxy_scope_id"),
+            "caido_scope_allowlist": scope_context.get("proxy_scope_allowlist") or [],
+            "caido_scope_denylist": scope_context.get("proxy_scope_denylist") or [],
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,

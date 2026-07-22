@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from strix.core.inputs import build_root_task, child_initial_input, make_model_settings
+from strix.core.inputs import (
+    build_root_task,
+    build_scope_context,
+    child_initial_input,
+    make_model_settings,
+)
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -112,6 +117,42 @@ def test_build_root_task_diff_scope() -> None:
     assert "Scope Constraints:" in task
     assert "3 changed file(s)" in task
     assert "2 deleted file(s)" in task
+
+
+def test_build_root_task_burp_passive_mode() -> None:
+    task = build_root_task({"burp_port": 8081})
+
+    assert "Passive Proxy Mode:" in task
+    assert "Burp upstream proxy" in task
+    assert "Do not invent, broaden, or probe unrelated hosts" in task
+
+
+def test_build_scope_context_burp_passive_mode() -> None:
+    scope = build_scope_context({"burp_port": 8081})
+
+    assert scope["scope_source"] == "burp_upstream_proxy"
+    assert scope["authorization_source"] == "operator_routed_proxy_traffic"
+    assert scope["authorized_targets"] == []
+    assert scope["proxy_passive_mode"] is True
+    assert scope["proxy_scope_enforced"] is True
+    assert "*.caido.io" in scope["proxy_scope_denylist"]
+
+
+def test_build_scope_context_burp_mode_with_explicit_target_allowlist() -> None:
+    scope = build_scope_context(
+        {
+            "burp_port": 8081,
+            "targets": [
+                {
+                    "type": "web_application",
+                    "details": {"target_url": "https://app.example.com/path"},
+                }
+            ],
+        }
+    )
+
+    assert scope["proxy_scope_allowlist"] == ["app.example.com"]
+    assert "*.example.com" not in scope["proxy_scope_allowlist"]
 
 
 @pytest.mark.parametrize("model_name", ["openai/o3", "gpt-4o"])

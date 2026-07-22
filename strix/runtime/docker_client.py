@@ -110,6 +110,17 @@ def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:
     )
 
 
+def _docker_port_bindings(
+    exposed_ports: tuple[int, ...],
+    host_port_overrides: dict[int, int | None] | None = None,
+) -> dict[str, tuple[str, int | None]]:
+    overrides = host_port_overrides or {}
+    return {
+        _docker_port_key(port): ("127.0.0.1", overrides.get(port))
+        for port in exposed_ports
+    }
+
+
 class StrixDockerSandboxSession(DockerSandboxSession):
     sandbox_network: str = ""
 
@@ -152,6 +163,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] | None = None
+    strix_exposed_port_bindings: dict[int, int | None] | None = None
 
     async def _create_container(
         self,
@@ -202,9 +214,10 @@ class StrixDockerSandboxClient(DockerSandboxClient):
                     security_opt=["apparmor:unconfined"],
                 )
         if exposed_ports:
-            create_kwargs["ports"] = {
-                _docker_port_key(port): ("127.0.0.1", None) for port in exposed_ports
-            }
+            create_kwargs["ports"] = _docker_port_bindings(
+                exposed_ports,
+                self.strix_exposed_port_bindings,
+            )
         # ----- END VERBATIM COPY -----
 
         # Strix injections — append, don't overwrite, so FUSE/SYS_ADMIN survives.

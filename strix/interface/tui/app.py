@@ -54,6 +54,15 @@ def get_package_version() -> str:
         return "dev"
 
 
+def _set_driver_mouse_support(driver: Any, *, enabled: bool) -> bool:
+    method_name = "_enable_mouse_support" if enabled else "_disable_mouse_support"
+    method = getattr(driver, method_name, None)
+    if not callable(method):
+        return False
+    method()
+    return True
+
+
 class ChatTextArea(TextArea):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -228,7 +237,7 @@ class HelpScreen(ModalScreen):  # type: ignore[misc]
         yield Grid(
             Label("Strix 帮助", id="help_title"),
             Label(
-                "F1        帮助\nCtrl+Q/C  退出\nESC       停止代理\n"
+                "F1        帮助\nF2        复制模式切换\nCtrl+Q/C  退出\nESC       停止代理\n"
                 "Enter     发送消息给代理\nTab       切换面板\n↑/↓       浏览代理树",
                 id="help_content",
             ),
@@ -762,9 +771,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     selected_agent_id: reactive[str | None] = reactive(default=None)
     show_splash: reactive[bool] = reactive(default=True)
+    terminal_copy_mode: reactive[bool] = reactive(default=False)
 
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("f1", "toggle_help", "帮助", priority=True),
+        Binding("f2", "toggle_terminal_copy_mode", "复制模式", priority=True),
         Binding("ctrl+q", "request_quit", "退出", priority=True),
         Binding("ctrl+c", "request_quit", "退出", priority=True),
         Binding("escape", "stop_selected_agent", "停止代理", priority=True),
@@ -828,6 +839,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "local_sources": getattr(args, "local_sources", None) or [],
             "scope_mode": getattr(args, "scope_mode", "auto"),
             "diff_base": getattr(args, "diff_base", None),
+            "burp_port": getattr(args, "burp_port", None),
             "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
         }
 
@@ -1732,6 +1744,26 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self.push_screen(HelpScreen())
 
+    def action_toggle_terminal_copy_mode(self) -> None:
+        if self.show_splash or self._driver is None:
+            return
+
+        enable_copy_mode = not self.terminal_copy_mode
+        if not _set_driver_mouse_support(self._driver, enabled=not enable_copy_mode):
+            self.notify("当前终端不支持切换复制模式", severity="warning", timeout=3)
+            return
+
+        self.terminal_copy_mode = enable_copy_mode
+        self.clear_selection()
+
+        if enable_copy_mode:
+            self.notify(
+                "终端复制模式已开启：直接用鼠标拖拽复制，按 F2 返回交互模式",
+                timeout=4,
+            )
+        else:
+            self.notify("已返回交互模式：恢复滚动和鼠标操作", timeout=3)
+
     async def action_request_quit(self) -> None:
         if self.show_splash or not self.is_mounted:
             await self.action_custom_quit()
@@ -1858,92 +1890,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         else:
             sidebar.remove_class("-hidden")
             chat_area.remove_class("-full-width")
-
-    def on_mouse_up(self, _event: events.MouseUp) -> None:
-        self.set_timer(0.05, self._auto_copy_selection)
-
-    _ICON_PREFIXES: ClassVar[tuple[str, ...]] = (
-        "🐞 ",
-        "🌐 ",
-        "📋 ",
-        "🧠 ",
-        "◆ ",
-        "◇ ",
-        "◈ ",
-        "→ ",
-        "○ ",
-        "● ",
-        "✓ ",
-        "✗ ",
-        "⚠ ",
-        "▍ ",
-        "▍",
-        "┃ ",
-        "• ",
-        ">_ ",
-        "</> ",
-        "<~> ",
-        "[ ] ",
-        "[~] ",
-        "[•] ",
-    )
-
-    _DECORATIVE_LINES: ClassVar[frozenset[str]] = frozenset(
-        {
-            "● 进行中...",
-            "✓ 已完成",
-            "✗ 失败",
-            "✗ 错误",
-            "○ 未知",
-        }
-    )
-
-    @staticmethod
-    def _clean_copied_text(text: str) -> str:
-        lines = text.split("\n")
-        cleaned: list[str] = []
-        for line in lines:
-            stripped = line.lstrip()
-            if stripped in StrixTUIApp._DECORATIVE_LINES:
-                continue
-            if stripped and all(c == "─" for c in stripped):
-                continue
-            out = line
-            for prefix in StrixTUIApp._ICON_PREFIXES:
-                if stripped.startswith(prefix):
-                    leading = line[: len(line) - len(line.lstrip())]
-                    out = leading + stripped[len(prefix) :]
-                    break
-            cleaned.append(out)
-        return "\n".join(cleaned)
-
-    def _auto_copy_selection(self) -> None:
-        copied = False
-
-        try:
-            if self.screen.selections:
-                selected = self.screen.get_selected_text()
-                self.screen.clear_selection()
-                if selected and selected.strip():
-                    cleaned = self._clean_copied_text(selected)
-                    self.copy_to_clipboard(cleaned if cleaned.strip() else selected)
-                    copied = True
-        except Exception:
-            logger.debug("Failed to copy screen selection", exc_info=True)
-
-        if not copied:
-            try:
-                chat_input = self.query_one("#chat_input", ChatTextArea)
-                selected = chat_input.selected_text
-                if selected and selected.strip():
-                    self.copy_to_clipboard(selected)
-                    chat_input.move_cursor(chat_input.cursor_location)
-                    copied = True
-            except Exception:
-                logger.debug("Failed to copy chat input selection", exc_info=True)
-
-        if copied:
-            self.notify("Copied to clipboard", timeout=2)
 
 
 async def run_tui(args: argparse.Namespace) -> None:

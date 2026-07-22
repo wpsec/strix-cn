@@ -36,6 +36,7 @@ from strix.interface.utils import (
     assign_workspace_subdirs,
     build_final_stats_text,
     build_mount_targets_info,
+    build_target_summary_text,
     check_docker_connection,
     clone_repository,
     collect_local_sources,
@@ -401,6 +402,16 @@ def _positive_budget(value: str) -> float:
     return budget
 
 
+def _tcp_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("端口必须是整数。") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("端口必须在 1 到 65535 之间。")
+    return port
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix 多代理网络安全渗透测试工具",
@@ -439,6 +450,12 @@ def parse_arguments() -> argparse.Namespace:
   # 自定义指令（来自文件）
   strix --target example.com --instruction-file ./instructions.txt
   strix --target https://app.com --instruction-file /path/to/detailed_instructions.md
+
+  # 固定 Burp 上游代理端口
+  strix --target https://example.com --burp-port 8081
+
+  # Burp 被动代理模式（不预设静态目标）
+  strix --burp-port 8081
         """,
     )
 
@@ -456,7 +473,7 @@ def parse_arguments() -> argparse.Namespace:
         action="append",
         help="要测试的目标（URL、仓库、本地目录路径、域名或 IP 地址）。"
         "多目标扫描时可重复指定。"
-        "新任务必须至少提供 --target、--target-list 或 --mount 之一。",
+        "新任务必须至少提供 --target、--target-list、--mount 或 --burp-port 之一。",
     )
     parser.add_argument(
         "--target-list",
@@ -548,6 +565,13 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--burp-port",
+        type=_tcp_port,
+        metavar="PORT",
+        help="将 Burp 上游代理入口固定绑定到本机端口。未指定时默认使用随机本机端口。",
+    )
+
+    parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",
@@ -590,9 +614,9 @@ def parse_arguments() -> argparse.Namespace:
                 f"请改用新的 --run-name，或去掉 --resume 重新开始。"
             )
     else:
-        if not args.target and not args.target_list and not args.mount:
+        if not args.target and not args.target_list and not args.mount and args.burp_port is None:
             parser.error(
-                "必须至少提供以下参数之一：-t/--target、--target-list 或 --mount"
+                "必须至少提供以下参数之一：-t/--target、--target-list、--mount 或 --burp-port"
                 "（也可使用 --resume <run_name> 恢复之前的扫描）"
             )
         args.targets_info = []
@@ -662,6 +686,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,
+        "burp_port": args.burp_port,
     }
     write_run_record(run_dir, run_record)
 
@@ -680,8 +705,9 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     except RuntimeError as exc:
         parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
 
+    persisted_burp_port = state.get("burp_port")
     args.targets_info = state.get("targets_info") or []
-    if not args.targets_info:
+    if not args.targets_info and persisted_burp_port is None:
         parser.error(f"--resume {args.resume}：run.json 中缺少 targets_info")
 
     for target in args.targets_info:
@@ -706,6 +732,8 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         args.local_sources = state.get("local_sources")
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
+    if args.burp_port is None and persisted_burp_port is not None:
+        args.burp_port = persisted_burp_port
     persisted_scan_mode = state.get("scan_mode")
     if persisted_scan_mode and args.scan_mode == "deep":
         args.scan_mode = persisted_scan_mode
@@ -725,16 +753,10 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     else:
         completion_text.append("本次会话已结束", style="bold #eab308")
 
-    target_text = Text()
-    target_text.append("目标", style="dim")
-    target_text.append("  ")
-    if len(args.targets_info) == 1:
-        target_text.append(args.targets_info[0]["original"], style="bold white")
-    else:
-        target_text.append(f"{len(args.targets_info)} 个目标", style="bold white")
-        for target_info in args.targets_info:
-            target_text.append("\n        ")
-            target_text.append(target_info["original"], style="white")
+    target_text = build_target_summary_text(
+        args.targets_info,
+        burp_port=getattr(args, "burp_port", None),
+    )
 
     stats_text = build_final_stats_text(report_state)
 

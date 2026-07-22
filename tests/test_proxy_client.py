@@ -9,6 +9,7 @@ call at a time against the shared client.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -143,6 +144,7 @@ async def test_host_call_serializes_concurrent_calls() -> None:
 class _Ctx:
     def __init__(self, context: Any) -> None:
         self.context = context
+        self.tool_name = "proxy_test"
 
 
 def test_ctx_client_returns_client_when_present() -> None:
@@ -154,6 +156,21 @@ def test_ctx_client_returns_client_when_present() -> None:
 def test_ctx_client_returns_none_without_client() -> None:
     assert tools._ctx_client(cast("Any", _Ctx({}))) is None
     assert tools._ctx_client(cast("Any", _Ctx(None))) is None
+
+
+def test_ctx_scope_id_returns_scope_when_present() -> None:
+    assert tools._ctx_scope_id(cast("Any", _Ctx({"caido_scope_id": "scope-1"}))) == "scope-1"
+
+
+def test_ctx_scope_patterns_returns_allow_and_deny_lists() -> None:
+    allow, deny = tools._ctx_scope_patterns(
+        cast(
+            "Any",
+            _Ctx({"caido_scope_allowlist": ["app.example.com"], "caido_scope_denylist": ["*.google.com"]}),
+        )
+    )
+    assert allow == ["app.example.com"]
+    assert deny == ["*.google.com"]
 
 
 def test_coerce_sitemap_entry_id_accepts_numeric_string() -> None:
@@ -189,3 +206,79 @@ async def test_list_sitemap_with_client_rejects_invalid_parent_id_without_queryi
     assert result["success"] is False
     assert "数字型 sitemap 条目 ID" in result["error"]
     assert client.graphql.called is False
+
+
+async def test_list_requests_defaults_to_context_scope_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+    captured: dict[str, Any] = {}
+
+    class _PageInfo:
+        has_next_page = False
+        has_previous_page = False
+        start_cursor = None
+        end_cursor = None
+
+    class _Connection:
+        edges: list[Any] = []
+        page_info = _PageInfo()
+
+    async def _list_requests_with_client(
+        _client: Any,
+        *,
+        httpql_filter: str | None = None,
+        first: int = 50,
+        after: str | None = None,
+        sort_by: str = "timestamp",
+        sort_order: str = "desc",
+        scope_id: str | None = None,
+    ) -> Any:
+        captured["scope_id"] = scope_id
+        return _Connection()
+
+    monkeypatch.setattr(caido_api, "list_requests_with_client", _list_requests_with_client)
+
+    payload = await tools.list_requests.on_invoke_tool(
+        cast("Any", _Ctx({"caido_client": client, "caido_scope_id": "scope-1"})),
+        json.dumps({}),
+    )
+
+    assert json.loads(payload)["success"] is True
+    assert captured["scope_id"] == "scope-1"
+
+
+async def test_repeat_request_blocks_out_of_scope_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+
+    class _Request:
+        host = "api.google.com"
+        raw = b"GET / HTTP/1.1\r\nHost: api.google.com\r\n\r\n"
+
+    class _RequestResult:
+        request = _Request()
+
+    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+        return _RequestResult()
+
+    monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
+
+    payload = await tools.repeat_request.on_invoke_tool(
+        cast(
+            "Any",
+            _Ctx(
+                {
+                    "caido_client": client,
+                    "caido_scope_allowlist": ["app.example.com"],
+                    "caido_scope_denylist": ["google.com", "*.google.com"],
+                }
+            ),
+        ),
+        json.dumps({"request_id": "req-1"}),
+    )
+
+    result = json.loads(payload)
+    assert result["success"] is False
+    assert "不在当前 Strix 代理作用域内" in result["error"]
