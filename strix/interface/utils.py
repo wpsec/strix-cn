@@ -318,9 +318,9 @@ def _build_llm_usage_stats(
         stats_text.append(f"${cost:.4f}", style="#fbbf24")
 
 
-def _format_burp_upstream_endpoint(caido_url: str) -> str:
-    parsed = urlparse(caido_url)
-    host = parsed.hostname or caido_url
+def _format_local_endpoint(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or url
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     if parsed.port is not None:
@@ -362,7 +362,7 @@ def _append_burp_upstream_status(stats_text: Text, report_state: Any) -> None:
     if isinstance(caido_url, str) and caido_url:
         stats_text.append("\n")
         stats_text.append("Burp 上游代理: ", style="bold white")
-        stats_text.append(_format_burp_upstream_endpoint(caido_url), style="white")
+        stats_text.append(_format_local_endpoint(caido_url), style="white")
         stats_text.append("\n")
         stats_text.append("仅本机可访问", style="dim white")
         return
@@ -371,6 +371,55 @@ def _append_burp_upstream_status(stats_text: Text, report_state: Any) -> None:
         stats_text.append("\n")
         stats_text.append("Burp 上游代理: ", style="bold white")
         stats_text.append(unavailable_reason, style="dim white")
+
+
+def _append_caido_workbench_status(stats_text: Text, report_state: Any) -> None:
+    caido_ui_url = getattr(report_state, "caido_ui_url", None)
+    if not isinstance(caido_ui_url, str) or not caido_ui_url:
+        return
+
+    stats_text.append("\n")
+    stats_text.append("Caido 工作台: ", style="bold white")
+    stats_text.append(_format_local_endpoint(caido_ui_url), style="white")
+
+
+def _append_proxy_capture_status(stats_text: Text, report_state: Any) -> None:
+    capture = getattr(report_state, "proxy_capture_state", None)
+    if capture is None:
+        return
+
+    error = getattr(report_state, "proxy_capture_error", None)
+    if isinstance(error, str) and error:
+        stats_text.append("\n")
+        stats_text.append("代理捕获: ", style="bold white")
+        stats_text.append("监控暂不可用", style="dim white")
+        return
+
+    recent_count = max(0, int(getattr(capture, "recent_request_count", 0) or 0))
+    has_more = bool(getattr(capture, "recent_request_has_more", False))
+
+    stats_text.append("\n")
+    stats_text.append("代理捕获: ", style="bold white")
+    if recent_count <= 0:
+        stats_text.append("暂未看到新流量", style="dim white")
+        return
+
+    count_suffix = "+" if has_more else ""
+    stats_text.append(f"最近 {recent_count}{count_suffix} 条", style="white")
+
+    method = str(getattr(capture, "latest_method", "") or "").strip()
+    host = str(getattr(capture, "latest_host", "") or "").strip()
+    path = str(getattr(capture, "latest_path", "") or "").strip()
+    status_code = getattr(capture, "latest_status_code", None)
+    latest_summary = " ".join(part for part in [method, f"{host}{path}".strip()] if part).strip()
+    if not latest_summary:
+        return
+
+    stats_text.append("\n")
+    stats_text.append("最近流量: ", style="bold white")
+    stats_text.append(_truncate_text(latest_summary, 88), style="white")
+    if isinstance(status_code, int) and status_code > 0:
+        stats_text.append(f" [{status_code}]", style="dim white")
 
 
 def build_final_stats_text(report_state: Any) -> Text:
@@ -424,6 +473,8 @@ def build_live_stats_text(report_state: Any) -> Text:
 
     _build_llm_usage_stats(stats_text, report_state, live=True)
     _append_burp_upstream_status(stats_text, report_state)
+    _append_caido_workbench_status(stats_text, report_state)
+    _append_proxy_capture_status(stats_text, report_state)
 
     return stats_text
 
@@ -449,8 +500,16 @@ def build_tui_stats_text(report_state: Any) -> Text:
             stats_text.append(f"${cost:.2f}", style="white")
 
     _append_burp_upstream_status(stats_text, report_state)
+    _append_caido_workbench_status(stats_text, report_state)
+    _append_proxy_capture_status(stats_text, report_state)
 
     return stats_text
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3]}..."
 
 
 def _slugify_for_run_name(text: str, max_length: int = 32) -> str:

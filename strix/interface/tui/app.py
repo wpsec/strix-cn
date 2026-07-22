@@ -40,8 +40,9 @@ from strix.interface.tui.renderers import render_tool_widget
 from strix.interface.tui.renderers.agent_message_renderer import AgentMessageRenderer
 from strix.interface.tui.renderers.user_message_renderer import UserMessageRenderer
 from strix.interface.utils import build_tui_stats_text
-from strix.report.state import ReportState, set_global_report_state
+from strix.report.state import ProxyCaptureState, ReportState, set_global_report_state
 from strix.runtime import session_manager
+from strix.runtime.proxy_capture import ProxyCaptureSnapshot, fetch_proxy_capture_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -809,6 +810,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
         self._scan_error: BaseException | None = None
+        self._proxy_monitor_thread: threading.Thread | None = None
+        self._proxy_monitor_stop_event = threading.Event()
+        self._last_proxy_notified_request_id: str | None = None
 
         self._spinner_frame_index: int = 0
         self._sweep_num_squares: int = 6
@@ -845,9 +849,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _setup_cleanup_handlers(self) -> None:
         def cleanup_on_exit() -> None:
+            self._stop_proxy_monitor_thread()
             self.report_state.cleanup()
 
         def signal_handler(_signum: int, _frame: Any) -> None:
+            self._stop_proxy_monitor_thread()
             self._fire_sandbox_cleanup()
             self.report_state.cleanup(status="interrupted")
             sys.exit(0)
@@ -967,6 +973,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.show_splash = False
 
         self._start_scan_thread()
+        self._start_proxy_monitor_thread()
 
         self.set_interval(0.5, self._update_ui)
 
@@ -1072,6 +1079,15 @@ class StrixTUIApp(App):  # type: ignore[misc]
     def _get_chat_content(
         self,
     ) -> tuple[Any, str | None]:
+        if self._scan_error is not None:
+            return self._get_chat_placeholder_content(
+                self._format_scan_startup_error(
+                    self._scan_error,
+                    burp_port=self.scan_config.get("burp_port"),
+                ),
+                "placeholder-scan-error",
+            )
+
         if not self.selected_agent_id:
             return self._get_chat_placeholder_content("正在加载...", "placeholder-no-agent")
 
@@ -1456,6 +1472,26 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.call_later(self._update_chat_view)
         self._update_agent_status_display()
 
+    @staticmethod
+    def _format_scan_startup_error(
+        error: BaseException,
+        *,
+        burp_port: int | None = None,
+    ) -> str:
+        message = str(error).strip() or error.__class__.__name__
+        normalized = message.lower()
+        if burp_port and (
+            "port is already allocated" in normalized
+            or "address already in use" in normalized
+            or f"127.0.0.1:{burp_port}" in normalized
+        ):
+            return (
+                f"启动失败：Burp 监听端口 127.0.0.1:{burp_port} 已被占用。\n"
+                "请先关闭旧的 Strix 实例或其他占用该端口的程序，"
+                "或者改用新的 `--burp-port` 后重新启动。"
+            )
+        return f"启动失败：{message}"
+
     def _start_scan_thread(self) -> None:
         def scan_target() -> None:
             try:
@@ -1487,13 +1523,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     # graceful stop, not a scan error, if it ever does.
                     logger.info("Scan stopped: --max-budget-usd limit reached")
                 except (ConnectionError, TimeoutError) as e:
-                    logging.exception("Network error during scan")
+                    logger.exception("Network error during scan")
                     self._scan_error = e
                 except RuntimeError as e:
-                    logging.exception("Runtime error during scan")
+                    logger.exception("Runtime error during scan")
                     self._scan_error = e
                 except Exception as e:
-                    logging.exception("Unexpected error during scan")
+                    logger.exception("Unexpected error during scan")
                     self._scan_error = e
                 finally:
                     with contextlib.suppress(Exception):
@@ -1504,11 +1540,143 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     self._scan_completed.set()
 
             except Exception:
-                logging.exception("Error setting up scan thread")
+                logger.exception("Error setting up scan thread")
                 self._scan_completed.set()
 
         self._scan_thread = threading.Thread(target=scan_target, daemon=True)
         self._scan_thread.start()
+
+    def _start_proxy_monitor_thread(self) -> None:
+        if self.scan_config.get("burp_port") is None:
+            return
+        if self._proxy_monitor_thread is not None and self._proxy_monitor_thread.is_alive():
+            return
+
+        self._proxy_monitor_stop_event.clear()
+
+        def monitor_target() -> None:
+            last_error: str | None = None
+
+            while not self._proxy_monitor_stop_event.wait(2.0):
+                if self._scan_completed.is_set():
+                    return
+
+                caido_ui_url = self.report_state.caido_ui_url
+                if not isinstance(caido_ui_url, str) or not caido_ui_url:
+                    continue
+
+                scope_id = self.report_state.proxy_scope_id
+                try:
+                    snapshot = asyncio.run(
+                        fetch_proxy_capture_snapshot(caido_ui_url, scope_id=scope_id),
+                    )
+                except Exception as exc:
+                    error = str(exc).strip() or exc.__class__.__name__
+                    if error != last_error:
+                        logger.warning("Proxy capture monitor failed: %s", error)
+                        self.report_state.update_proxy_capture_state(
+                            self.report_state.proxy_capture_state,
+                            error=error,
+                        )
+                        last_error = error
+                    continue
+
+                last_error = None
+                self.report_state.update_proxy_capture_state(
+                    ProxyCaptureState(
+                        recent_request_count=snapshot.recent_request_count,
+                        recent_request_has_more=snapshot.recent_request_has_more,
+                        latest_request_id=snapshot.latest_request_id,
+                        latest_method=snapshot.latest_method,
+                        latest_host=snapshot.latest_host,
+                        latest_path=snapshot.latest_path,
+                        latest_status_code=snapshot.latest_status_code,
+                    ),
+                )
+
+                if scope_id is None:
+                    continue
+                if not self._should_auto_resume_from_proxy(snapshot):
+                    continue
+
+                root_agent_id = self._waiting_root_agent_id()
+                if root_agent_id is None:
+                    continue
+
+                if self._notify_waiting_root_agent(root_agent_id, snapshot):
+                    self._last_proxy_notified_request_id = snapshot.latest_request_id
+
+        self._proxy_monitor_thread = threading.Thread(target=monitor_target, daemon=True)
+        self._proxy_monitor_thread.start()
+
+    def _stop_proxy_monitor_thread(self) -> None:
+        self._proxy_monitor_stop_event.set()
+        thread = self._proxy_monitor_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1)
+
+    def _waiting_root_agent_id(self) -> str | None:
+        loop = self._scan_loop
+        if loop is None or loop.is_closed():
+            return None
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(self.coordinator.graph_snapshot(), loop)
+            parent_of, statuses, _names = future.result(timeout=2)
+        except Exception:
+            logger.debug("Unable to read agent graph for proxy monitor", exc_info=True)
+            return None
+
+        for agent_id, parent_id in parent_of.items():
+            if parent_id is None and statuses.get(agent_id) == "waiting":
+                return agent_id
+        return None
+
+    def _should_auto_resume_from_proxy(self, snapshot: ProxyCaptureSnapshot) -> bool:
+        if self.scan_config.get("burp_port") is None:
+            return False
+        if not snapshot.latest_request_id:
+            return False
+        return snapshot.latest_request_id != self._last_proxy_notified_request_id
+
+    @staticmethod
+    def _proxy_resume_message(snapshot: ProxyCaptureSnapshot) -> str:
+        count_suffix = "+" if snapshot.recent_request_has_more else ""
+        recent_count = max(0, snapshot.recent_request_count)
+        return (
+            "检测到新的 Burp 代理流量已进入当前扫描。"
+            f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
+            " 请立即重新检查代理历史和站点地图，并仅基于最新捕获流量继续分析。"
+        )
+
+    def _notify_waiting_root_agent(
+        self,
+        agent_id: str,
+        snapshot: ProxyCaptureSnapshot,
+    ) -> bool:
+        loop = self._scan_loop
+        if loop is None or loop.is_closed():
+            return False
+
+        message = self._proxy_resume_message(snapshot)
+        with contextlib.suppress(Exception):
+            self.call_from_thread(self.live_view.record_user_message, agent_id, message)
+
+        future = asyncio.run_coroutine_threadsafe(
+            self.coordinator.send(
+                agent_id,
+                {"from": "user", "content": message, "type": "instruction"},
+            ),
+            loop,
+        )
+        try:
+            delivered = bool(future.result(timeout=2))
+        except Exception:
+            logger.exception("Failed to wake waiting root agent from proxy traffic")
+            return False
+        if delivered:
+            logger.info("Woke waiting root agent %s after new proxy traffic", agent_id)
+        return delivered
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
         try:
@@ -1836,6 +2004,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         )
 
     async def action_custom_quit(self) -> None:
+        self._stop_proxy_monitor_thread()
         self._fire_sandbox_cleanup()
 
         if self._scan_thread and self._scan_thread.is_alive():

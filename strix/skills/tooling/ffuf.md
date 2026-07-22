@@ -44,7 +44,7 @@ Common patterns:
 - Recursive discovery:
   `ffuf -w dirs.txt -u https://target.tld/FUZZ -recursion -recursion-depth 2 -ac -t 30 -noninteractive`
 - Proxy-instrumented run:
-  `ffuf -w wordlist.txt -u https://target.tld/FUZZ -x http://127.0.0.1:48080 -mc 200,301,302,403 -ac -noninteractive`
+  `ffuf -w wordlist.txt -u https://target.tld/FUZZ -x http://127.0.0.1:48081 -mc 200,301,302,403 -ac -noninteractive`
 
 Critical correctness rules:
 - `FUZZ` must appear exactly at the mutation point in URL/header/body.

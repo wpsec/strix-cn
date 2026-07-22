@@ -6,12 +6,18 @@ from strix.runtime.docker_client import _docker_port_bindings
 
 
 def test_docker_port_bindings_default_to_random_host_port() -> None:
-    bindings = _docker_port_bindings((48080,))
+    bindings = _docker_port_bindings((48080, 48081))
 
-    assert bindings == {"48080/tcp": ("127.0.0.1", None)}
+    assert bindings == {
+        "48080/tcp": ("127.0.0.1", None),
+        "48081/tcp": ("127.0.0.1", None),
+    }
 
 
 def test_docker_port_bindings_honor_fixed_host_port_override() -> None:
-    bindings = _docker_port_bindings((48080,), {48080: 8081})
+    bindings = _docker_port_bindings((48080, 48081), {48081: 8081})
 
-    assert bindings == {"48080/tcp": ("127.0.0.1", 8081)}
+    assert bindings == {
+        "48080/tcp": ("127.0.0.1", None),
+        "48081/tcp": ("127.0.0.1", 8081),
+    }

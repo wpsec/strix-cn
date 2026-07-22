@@ -2,10 +2,16 @@ FROM kalilinux/kali-rolling:latest
 
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
 
+RUN printf '%s\n' \
+    'Acquire::Retries "5";' \
+    'Acquire::http::Timeout "30";' \
+    'Acquire::https::Timeout "30";' \
+    > /etc/apt/apt.conf.d/80strix-retries
+
 RUN apt-get update && \
-    apt-get install -y kali-archive-keyring sudo && \
+    apt-get install -y --fix-missing kali-archive-keyring sudo && \
     apt-get update && \
-    apt-get upgrade -y
+    apt-get upgrade -y --fix-missing
 
 RUN useradd -m -s /bin/bash pentester && \
     usermod -aG sudo pentester && \

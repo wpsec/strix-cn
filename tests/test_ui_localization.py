@@ -103,3 +103,22 @@ def test_finish_and_load_skill_renderers_use_chinese_labels() -> None:
 
 def test_tui_bindings_include_terminal_copy_mode_toggle() -> None:
     assert any(binding.key == "f2" for binding in StrixTUIApp.BINDINGS)
+
+
+def test_format_scan_startup_error_explains_burp_port_conflict() -> None:
+    message = StrixTUIApp._format_scan_startup_error(
+        RuntimeError("Bind for 127.0.0.1:8081 failed: port is already allocated"),
+        burp_port=8081,
+    )
+
+    assert "启动失败" in message
+    assert "127.0.0.1:8081 已被占用" in message
+    assert "--burp-port" in message
+
+
+def test_format_scan_startup_error_falls_back_to_original_message() -> None:
+    message = StrixTUIApp._format_scan_startup_error(
+        RuntimeError("loginAsGuest failed after 10 attempts"),
+    )
+
+    assert message == "启动失败：loginAsGuest failed after 10 attempts"

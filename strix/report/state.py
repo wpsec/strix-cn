@@ -2,6 +2,7 @@ import json
 import logging
 import subprocess
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -25,6 +26,17 @@ from strix.telemetry import posthog, scarf
 logger = logging.getLogger(__name__)
 
 _global_report_state: Optional["ReportState"] = None
+
+
+@dataclass(slots=True, frozen=True)
+class ProxyCaptureState:
+    recent_request_count: int = 0
+    recent_request_has_more: bool = False
+    latest_request_id: str | None = None
+    latest_method: str | None = None
+    latest_host: str | None = None
+    latest_path: str | None = None
+    latest_status_code: int | None = None
 
 
 def _strix_version() -> str | None:
@@ -130,7 +142,12 @@ class ReportState:
         self._saved_vuln_ids: set[str] = set()
 
         self.caido_url: str | None = None
+        self.caido_ui_url: str | None = None
         self.burp_upstream_unavailable_reason: str | None = None
+        self.proxy_scope_id: str | None = None
+        self.proxy_scope_name: str | None = None
+        self.proxy_capture_state = ProxyCaptureState()
+        self.proxy_capture_error: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
 
         self._sarif_repo_ctx: dict[str, Any] | None = None
@@ -177,7 +194,39 @@ class ReportState:
                 self.end_time = data["end_time"]
             caido_url = data.get("caido_url")
             self.caido_url = caido_url.strip() if isinstance(caido_url, str) and caido_url else None
+            caido_ui_url = data.get("caido_ui_url")
+            self.caido_ui_url = (
+                caido_ui_url.strip()
+                if isinstance(caido_ui_url, str) and caido_ui_url
+                else None
+            )
             self.burp_upstream_unavailable_reason = None
+            proxy_scope_id = data.get("proxy_scope_id")
+            self.proxy_scope_id = (
+                proxy_scope_id.strip()
+                if isinstance(proxy_scope_id, str) and proxy_scope_id
+                else None
+            )
+            proxy_scope_name = data.get("proxy_scope_name")
+            self.proxy_scope_name = (
+                proxy_scope_name.strip()
+                if isinstance(proxy_scope_name, str) and proxy_scope_name
+                else None
+            )
+            proxy_capture = data.get("proxy_capture")
+            if isinstance(proxy_capture, dict):
+                self.proxy_capture_state = ProxyCaptureState(
+                    recent_request_count=int(proxy_capture.get("recent_request_count") or 0),
+                    recent_request_has_more=bool(proxy_capture.get("recent_request_has_more")),
+                    latest_request_id=_string_or_none(proxy_capture.get("latest_request_id")),
+                    latest_method=_string_or_none(proxy_capture.get("latest_method")),
+                    latest_host=_string_or_none(proxy_capture.get("latest_host")),
+                    latest_path=_string_or_none(proxy_capture.get("latest_path")),
+                    latest_status_code=_int_or_none(proxy_capture.get("latest_status_code")),
+                )
+            else:
+                self.proxy_capture_state = ProxyCaptureState()
+            self.proxy_capture_error = None
             scan_results = data.get("scan_results")
             if isinstance(scan_results, dict):
                 self.scan_results = scan_results
@@ -357,11 +406,20 @@ class ReportState:
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
         self.caido_url = None
+        self.caido_ui_url = None
         self.burp_upstream_unavailable_reason = None
+        self.proxy_scope_id = None
+        self.proxy_scope_name = None
+        self.proxy_capture_state = ProxyCaptureState()
+        self.proxy_capture_error = None
         self.run_record["status"] = "running"
         self.run_record["end_time"] = None
         self.run_record.pop("scan_results", None)
         self.run_record.pop("caido_url", None)
+        self.run_record.pop("caido_ui_url", None)
+        self.run_record.pop("proxy_scope_id", None)
+        self.run_record.pop("proxy_scope_name", None)
+        self.run_record.pop("proxy_capture", None)
         self.end_time = None
         self.scan_results = None
         self.final_scan_result = None
@@ -379,10 +437,31 @@ class ReportState:
             }
         )
 
+    def set_proxy_scope(
+        self,
+        scope_id: str | None,
+        *,
+        scope_name: str | None = None,
+    ) -> None:
+        self.proxy_scope_id = scope_id.strip() if isinstance(scope_id, str) and scope_id else None
+        self.proxy_scope_name = (
+            scope_name.strip() if isinstance(scope_name, str) and scope_name else None
+        )
+        if self.proxy_scope_id:
+            self.run_record["proxy_scope_id"] = self.proxy_scope_id
+        else:
+            self.run_record.pop("proxy_scope_id", None)
+        if self.proxy_scope_name:
+            self.run_record["proxy_scope_name"] = self.proxy_scope_name
+        else:
+            self.run_record.pop("proxy_scope_name", None)
+        self.save_run_data()
+
     def set_caido_connection(
         self,
         caido_url: str | None,
         *,
+        ui_url: str | None = None,
         unavailable_reason: str | None = None,
     ) -> None:
         self.caido_url = caido_url.strip() if isinstance(caido_url, str) and caido_url else None
@@ -391,12 +470,33 @@ class ReportState:
         else:
             self.run_record.pop("caido_url", None)
 
+        self.caido_ui_url = ui_url.strip() if isinstance(ui_url, str) and ui_url else None
+        if self.caido_ui_url:
+            self.run_record["caido_ui_url"] = self.caido_ui_url
+        else:
+            self.run_record.pop("caido_ui_url", None)
+
         self.burp_upstream_unavailable_reason = (
             unavailable_reason.strip()
             if isinstance(unavailable_reason, str) and unavailable_reason
             else None
         )
         self.save_run_data()
+
+    def update_proxy_capture_state(
+        self,
+        capture_state: ProxyCaptureState,
+        *,
+        error: str | None = None,
+        persist: bool = False,
+    ) -> None:
+        self.proxy_capture_state = capture_state
+        self.proxy_capture_error = (
+            error.strip() if isinstance(error, str) and error.strip() else None
+        )
+        self.run_record["proxy_capture"] = asdict(capture_state)
+        if persist:
+            self.save_run_data()
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
         if mark_complete:
@@ -673,3 +773,17 @@ def _usage_payload(completion_response: Any) -> dict[str, Any] | None:
     ):
         return None
     return payload
+
+
+def _string_or_none(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed

@@ -53,7 +53,7 @@ burp 被动扫描模式
 
 <!-- 这是一张图片，ocr 内容为： -->
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1784728733948-6b9d9d38-8a9f-49c6-b24f-eee391ee6473.png)
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1784730867493-84b575d8-5fd7-4a76-8374-15f168864d85.png)
 
 ## 使用场景
 
@@ -96,6 +96,12 @@ python -m pip install -e .
 # 提前拉取默认沙箱镜像
 docker pull ghcr.io/usestrix/strix-sandbox:1.0.0
 
+# 基于当前仓库构建本地 sandbox 镜像
+./scripts/docker.sh local
+
+# 在当前 shell 中指定 Strix 使用本地镜像
+export STRIX_IMAGE=strix-sandbox:local
+
 # 配置 AI 提供商
 # 示例：兼容国内/自建 OpenAI-compatible 网关
 export STRIX_LLM="openai/your-compatible-model"
@@ -109,6 +115,37 @@ export LLM_API_BASE="https://your-gateway.example/v1"
 > [!NOTE]  
 > 上面的方式安装的是当前 `strix-cn` 分支源码，不是官方安装脚本拉取的发布版。首次运行会自动拉取沙箱 Docker 镜像。扫描结果会保存在 `strix_runs/<run-name>`。  
 > 当前分支默认输出中文报告；如果你需要英文或双语结果，可在 `--instruction` 中显式说明。
+
+> [!IMPORTANT]  
+> 上面的 `docker pull ghcr.io/usestrix/strix-sandbox:1.0.0` 只是提前准备基础镜像；真正运行当前 `strix-cn` 分支时，推荐按快速开始里的方式继续执行 `./scripts/docker.sh local`，再通过 `export STRIX_IMAGE=strix-sandbox:local` 明确使用本地构建镜像。  
+> 这样可以确保当前分支在 `containers/`、证书、代理端口、Caido 启动参数、浏览器环境等 sandbox 侧改动也一并生效，而不是误用默认发布镜像。
+
+如果你之后开了一个新的 shell，或者想重新确认当前用的是本地镜像，可以再执行一次：
+
+```bash
+export STRIX_IMAGE=strix-sandbox:local
+
+# 后续运行会继续复用这个设置，直到你关闭当前 shell 或重新覆盖该变量
+.venv/bin/strix --target ./app-directory
+```
+
+如果你只想临时指定一次，也可以这样运行：
+
+```bash
+STRIX_IMAGE=strix-sandbox:local .venv/bin/strix --target ./app-directory
+```
+
+如果你只是改了 `containers/docker-entrypoint.sh`、少量启动脚本，或者当前网络环境无法顺利访问 `docker.io/kalilinux`，也可以优先使用轻量覆盖构建：
+
+```bash
+# 基于本机已有的发布镜像覆一层，只替换当前分支修改过的容器文件
+./scripts/docker-overlay.sh local
+
+export STRIX_IMAGE=strix-sandbox:local
+.venv/bin/strix --target ./app-directory
+```
+
+轻量覆盖构建默认基于本机已有的 `ghcr.io/usestrix/strix-sandbox:1.0.0`。如果这个基础镜像已经在本地，通常不需要再访问 `docker.io`。
 
 如果你所在环境访问 `ghcr.io` 较慢或受限，建议先手动执行上面的 `docker pull`，确认镜像 `ghcr.io/usestrix/strix-sandbox:1.0.0` 已可用后再启动扫描。
 
@@ -306,7 +343,7 @@ export STRIX_REASONING_EFFORT="high"  # 控制思考强度（默认 high，quick
 
 可前往 [LLM Providers 文档](https://docs.strix.ai/llm-providers/overview) 查看完整支持列表，以及本地模型、兼容网关与提供商接入方式。
 
-## 自费公益项目
+## 公益项目
 
 欢迎支持
 

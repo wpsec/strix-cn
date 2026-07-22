@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import ipaddress
 import logging
 import os
 import shutil
+import socket
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -28,8 +30,11 @@ from strix.runtime.local_dir_staging import stage_symlink_safe_dir
 logger = logging.getLogger(__name__)
 
 
-# In-container Caido sidecar port (matches the image's caido-cli bind).
-_CONTAINER_CAIDO_PORT = 48080
+# In-container Caido sidecar ports. The UI/GraphQL API and proxy listener are
+# split so Burp can talk to a dedicated proxy port instead of Caido's mixed
+# UI/proxy traffic splitter.
+_CONTAINER_CAIDO_UI_PORT = 48080
+_CONTAINER_CAIDO_PROXY_PORT = 48081
 
 
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
@@ -54,7 +59,7 @@ def _is_loopback_host(host: str) -> bool:
 def _burp_upstream_metadata(
     *,
     backend_name: str,
-    host_caido_url: str,
+    host_proxy_url: str,
 ) -> tuple[str | None, str | None]:
     if backend_name != "docker":
         return None, "当前 runtime backend 未提供可供 Burp 直连的本地代理端口"
@@ -62,11 +67,47 @@ def _burp_upstream_metadata(
     if os.environ.get(_DOCKER_SANDBOX_NETWORK_ENV, "").strip():
         return None, "当前自定义 sandbox network 模式未暴露可供 Burp 直连的本地代理端口"
 
-    parsed = urlparse(host_caido_url)
+    parsed = urlparse(host_proxy_url)
     if not _is_loopback_host(parsed.hostname or ""):
         return None, "当前运行模式未提供仅本机可访问的 Burp 上游代理端口"
 
-    return host_caido_url, None
+    return host_proxy_url, None
+
+
+def _caido_ui_metadata(*, host_ui_url: str) -> str | None:
+    parsed = urlparse(host_ui_url)
+    if not _is_loopback_host(parsed.hostname or ""):
+        return None
+    return host_ui_url
+
+
+def _assert_burp_port_available(*, backend_name: str, burp_port: int | None) -> None:
+    if backend_name != "docker" or not burp_port:
+        return
+
+    if os.environ.get(_DOCKER_SANDBOX_NETWORK_ENV, "").strip():
+        return
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.2)
+        result = probe.connect_ex(("127.0.0.1", burp_port))
+        if result == 0:
+            raise RuntimeError(
+                f"Burp 监听端口 127.0.0.1:{burp_port} 已被占用。"
+                "请关闭占用该端口的 Strix/其他程序，或改用新的 --burp-port 后重试。"
+            )
+        if result not in {
+            errno.ECONNREFUSED,
+            errno.ETIMEDOUT,
+            errno.EHOSTUNREACH,
+            errno.ENETUNREACH,
+            errno.EADDRNOTAVAIL,
+        }:
+            logger.debug(
+                "Burp port probe for 127.0.0.1:%s returned errno=%s; continuing startup",
+                burp_port,
+                result,
+            )
 
 
 def build_session_entries(
@@ -132,16 +173,17 @@ async def create_or_reuse(
     # picks up these env vars automatically. ``NO_PROXY`` keeps the
     # agent-browser CDP daemon's localhost traffic from looping back
     # through Caido.
-    container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
+    container_caido_proxy_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PROXY_PORT}"
+    container_caido_ui_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_UI_PORT}"
     manifest = Manifest(
         entries=entries,
         environment=Environment(
             value={
                 "PYTHONUNBUFFERED": "1",
                 "HOST_GATEWAY": "host.docker.internal",
-                "http_proxy": container_caido_url,
-                "https_proxy": container_caido_url,
-                "ALL_PROXY": container_caido_url,
+                "http_proxy": container_caido_proxy_url,
+                "https_proxy": container_caido_proxy_url,
+                "ALL_PROXY": container_caido_proxy_url,
                 "NO_PROXY": "localhost,127.0.0.1",
             },
         ),
@@ -149,6 +191,7 @@ async def create_or_reuse(
 
     backend_name = load_settings().runtime.backend
     backend = get_backend(backend_name)
+    _assert_burp_port_available(backend_name=backend_name, burp_port=burp_port)
 
     logger.info(
         "Creating sandbox session for scan %s (backend=%s, image=%s)",
@@ -160,22 +203,37 @@ async def create_or_reuse(
         client, session = await backend(
             image=image,
             manifest=manifest,
-            exposed_ports=(_CONTAINER_CAIDO_PORT,),
+            exposed_ports=(_CONTAINER_CAIDO_UI_PORT, _CONTAINER_CAIDO_PROXY_PORT),
             bind_mounts=bind_mounts,
-            exposed_port_bindings={_CONTAINER_CAIDO_PORT: burp_port} if burp_port else None,
+            exposed_port_bindings={
+                _CONTAINER_CAIDO_PROXY_PORT: burp_port,
+            }
+            if burp_port
+            else None,
         )
     finally:
         for staged in staged_dirs:
             shutil.rmtree(staged, ignore_errors=True)
 
-    caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
-    scheme = "https" if caido_endpoint.tls else "http"
-    host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
-    logger.debug("Caido host endpoint resolved: %s", host_caido_url)
+    caido_ui_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_UI_PORT)
+    ui_scheme = "https" if caido_ui_endpoint.tls else "http"
+    host_caido_ui_url = f"{ui_scheme}://{caido_ui_endpoint.host}:{caido_ui_endpoint.port}"
+
+    caido_proxy_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PROXY_PORT)
+    proxy_scheme = "https" if caido_proxy_endpoint.tls else "http"
+    host_caido_proxy_url = (
+        f"{proxy_scheme}://{caido_proxy_endpoint.host}:{caido_proxy_endpoint.port}"
+    )
+    logger.debug(
+        "Caido host endpoints resolved: ui=%s proxy=%s",
+        host_caido_ui_url,
+        host_caido_proxy_url,
+    )
     burp_upstream_url, burp_upstream_unavailable_reason = _burp_upstream_metadata(
         backend_name=backend_name,
-        host_caido_url=host_caido_url,
+        host_proxy_url=host_caido_proxy_url,
     )
+    caido_ui_url = _caido_ui_metadata(host_ui_url=host_caido_ui_url)
     host_bridge_proxy: HostBridgeProxyServer | None = None
     try:
         upstream_proxy: UpstreamProxyHttpConfig | None = None
@@ -185,8 +243,8 @@ async def create_or_reuse(
 
         caido_client = await bootstrap_caido(
             session,
-            host_url=host_caido_url,
-            container_url=container_caido_url,
+            host_url=host_caido_ui_url,
+            container_url=container_caido_ui_url,
             upstream_proxy=upstream_proxy,
         )
     except Exception:
@@ -201,6 +259,7 @@ async def create_or_reuse(
         "session": session,
         "caido_client": caido_client,
         "caido_url": burp_upstream_url,
+        "caido_ui_url": caido_ui_url,
         "burp_upstream_unavailable_reason": burp_upstream_unavailable_reason,
         "host_bridge_proxy": host_bridge_proxy,
     }

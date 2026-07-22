@@ -57,7 +57,7 @@ Common patterns:
 - Headless crawl with local Chrome:
   `katana -u https://target.tld -hl -sc -nos -xhr -j -o crawl/katana_headless.jsonl`
 - Headless crawl through proxy:
-  `katana -u https://target.tld -hl -sc -ho proxy-server=http://127.0.0.1:48080 -j -o crawl/katana_proxy.jsonl`
+  `katana -u https://target.tld -hl -sc -ho proxy-server=http://127.0.0.1:48081 -j -o crawl/katana_proxy.jsonl`
 
 Critical correctness rules:
 - `-kf` must be followed by one of `all`, `robotstxt`, or `sitemapxml`.

@@ -210,6 +210,7 @@ async def run_strix_scan(
     if report_state is not None:
         report_state.set_caido_connection(
             bundle.get("caido_url"),
+            ui_url=bundle.get("caido_ui_url"),
             unavailable_reason=bundle.get("burp_upstream_unavailable_reason"),
         )
 
@@ -249,6 +250,12 @@ async def run_strix_scan(
         if proxy_scope is not None:
             scope_context["proxy_scope_id"] = proxy_scope.scope_id
             scope_context["proxy_scope_name"] = proxy_scope.scope_name
+            report_state = get_global_report_state()
+            if report_state is not None:
+                report_state.set_proxy_scope(
+                    proxy_scope.scope_id,
+                    scope_name=proxy_scope.scope_name,
+                )
 
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(

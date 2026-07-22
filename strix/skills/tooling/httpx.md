@@ -51,7 +51,7 @@ Common patterns:
 - Vhost detection pass:
   `httpx -l hosts.txt -vhost -sc -title -silent -j -o httpx_vhost.jsonl`
 - Proxy-instrumented probing:
-  `httpx -l hosts.txt -sc -title -proxy http://127.0.0.1:48080 -silent -j -o httpx_proxy.jsonl`
+  `httpx -l hosts.txt -sc -title -proxy http://127.0.0.1:48081 -silent -j -o httpx_proxy.jsonl`
 - Response-storage pass for downstream content parsing:
   `httpx -l hosts.txt -fr -sr -srd recon/httpx_store -sc -title -server -cl -ct -location -probe -silent`
 

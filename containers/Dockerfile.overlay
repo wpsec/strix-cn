@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=ghcr.io/usestrix/strix-sandbox:1.0.0
+FROM ${BASE_IMAGE}
+
+USER root
+
+COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER pentester
+WORKDIR /workspace
+
+ENTRYPOINT ["docker-entrypoint.sh"]

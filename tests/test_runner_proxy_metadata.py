@@ -12,6 +12,7 @@ import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
+from strix.core.proxy_scope import ProxyScopeDefinition
 from strix.report.state import ReportState
 
 
@@ -78,7 +79,14 @@ async def test_runner_persists_burp_proxy_metadata_into_report_state(
             "session": object(),
             "caido_client": None,
             "caido_url": "http://127.0.0.1:52123",
+            "caido_ui_url": "http://127.0.0.1:52124",
             "burp_upstream_unavailable_reason": None,
+            "proxy_scope": ProxyScopeDefinition(
+                scope_id="scope-1",
+                scope_name="strix-proxy-scope-scan-burp",
+                allowlist=(),
+                denylist=("*.google.com",),
+            ),
         },
     )
 
@@ -97,5 +105,11 @@ async def test_runner_persists_burp_proxy_metadata_into_report_state(
         report_state_module._global_report_state = None
 
     assert report_state.caido_url == "http://127.0.0.1:52123"
+    assert report_state.caido_ui_url == "http://127.0.0.1:52124"
+    assert report_state.proxy_scope_id == "scope-1"
+    assert report_state.proxy_scope_name == "strix-proxy-scope-scan-burp"
     assert report_state.run_record["caido_url"] == "http://127.0.0.1:52123"
+    assert report_state.run_record["caido_ui_url"] == "http://127.0.0.1:52124"
+    assert report_state.run_record["proxy_scope_id"] == "scope-1"
+    assert report_state.run_record["proxy_scope_name"] == "strix-proxy-scope-scan-burp"
     assert report_state.burp_upstream_unavailable_reason is None

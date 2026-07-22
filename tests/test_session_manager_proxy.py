@@ -16,7 +16,7 @@ def test_burp_upstream_metadata_accepts_loopback_docker_endpoint(
 
     url, reason = session_manager._burp_upstream_metadata(
         backend_name="docker",
-        host_caido_url="http://127.0.0.1:52123",
+        host_proxy_url="http://127.0.0.1:52123",
     )
 
     assert url == "http://127.0.0.1:52123"
@@ -30,7 +30,7 @@ def test_burp_upstream_metadata_rejects_custom_sandbox_network(
 
     url, reason = session_manager._burp_upstream_metadata(
         backend_name="docker",
-        host_caido_url="http://127.0.0.1:52123",
+        host_proxy_url="http://127.0.0.1:52123",
     )
 
     assert url is None
@@ -44,7 +44,7 @@ def test_burp_upstream_metadata_rejects_non_loopback_host(
 
     url, reason = session_manager._burp_upstream_metadata(
         backend_name="docker",
-        host_caido_url="http://192.168.1.20:52123",
+        host_proxy_url="http://192.168.1.20:52123",
     )
 
     assert url is None
@@ -58,11 +58,72 @@ def test_burp_upstream_metadata_rejects_non_docker_backend(
 
     url, reason = session_manager._burp_upstream_metadata(
         backend_name="remote",
-        host_caido_url="http://127.0.0.1:52123",
+        host_proxy_url="http://127.0.0.1:52123",
     )
 
     assert url is None
     assert reason == "当前 runtime backend 未提供可供 Burp 直连的本地代理端口"
+
+
+def test_assert_burp_port_available_rejects_occupied_loopback_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _OccupiedSocket:
+        def __enter__(self) -> "_OccupiedSocket":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def settimeout(self, _timeout: float) -> None:
+            return None
+
+        def connect_ex(self, _address: tuple[str, int]) -> int:
+            return 0
+
+    monkeypatch.setattr(session_manager.socket, "socket", lambda *_args, **_kwargs: _OccupiedSocket())
+
+    with pytest.raises(RuntimeError, match=r"127\.0\.0\.1:8081 已被占用"):
+        session_manager._assert_burp_port_available(
+            backend_name="docker",
+            burp_port=8081,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_or_reuse_rejects_occupied_burp_port_before_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend_called = False
+
+    async def _backend(**_kwargs: object) -> tuple[object, object]:
+        nonlocal backend_called
+        backend_called = True
+        return object(), object()
+
+    monkeypatch.setattr(
+        session_manager,
+        "load_settings",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(backend="docker")),
+    )
+    monkeypatch.setattr(session_manager, "get_backend", lambda _name: _backend)
+    monkeypatch.setattr(
+        session_manager,
+        "_assert_burp_port_available",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("Burp 监听端口 127.0.0.1:8081 已被占用。")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=r"127\.0\.0\.1:8081 已被占用"):
+        await session_manager.create_or_reuse(
+            "scan-port-conflict",
+            image="ghcr.io/usestrix/strix-sandbox:1.0.0",
+            local_sources=[],
+            burp_port=8081,
+        )
+
+    assert backend_called is False
 
 
 @pytest.mark.asyncio
@@ -73,8 +134,12 @@ async def test_create_or_reuse_bootstraps_caido_with_host_bridge_proxy(
     captured: dict[str, object] = {}
 
     class _FakeSession:
-        async def resolve_exposed_port(self, _port: int) -> object:
-            return SimpleNamespace(host="127.0.0.1", port=52123, tls=False)
+        async def resolve_exposed_port(self, port: int) -> object:
+            if port == 48080:
+                return SimpleNamespace(host="127.0.0.1", port=52123, tls=False)
+            if port == 48081:
+                return SimpleNamespace(host="127.0.0.1", port=8081, tls=False)
+            raise AssertionError(f"unexpected port {port}")
 
     class _FakeClient:
         def __init__(self) -> None:
@@ -117,6 +182,11 @@ async def test_create_or_reuse_bootstraps_caido_with_host_bridge_proxy(
         lambda: SimpleNamespace(runtime=SimpleNamespace(backend="docker")),
     )
     monkeypatch.setattr(session_manager, "get_backend", lambda _name: _backend)
+    monkeypatch.setattr(
+        session_manager,
+        "_assert_burp_port_available",
+        lambda **_kwargs: None,
+    )
     async def _acquire_bridge() -> object:
         return fake_bridge
 
@@ -137,6 +207,8 @@ async def test_create_or_reuse_bootstraps_caido_with_host_bridge_proxy(
     )
     try:
         assert bundle["host_bridge_proxy"] is fake_bridge
+        assert bundle["caido_url"] == "http://127.0.0.1:8081"
+        assert bundle["caido_ui_url"] == "http://127.0.0.1:52123"
         assert captured["host_url"] == "http://127.0.0.1:52123"
         assert captured["container_url"] == "http://127.0.0.1:48080"
         assert captured["upstream_proxy"].host == "host.docker.internal"

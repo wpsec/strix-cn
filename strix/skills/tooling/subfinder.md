@@ -44,7 +44,7 @@ Common patterns:
 - Source-attributed JSONL output:
   `subfinder -d example.com -all -oJ -cs -o subfinder_sources.jsonl`
 - Passive enum via explicit proxy:
-  `subfinder -d example.com -all -recursive -proxy http://127.0.0.1:48080 -silent -oJ -o subfinder_proxy.jsonl`
+  `subfinder -d example.com -all -recursive -proxy http://127.0.0.1:48081 -silent -oJ -o subfinder_proxy.jsonl`
 
 Critical correctness rules:
 - `-cs` is useful only with JSON output (`-oJ`).

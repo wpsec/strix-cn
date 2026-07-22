@@ -803,6 +803,22 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     console.print()
 
 
+def _local_sandbox_build_tag(image: str) -> str | None:
+    reference = image.strip()
+    if not reference:
+        return None
+
+    name_part = reference.split("@", 1)[0]
+    if "/" in name_part:
+        return None
+
+    repository, _, tag = name_part.partition(":")
+    if repository != "strix-sandbox":
+        return None
+
+    return tag or "dev"
+
+
 def pull_docker_image() -> None:
     console = Console()
     client = check_docker_connection()
@@ -812,6 +828,49 @@ def pull_docker_image() -> None:
     if image_exists(client, image):
         logger.debug("Docker image already present locally: %s", image)
         return
+
+    local_sandbox_tag = _local_sandbox_build_tag(str(image))
+    if local_sandbox_tag is not None:
+        logger.error("Configured local sandbox image is missing: %s", image)
+        console.print()
+        error_text = Text()
+        error_text.append("本地镜像未找到", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append(f"当前配置的镜像是：{image}\n\n", style="white")
+        error_text.append(
+            "这看起来是一个本地构建的 Strix sandbox 镜像标签，但当前 Docker 本地并不存在它。\n",
+            style="white",
+        )
+        error_text.append(
+            "请先在仓库根目录执行以下命令之一：\n",
+            style="white",
+        )
+        error_text.append(
+            f"1. 轻量覆盖构建：./scripts/docker-overlay.sh {local_sandbox_tag}\n",
+            style="bold white",
+        )
+        error_text.append(
+            f"2. 完整重建镜像：./scripts/docker.sh {local_sandbox_tag}\n",
+            style="bold white",
+        )
+        error_text.append(
+            "如果当前分支只改了 containers/docker-entrypoint.sh 等少量沙箱文件，优先使用轻量覆盖构建即可。\n\n",
+            style="white",
+        )
+        error_text.append(
+            "构建完成后重新运行当前命令；如果你想改回默认发布镜像，"
+            "请将 STRIX_IMAGE 设为 ghcr.io/usestrix/strix-sandbox:1.0.0。",
+            style="white",
+        )
+        panel = Panel(
+            error_text,
+            title="[bold white]STRIX",
+            title_align="left",
+            border_style="red",
+            padding=(1, 2),
+        )
+        console.print(panel, "\n")
+        sys.exit(1)
 
     logger.info("Pulling docker image: %s", image)
     console.print()

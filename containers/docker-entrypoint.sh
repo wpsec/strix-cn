@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-CAIDO_PORT=48080
+CAIDO_UI_PORT=48080
+CAIDO_PROXY_PORT=48081
 CAIDO_LOG="/tmp/caido_startup.log"
 
 if [ ! -f /app/certs/ca.p12 ]; then
@@ -22,7 +23,8 @@ if [ -n "${STRIX_CAIDO_ALLOWED_DOMAINS:-}" ]; then
   done
 fi
 
-caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
+caido-cli --ui-listen 0.0.0.0:${CAIDO_UI_PORT} \
+          --proxy-listen 0.0.0.0:${CAIDO_PROXY_PORT} \
           --allow-guests \
           --no-logging \
           --no-open \
@@ -31,7 +33,7 @@ caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
           --import-ca-cert-pass "" > "$CAIDO_LOG" 2>&1 &
 
 CAIDO_PID=$!
-echo "Started Caido with PID $CAIDO_PID on port $CAIDO_PORT"
+echo "Started Caido with PID $CAIDO_PID (ui:${CAIDO_UI_PORT} proxy:${CAIDO_PROXY_PORT})"
 
 echo "Waiting for Caido API to be ready..."
 CAIDO_READY=false
@@ -43,7 +45,7 @@ for i in {1..30}; do
     exit 1
   fi
 
-  if curl -s -o /dev/null -w "%{http_code}" http://localhost:${CAIDO_PORT}/graphql/ | grep -qE "^(200|400)$"; then
+  if curl -s -o /dev/null -w "%{http_code}" http://localhost:${CAIDO_UI_PORT}/graphql/ | grep -qE "^(200|400)$"; then
     echo "Caido API is ready (attempt $i)."
     CAIDO_READY=true
     break
@@ -66,29 +68,29 @@ echo "Caido is up — host bootstraps the guest token + project via the Python S
 echo "Configuring system-wide proxy settings..."
 
 cat << EOF | sudo tee /etc/profile.d/proxy.sh
-export http_proxy=http://127.0.0.1:${CAIDO_PORT}
-export https_proxy=http://127.0.0.1:${CAIDO_PORT}
-export HTTP_PROXY=http://127.0.0.1:${CAIDO_PORT}
-export HTTPS_PROXY=http://127.0.0.1:${CAIDO_PORT}
-export ALL_PROXY=http://127.0.0.1:${CAIDO_PORT}
+export http_proxy=http://127.0.0.1:${CAIDO_PROXY_PORT}
+export https_proxy=http://127.0.0.1:${CAIDO_PROXY_PORT}
+export HTTP_PROXY=http://127.0.0.1:${CAIDO_PROXY_PORT}
+export HTTPS_PROXY=http://127.0.0.1:${CAIDO_PROXY_PORT}
+export ALL_PROXY=http://127.0.0.1:${CAIDO_PROXY_PORT}
 export NO_PROXY=localhost,127.0.0.1
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 EOF
 
 cat << EOF | sudo tee /etc/environment
-http_proxy=http://127.0.0.1:${CAIDO_PORT}
-https_proxy=http://127.0.0.1:${CAIDO_PORT}
-HTTP_PROXY=http://127.0.0.1:${CAIDO_PORT}
-HTTPS_PROXY=http://127.0.0.1:${CAIDO_PORT}
-ALL_PROXY=http://127.0.0.1:${CAIDO_PORT}
+http_proxy=http://127.0.0.1:${CAIDO_PROXY_PORT}
+https_proxy=http://127.0.0.1:${CAIDO_PROXY_PORT}
+HTTP_PROXY=http://127.0.0.1:${CAIDO_PROXY_PORT}
+HTTPS_PROXY=http://127.0.0.1:${CAIDO_PROXY_PORT}
+ALL_PROXY=http://127.0.0.1:${CAIDO_PROXY_PORT}
 NO_PROXY=localhost,127.0.0.1
 EOF
 
 cat << EOF | sudo tee /etc/wgetrc
 use_proxy=yes
-http_proxy=http://127.0.0.1:${CAIDO_PORT}
-https_proxy=http://127.0.0.1:${CAIDO_PORT}
+http_proxy=http://127.0.0.1:${CAIDO_PROXY_PORT}
+https_proxy=http://127.0.0.1:${CAIDO_PROXY_PORT}
 EOF
 
 # Use POSIX `.` (not the bashism `source`) so these lines are safe when the rc
