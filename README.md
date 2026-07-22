@@ -219,6 +219,12 @@ strix --target https://your-app.com
 ### 进阶测试场景
 
 ```bash
+# Burp 被动扫描：浏览器 -> Burp -> Strix -> 目标站点
+strix --burp-port 8081
+
+# Burp 被动扫描 + 显式限制目标主机
+strix --target https://example.com --burp-port 8081
+
 # 灰盒认证测试
 strix --target https://your-app.com --instruction "Perform authenticated testing using credentials: user:pass"
 
@@ -246,6 +252,9 @@ strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 ```bash
 # 查看完整帮助与全部参数
 .venv/bin/strix -h
+
+# Burp 被动扫描，固定监听给 Burp 的上游代理端口
+strix --burp-port 8081
 
 # 大型本地仓库改用只读挂载，而不是逐文件复制
 strix --mount ./huge-monorepo

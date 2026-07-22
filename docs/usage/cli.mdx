@@ -83,6 +83,12 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
 # 基础扫描
 strix --target https://example.com
 
+# Burp 被动扫描：浏览器 -> Burp -> Strix -> 目标站点
+strix --burp-port 8081
+
+# Burp 被动扫描 + 显式限制目标主机
+strix --target https://example.com --burp-port 8081
+
 # 认证测试
 strix --target https://app.com --instruction "Use credentials: user:pass"
 
