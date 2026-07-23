@@ -13,6 +13,7 @@ from typing import Any, Literal, get_args
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import Status, coordinator_from_context
+from strix.core.agent_naming import normalize_agent_name
 from strix.skills import validate_requested_skills
 
 
@@ -42,26 +43,27 @@ def _render_completion_report(
     metadata, so this body just carries the contents. No XML — no
     escaping concerns, no parser ambiguity.
     """
-    status = "SUCCESS" if success else "FAILED"
+    display_name = normalize_agent_name(agent_name)
+    status = "成功" if success else "失败"
     completion_time = datetime.now(UTC).isoformat()
 
     lines: list[str] = [
-        f"== Completion report from {agent_name} ({agent_id}) ==",
-        f"Status: {status}",
-        f"Time: {completion_time}",
+        f"== 来自 {display_name} ({agent_id}) 的完成报告 ==",
+        f"状态: {status}",
+        f"时间: {completion_time}",
     ]
     if task:
-        lines.append(f"Task: {task}")
+        lines.append(f"任务: {task}")
     lines.append("")
-    lines.append("Summary:")
-    lines.append(result_summary or "(none)")
+    lines.append("总结:")
+    lines.append(result_summary or "（无）")
     if findings:
         lines.append("")
-        lines.append("Findings:")
+        lines.append("发现:")
         lines.extend(f"- {f}" for f in findings)
     if recommendations:
         lines.append("")
-        lines.append("Recommendations:")
+        lines.append("建议:")
         lines.extend(f"- {r}" for r in recommendations)
     return "\n".join(lines)
 
@@ -93,8 +95,9 @@ async def view_agent_graph(ctx: RunContextWrapper) -> str:
 
     def render(aid: str, depth: int) -> None:
         status = statuses.get(aid, "?")
-        marker = "  ← you" if aid == me else ""
-        lines.append(f"{'  ' * depth}- {names.get(aid, aid)} ({aid}) [{status}]{marker}")
+        marker = "  ← 当前代理" if aid == me else ""
+        display_name = normalize_agent_name(names.get(aid, aid))
+        lines.append(f"{'  ' * depth}- {display_name} ({aid}) [{status}]{marker}")
         for child, p in parent_of.items():
             if p == aid:
                 render(child, depth + 1)
@@ -110,7 +113,7 @@ async def view_agent_graph(ctx: RunContextWrapper) -> str:
     return json.dumps(
         {
             "success": True,
-            "graph_structure": "\n".join(lines) or "(no agents)",
+            "graph_structure": "\n".join(lines) or "（暂无代理）",
             "summary": summary,
         },
         ensure_ascii=False,
@@ -388,8 +391,9 @@ async def create_agent(
       task genuinely spans them.
     - One skill = most focused (e.g., XSS-only). Five skills = upper
       bound.
-    - Match the ``name`` to the focus (``XSS Specialist``,
-      ``SQLi Validator``, ``Auth Specialist``).
+    - Match the ``name`` to the focus, and prefer Chinese display
+      names. Standard short vulnerability acronyms may be retained
+      (e.g. ``XSS 专家``、``SQL 注入验证专家``、``鉴权专家``).
 
     **When to spawn vs do it yourself:**
 
@@ -400,7 +404,9 @@ async def create_agent(
 
     Args:
         name: Human-readable child name (used in graph views and
-            ``send_message_to_agent`` flows).
+            ``send_message_to_agent`` flows). Prefer Chinese display
+            names; standard short vulnerability acronyms such as XSS /
+            SSRF / JWT may be retained.
         task: Specific objective. Be concrete — what to test, what
             success looks like, any constraints.
         inherit_context: Default ``True``. The child receives the
@@ -430,6 +436,7 @@ async def create_agent(
             default=str,
         )
 
+    normalized_name = normalize_agent_name(name)
     skill_list = list(skills or [])
     skill_error = validate_requested_skills(skill_list)
     if skill_error:
@@ -443,13 +450,13 @@ async def create_agent(
     try:
         result = await spawner(
             parent_ctx=inner,
-            name=name,
+            name=normalized_name,
             task=task,
             skills=skill_list,
             parent_history=parent_history,
         )
     except Exception as e:
-        logger.exception("create_agent: scan runner failed to spawn child '%s'", name)
+        logger.exception("create_agent: scan runner failed to spawn child '%s'", normalized_name)
         return json.dumps(
             {"success": False, "error": f"child spawn failed: {e!s}"},
             ensure_ascii=False,
@@ -459,7 +466,7 @@ async def create_agent(
     logger.info(
         "create_agent: spawned %s (%s) parent=%s skills=%d task_len=%d",
         result.get("agent_id"),
-        name,
+        normalized_name,
         parent_id or "-",
         len(skill_list),
         len(task or ""),

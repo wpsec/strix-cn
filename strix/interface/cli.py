@@ -14,6 +14,7 @@ from rich.text import Text
 
 from strix.config import load_settings
 from strix.core.runner import run_strix_scan
+from strix.interface.branding import branding_items
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
 
@@ -25,6 +26,17 @@ from .utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _build_branding_text() -> Text:
+    text = Text()
+    for index, (label, value) in enumerate(branding_items()):
+        if index > 0:
+            text.append("\n")
+        text.append(label, style="dim")
+        text.append("  ")
+        text.append(value, style="white")
+    return text
 
 
 def _resolve_sandbox_image() -> str:
@@ -52,6 +64,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     results_text.append("  ")
     results_text.append(f"strix_runs/{args.run_name}", style="#60a5fa")
 
+    branding_text = _build_branding_text()
+
     note_text = Text()
     note_text.append("\n\n", style="dim")
     note_text.append("新发现的漏洞会实时显示在这里。", style="dim")
@@ -63,6 +77,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             target_text,
             "\n",
             results_text,
+            "\n",
+            branding_text,
             note_text,
         ),
         title="[bold white]STRIX",
@@ -202,6 +218,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                 final_report_text,
                 "\n\n",
                 report_state.final_scan_result,
+                "\n\n",
+                _build_branding_text(),
             ),
             title="[bold white]STRIX",
             title_align="left",

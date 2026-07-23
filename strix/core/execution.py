@@ -182,7 +182,7 @@ async def spawn_child_agent(
         "agent_id": child_id,
         "name": name,
         "parent_id": parent_id,
-        "message": f"Spawned '{name}' ({child_id}) running in parallel.",
+        "message": f"已创建并并行运行子专家“{name}” ({child_id})。",
     }
 
 

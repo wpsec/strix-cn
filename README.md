@@ -104,9 +104,20 @@ export STRIX_IMAGE=strix-sandbox:local
 
 # 配置 AI 提供商
 # 示例：兼容国内/自建 OpenAI-compatible 网关
+# MAC/Linux
 export STRIX_LLM="openai/your-compatible-model"
 export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="https://your-gateway.example/v1"
+
+# Windows PowerShell（当前窗口立即生效，保持注释按需复制）
+# $env:STRIX_LLM="openai/your-compatible-model"
+# $env:LLM_API_KEY="your-api-key"
+# $env:LLM_API_BASE="https://your-gateway.example/v1"
+#
+# Windows PowerShell（写入用户环境变量；需重新打开终端）
+# setx STRIX_LLM "openai/your-compatible-model"
+# setx LLM_API_KEY "your-api-key"
+# setx LLM_API_BASE "https://your-gateway.example/v1"
 
 # 扫描app-directory
 .venv/bin/strix --target ./app-directory
@@ -115,6 +126,9 @@ export LLM_API_BASE="https://your-gateway.example/v1"
 > [!NOTE]  
 > 上面的方式安装的是当前 `strix-cn` 分支源码，不是官方安装脚本拉取的发布版。首次运行会自动拉取沙箱 Docker 镜像。扫描结果会保存在 `strix_runs/<run-name>`。  
 > 当前分支默认输出中文报告；如果你需要英文或双语结果，可在 `--instruction` 中显式说明。
+
+> [!TIP]
+> Windows 下运行前请先确认 Docker Desktop 已安装并处于运行状态；Strix 会自动拉取缺失镜像，但不会自动启动 Docker Desktop。
 
 > [!IMPORTANT]  
 > 上面的 `docker pull ghcr.io/usestrix/strix-sandbox:1.0.0` 只是提前准备基础镜像；真正运行当前 `strix-cn` 分支时，推荐按快速开始里的方式继续执行 `./scripts/docker.sh local`，再通过 `export STRIX_IMAGE=strix-sandbox:local` 明确使用本地构建镜像。  
@@ -327,6 +341,16 @@ jobs:
 export STRIX_LLM="openai/your-compatible-model"
 export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="https://your-gateway.example/v1"
+
+# Windows PowerShell（当前窗口立即生效，保持注释按需复制）
+# $env:STRIX_LLM="openai/your-compatible-model"
+# $env:LLM_API_KEY="your-api-key"
+# $env:LLM_API_BASE="https://your-gateway.example/v1"
+#
+# Windows PowerShell（写入用户环境变量；需重新打开终端）
+# setx STRIX_LLM "openai/your-compatible-model"
+# setx LLM_API_KEY "your-api-key"
+# setx LLM_API_BASE "https://your-gateway.example/v1"
 
 # 示例 2：本地模型（Ollama / LM Studio / vLLM）
 # export STRIX_LLM="ollama/qwen3-vl"

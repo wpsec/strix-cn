@@ -3,6 +3,8 @@ from typing import Any, ClassVar
 from rich.text import Text
 from textual.widgets import Static
 
+from strix.core.agent_naming import normalize_agent_name
+
 from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
 
@@ -18,7 +20,7 @@ class ViewAgentGraphRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("◇ ", style="#a78bfa")
-        text.append("viewing agents graph", style="dim")
+        text.append("查看代理图", style="dim")
 
         css_classes = cls.get_css_classes(status)
         return Static(text, classes=css_classes)
@@ -35,11 +37,11 @@ class CreateAgentRenderer(BaseToolRenderer):
         status = tool_data.get("status", "unknown")
 
         task = args.get("task", "")
-        name = args.get("name", "Agent")
+        name = normalize_agent_name(args.get("name", "专家代理"))
 
         text = Text()
         text.append("◈ ", style="#a78bfa")
-        text.append("spawning ", style="dim")
+        text.append("创建子专家 ", style="dim")
         text.append(name, style="bold #a78bfa")
 
         if task:
@@ -66,9 +68,9 @@ class SendMessageToAgentRenderer(BaseToolRenderer):
         text = Text()
         text.append("→ ", style="#60a5fa")
         if target_agent_id:
-            text.append(f"to {target_agent_id}", style="dim")
+            text.append(f"发送给 {target_agent_id}", style="dim")
         else:
-            text.append("sending message", style="dim")
+            text.append("发送消息", style="dim")
 
         if message:
             text.append("\n  ")
@@ -157,11 +159,11 @@ class StopAgentRenderer(BaseToolRenderer):
 
         text = Text()
         text.append("◼ ", style="#ef4444")
-        text.append("stopping", style="dim")
+        text.append("停止", style="dim")
         if target_agent_id:
             text.append(f" {target_agent_id}", style="bold #ef4444")
         if cascade:
-            text.append(" + descendants", style="dim italic")
+            text.append(" 及其子代理", style="dim italic")
 
         if reason:
             text.append("\n  ")

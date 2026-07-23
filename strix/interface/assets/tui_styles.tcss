@@ -597,9 +597,9 @@ QuitScreen {
 #quit_dialog {
     grid-size: 1;
     grid-gutter: 1;
-    grid-rows: auto auto;
+    grid-rows: auto auto auto;
     padding: 1;
-    width: 24;
+    width: 36;
     height: auto;
     border: round #333333;
     background: #000000 98%;
@@ -608,6 +608,13 @@ QuitScreen {
 #quit_title {
     color: #d4d4d4;
     text-style: bold;
+    text-align: center;
+    width: 100%;
+    margin-bottom: 0;
+}
+
+#quit_meta {
+    color: #a3a3a3;
     text-align: center;
     width: 100%;
     margin-bottom: 0;

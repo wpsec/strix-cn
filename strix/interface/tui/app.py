@@ -7,8 +7,7 @@ import signal
 import sys
 import threading
 from collections.abc import Callable
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as pkg_version
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -34,6 +33,13 @@ from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
+from strix.interface.branding import (
+    STRIX_WEBSITE,
+    branding_items,
+    get_package_version,
+    get_project_repository,
+    get_repository_label,
+)
 from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
 from strix.interface.tui.renderers import render_tool_widget
@@ -46,13 +52,6 @@ from strix.runtime.proxy_capture import ProxyCaptureSnapshot, fetch_proxy_captur
 
 
 logger = logging.getLogger(__name__)
-
-
-def get_package_version() -> str:
-    try:
-        return pkg_version("strix-agent")
-    except PackageNotFoundError:
-        return "dev"
 
 
 def _set_driver_mouse_support(driver: Any, *, enabled: bool) -> bool:
@@ -195,7 +194,13 @@ class SplashScreen(Static):  # type: ignore[misc]
         return text
 
     def _build_url_text(self) -> Text:
-        return Text("strix.ai", style=Style(color=self.PRIMARY_GREEN, bold=True))
+        text = Text(STRIX_WEBSITE, style=Style(color=self.PRIMARY_GREEN, bold=True))
+        text.append("\n")
+        text.append(
+            f"{get_repository_label()} {get_project_repository()}",
+            style=Style(color="white", dim=True),
+        )
+        return text
 
     def _build_welcome_text(self) -> Text:
         text = Text("欢迎使用 ", style=Style(color="white", bold=True))
@@ -721,9 +726,16 @@ class VulnerabilitiesPanel(VerticalScroll):  # type: ignore[misc]
 
 
 class QuitScreen(ModalScreen):  # type: ignore[misc]
+    @staticmethod
+    def _build_meta_text() -> str:
+        return "\n".join(
+            f"{label} {value}" for label, value in branding_items(include_website=False)
+        )
+
     def compose(self) -> ComposeResult:
         yield Grid(
             Label("退出 Strix？", id="quit_title"),
+            Label(self._build_meta_text(), id="quit_meta"),
             Grid(
                 Button("确认", variant="error", id="quit"),
                 Button("取消", variant="default", id="cancel"),
@@ -849,13 +861,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _setup_cleanup_handlers(self) -> None:
         def cleanup_on_exit() -> None:
-            self._stop_proxy_monitor_thread()
-            self.report_state.cleanup()
+            self._cleanup_before_exit()
 
         def signal_handler(_signum: int, _frame: Any) -> None:
-            self._stop_proxy_monitor_thread()
-            self._fire_sandbox_cleanup()
-            self.report_state.cleanup(status="interrupted")
+            self._cleanup_before_exit(interrupted=True)
             sys.exit(0)
 
         atexit.register(cleanup_on_exit)
@@ -2004,26 +2013,48 @@ class StrixTUIApp(App):  # type: ignore[misc]
         )
 
     async def action_custom_quit(self) -> None:
-        self._stop_proxy_monitor_thread()
-        self._fire_sandbox_cleanup()
-
-        if self._scan_thread and self._scan_thread.is_alive():
-            self._scan_stop_event.set()
-
-        self.report_state.cleanup()
-
+        self._cleanup_before_exit()
         self.exit()
 
-    def _fire_sandbox_cleanup(self) -> None:
+    def _cleanup_before_exit(self, *, interrupted: bool = False) -> None:
+        self._stop_proxy_monitor_thread()
+        thread = self._scan_thread
+        if thread is not None and thread.is_alive():
+            self._scan_stop_event.set()
+        self._fire_sandbox_cleanup(wait=True)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1)
+        if interrupted:
+            self.report_state.cleanup(status="interrupted")
+        else:
+            self.report_state.cleanup()
+
+    def _fire_sandbox_cleanup(self, *, wait: bool = False, timeout: float = 5.0) -> bool:
         self.coordinator.mark_shutting_down()
         loop = self._scan_loop
         if loop is None or loop.is_closed():
-            return
+            return False
         run_name = self.scan_config.get("run_name")
         if not run_name:
-            return
-        with contextlib.suppress(Exception):
-            asyncio.run_coroutine_threadsafe(session_manager.cleanup(run_name), loop)
+            return False
+        try:
+            cleanup_future = asyncio.run_coroutine_threadsafe(
+                session_manager.cleanup(run_name),
+                loop,
+            )
+            if wait:
+                cleanup_future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            logger.warning("Timed out waiting for sandbox cleanup for scan %s", run_name)
+            return False
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Sandbox cleanup dispatch failed for scan %s",
+                run_name,
+                exc_info=True,
+            )
+            return False
+        return True
 
     def _is_widget_safe(self, widget: Any) -> bool:
         try:
