@@ -25,6 +25,7 @@ class ProxyCaptureSnapshot:
     latest_host: str | None
     latest_path: str | None
     latest_status_code: int | None
+    total_request_count: int = 0
 
 
 def _login_as_guest(host_url: str) -> str:
@@ -44,6 +45,7 @@ async def fetch_proxy_capture_snapshot(
     *,
     scope_id: str | None = None,
     recent_limit: int = 10,
+    total_page_size: int = 200,
 ) -> ProxyCaptureSnapshot:
     token = await asyncio.to_thread(_login_as_guest, host_url)
     client = Client(host_url, auth=TokenAuthOptions(token=token))
@@ -54,6 +56,11 @@ async def fetch_proxy_capture_snapshot(
         if scope_id:
             builder = builder.scope(scope_id)
         connection = await builder.execute()
+        total_request_count = await _count_requests(
+            client,
+            scope_id=scope_id,
+            page_size=max(1, total_page_size),
+        )
     finally:
         await client.aclose()
 
@@ -71,7 +78,31 @@ async def fetch_proxy_capture_snapshot(
         latest_host=_string_or_none(getattr(latest_request, "host", None)),
         latest_path=_string_or_none(getattr(latest_request, "path", None)),
         latest_status_code=_int_or_none(getattr(latest_response, "status_code", None)),
+        total_request_count=total_request_count,
     )
+
+
+async def _count_requests(
+    client: Client,
+    *,
+    scope_id: str | None = None,
+    page_size: int = 200,
+) -> int:
+    builder = client.request.list().first(max(1, page_size)).descending("req", "created_at")
+    if scope_id:
+        builder = builder.scope(scope_id)
+
+    connection = await builder.execute()
+    total = len(getattr(connection, "edges", []) or [])
+
+    while _has_next_page(connection):
+        next_page = await connection.next()
+        if next_page is None:
+            break
+        connection = next_page
+        total += len(getattr(connection, "edges", []) or [])
+
+    return total
 
 
 def _has_next_page(connection: Any) -> bool:

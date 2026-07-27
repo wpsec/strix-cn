@@ -147,10 +147,59 @@ class _Ctx:
         self.tool_name = "proxy_test"
 
 
+class _TransportAlreadyConnected(Exception):
+    pass
+
+
+class _WrappedOperationError(Exception):
+    def __init__(self, message: str, *, source: Exception | None = None) -> None:
+        super().__init__(message)
+        self.source = source
+
+    def __str__(self) -> str:
+        message = super().__str__()
+        if self.source is not None:
+            message += f"\n  Source: {self.source}"
+        return message
+
+
+def _request_result(
+    *,
+    host: str = "app.example.com",
+    is_tls: bool = False,
+    raw: bytes = b"GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
+) -> Any:
+    class _Request:
+        pass
+
+    class _RequestResult:
+        pass
+
+    request = _Request()
+    request.host = host
+    request.is_tls = is_tls
+    request.raw = raw
+    result = _RequestResult()
+    result.request = request
+    return result
+
+
 def test_ctx_client_returns_client_when_present() -> None:
     client = _FakeClient("host")
     got = tools._ctx_client(cast("Any", _Ctx({"caido_client": client})))
     assert got is client
+
+
+def test_ctx_client_prefers_shared_ref_when_present() -> None:
+    legacy = _FakeClient("legacy")
+    shared = _FakeClient("shared")
+    got = tools._ctx_client(
+        cast(
+            "Any",
+            _Ctx({"caido_client": legacy, "caido_client_ref": {"client": shared}}),
+        )
+    )
+    assert got is shared
 
 
 def test_ctx_client_returns_none_without_client() -> None:
@@ -175,7 +224,7 @@ def test_ctx_scope_patterns_returns_allow_and_deny_lists() -> None:
 
 def test_coerce_sitemap_entry_id_accepts_numeric_string() -> None:
     value, error = caido_api._coerce_sitemap_entry_id("42", field_name="parent_id")
-    assert value == 42
+    assert value == "42"
     assert error is None
 
 
@@ -183,7 +232,7 @@ def test_coerce_sitemap_entry_id_rejects_request_style_id() -> None:
     value, error = caido_api._coerce_sitemap_entry_id("req_123", field_name="parent_id")
     assert value is None
     assert error is not None
-    assert "数字型 sitemap 条目 ID" in error
+    assert "`list_sitemap` 返回的 sitemap 条目 ID" in error
 
 
 async def test_list_sitemap_with_client_rejects_invalid_parent_id_without_querying() -> None:
@@ -204,8 +253,100 @@ async def test_list_sitemap_with_client_rejects_invalid_parent_id_without_queryi
     result = await caido_api.list_sitemap_with_client(cast("Any", client), parent_id="req_123")
 
     assert result["success"] is False
-    assert "数字型 sitemap 条目 ID" in result["error"]
+    assert "`list_sitemap` 返回的 sitemap 条目 ID" in result["error"]
     assert client.graphql.called is False
+
+
+async def test_list_sitemap_with_client_passes_string_parent_id_to_graphql() -> None:
+    captured: dict[str, Any] = {}
+
+    class _GraphQL:
+        async def query(self, _document: Any, *, variables: dict[str, Any]) -> Any:
+            captured["variables"] = variables
+            return {
+                "sitemapDescendantEntries": {
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "42",
+                                "kind": "REQUEST",
+                                "label": "/api",
+                                "hasDescendants": False,
+                                "request": {
+                                    "method": "GET",
+                                    "path": "/api",
+                                    "response": {"statusCode": 200},
+                                },
+                            }
+                        }
+                    ],
+                    "count": {"value": 1},
+                }
+            }
+
+    class _SitemapClient:
+        def __init__(self) -> None:
+            self.graphql = _GraphQL()
+
+    result = await caido_api.list_sitemap_with_client(
+        cast("Any", _SitemapClient()),
+        parent_id=42,
+    )
+
+    assert result["success"] is True
+    assert captured["variables"]["parentId"] == "42"
+    assert result["entries"][0]["id"] == "42"
+
+
+async def test_view_sitemap_entry_with_client_passes_string_entry_id_to_graphql() -> None:
+    captured: dict[str, Any] = {}
+
+    class _GraphQL:
+        async def query(self, _document: Any, *, variables: dict[str, Any]) -> Any:
+            captured["variables"] = variables
+            return {
+                "sitemapEntry": {
+                    "id": "7",
+                    "kind": "REQUEST",
+                    "label": "/users",
+                    "hasDescendants": False,
+                    "metadata": {"isTls": True, "port": 443},
+                    "request": {
+                        "method": "GET",
+                        "path": "/users",
+                        "response": {
+                            "statusCode": 200,
+                            "length": 12,
+                            "roundtripTime": 34,
+                        },
+                    },
+                    "requests": {
+                        "edges": [
+                            {
+                                "node": {
+                                    "method": "GET",
+                                    "path": "/users",
+                                    "response": {"statusCode": 200, "length": 12},
+                                }
+                            }
+                        ],
+                        "count": {"value": 1},
+                    },
+                }
+            }
+
+    class _SitemapClient:
+        def __init__(self) -> None:
+            self.graphql = _GraphQL()
+
+    result = await caido_api.view_sitemap_entry_with_client(
+        cast("Any", _SitemapClient()),
+        "7",
+    )
+
+    assert result["success"] is True
+    assert captured["variables"]["id"] == "7"
+    assert result["entry"]["id"] == "7"
 
 
 async def test_list_requests_defaults_to_context_scope_id(
@@ -253,15 +394,8 @@ async def test_repeat_request_blocks_out_of_scope_host(
 ) -> None:
     client = _FakeClient("host")
 
-    class _Request:
-        host = "api.google.com"
-        raw = b"GET / HTTP/1.1\r\nHost: api.google.com\r\n\r\n"
-
-    class _RequestResult:
-        request = _Request()
-
     async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
-        return _RequestResult()
+        return _request_result(host="api.google.com")
 
     monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
 
@@ -282,3 +416,130 @@ async def test_repeat_request_blocks_out_of_scope_host(
     result = json.loads(payload)
     assert result["success"] is False
     assert "不在当前 Strix 代理作用域内" in result["error"]
+
+
+async def test_host_repeat_request_retries_after_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale = _FakeClient("stale")
+    fresh = _FakeClient("fresh")
+    replay_calls: list[str] = []
+    refresh_calls: list[Any] = []
+    client_ref: dict[str, Any] = {}
+
+    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+        return _request_result()
+
+    async def _replay_send_raw(client: Any, *, raw: bytes, connection: Any) -> Any:
+        replay_calls.append(client.name)
+        assert raw.startswith(b"GET / HTTP/1.1")
+        assert getattr(connection, "host", None) == "app.example.com"
+        if client is stale:
+            raise _WrappedOperationError(
+                "A network error occured",
+                source=_TransportAlreadyConnected("Transport is already connected"),
+            )
+        return {
+            "session_id": "sess-1",
+            "status": "DONE",
+            "error": None,
+            "elapsed_ms": 15,
+            "response_raw": b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+        }
+
+    async def _refresh_client(*, expected_client: Any | None = None) -> Any:
+        refresh_calls.append(expected_client)
+        client_ref["client"] = fresh
+        return fresh
+
+    monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
+    monkeypatch.setattr(caido_api, "replay_send_raw", _replay_send_raw)
+
+    client_ref.update({"client": stale, "refresh": _refresh_client})
+    payload = await tools.repeat_request.on_invoke_tool(
+        cast(
+            "Any",
+            _Ctx({"caido_client": stale, "caido_client_ref": client_ref}),
+        ),
+        json.dumps({"request_id": "req-1"}),
+    )
+
+    result = json.loads(payload)
+    assert result["success"] is True
+    assert replay_calls == ["stale", "fresh"]
+    assert refresh_calls == [stale]
+    assert client_ref["client"] is fresh
+
+
+async def test_host_repeat_request_does_not_retry_non_transport_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+    refresh_calls: list[Any] = []
+
+    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+        return _request_result()
+
+    async def _replay_send_raw(_client: Any, *, raw: bytes, connection: Any) -> Any:
+        raise ValueError("boom")
+
+    async def _refresh_client(*, expected_client: Any | None = None) -> Any:
+        refresh_calls.append(expected_client)
+        return _FakeClient("fresh")
+
+    monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
+    monkeypatch.setattr(caido_api, "replay_send_raw", _replay_send_raw)
+
+    payload = await tools.repeat_request.on_invoke_tool(
+        cast(
+            "Any",
+            _Ctx({"caido_client": client, "caido_client_ref": {"client": client, "refresh": _refresh_client}}),
+        ),
+        json.dumps({"request_id": "req-1"}),
+    )
+
+    result = json.loads(payload)
+    assert result["success"] is False
+    assert "boom" in result["error"]
+    assert refresh_calls == []
+
+
+async def test_standalone_repeat_request_refreshes_cached_client_after_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale = _FakeClient("stale")
+    fresh = _FakeClient("fresh")
+    caido_api._CLIENT_CACHE["default"] = cast("Any", stale)
+    replay_calls: list[str] = []
+
+    async def _new_client() -> Any:
+        return fresh
+
+    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+        return _request_result()
+
+    async def _replay_send_raw(client: Any, *, raw: bytes, connection: Any) -> Any:
+        replay_calls.append(client.name)
+        if client is stale:
+            raise _WrappedOperationError(
+                "A network error occured",
+                source=_TransportAlreadyConnected("Transport is already connected"),
+            )
+        return {
+            "session_id": "sess-2",
+            "status": "DONE",
+            "error": None,
+            "elapsed_ms": 9,
+            "response_raw": b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+        }
+
+    monkeypatch.setattr(caido_api, "_new_client", _new_client)
+    monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
+    monkeypatch.setattr(caido_api, "replay_send_raw", _replay_send_raw)
+
+    result = await caido_api.repeat_request("req-1")
+
+    assert result["status"] == "DONE"
+    assert replay_calls == ["stale", "fresh"]
+    assert caido_api._CLIENT_CACHE["default"] is fresh
+    assert stale.closed is True

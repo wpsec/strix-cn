@@ -6,6 +6,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
@@ -243,7 +244,8 @@ class HelpScreen(ModalScreen):  # type: ignore[misc]
         yield Grid(
             Label("Strix 帮助", id="help_title"),
             Label(
-                "F1        帮助\nF2        复制模式切换\nCtrl+Q/C  退出\nESC       停止代理\n"
+                "F1        帮助\nF2        复制模式切换\nCtrl+T    开始当前功能测试\n"
+                "Ctrl+N    下一功能点采集\nCtrl+Q/C  退出\nESC       停止代理\n"
                 "Enter     发送消息给代理\nTab       切换面板\n↑/↓       浏览代理树",
                 id="help_content",
             ),
@@ -781,6 +783,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
     ALLOW_SELECT = True
 
     SIDEBAR_MIN_WIDTH = 120
+    PROXY_RESUME_RUNNING_COOLDOWN_SECONDS: ClassVar[float] = 8.0
+    FEATURE_WORKFLOW_CHILD_AGENT_NUDGE_DELAY_SECONDS: ClassVar[float] = 8.0
+    FEATURE_WORKFLOW_CHILD_AGENT_NUDGE_COOLDOWN_SECONDS: ClassVar[float] = 20.0
 
     selected_agent_id: reactive[str | None] = reactive(default=None)
     show_splash: reactive[bool] = reactive(default=True)
@@ -789,6 +794,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("f1", "toggle_help", "帮助", priority=True),
         Binding("f2", "toggle_terminal_copy_mode", "复制模式", priority=True),
+        Binding("ctrl+t", "start_feature_testing", "开始测试", priority=True),
+        Binding("ctrl+n", "switch_feature_capture", "下一功能", priority=True),
         Binding("ctrl+q", "request_quit", "退出", priority=True),
         Binding("ctrl+c", "request_quit", "退出", priority=True),
         Binding("escape", "stop_selected_agent", "停止代理", priority=True),
@@ -825,6 +832,14 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._proxy_monitor_thread: threading.Thread | None = None
         self._proxy_monitor_stop_event = threading.Event()
         self._last_proxy_notified_request_id: str | None = None
+        self._last_proxy_resume_dispatched_at: float = 0.0
+        self._manual_burp_workflow: bool = self._is_burp_feature_workflow()
+        self._burp_workflow_phase: str = "capture" if self._is_burp_feature_workflow() else "idle"
+        self._feature_capture_baseline_total: int = 0
+        self._feature_test_started_at_monotonic: float = 0.0
+        self._feature_workflow_active_batch_key: str = ""
+        self._feature_workflow_last_nudged_batch_key: str = ""
+        self._feature_workflow_last_nudge_at_monotonic: float = 0.0
 
         self._spinner_frame_index: int = 0
         self._sweep_num_squares: int = 6
@@ -842,6 +857,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._pending_scroll_end = False
 
         self._setup_cleanup_handlers()
+        self._sync_burp_workflow_phase()
+        self._sync_feature_capture_count()
 
     def _build_scan_config(self, args: argparse.Namespace) -> dict[str, Any]:
         return {
@@ -872,6 +889,35 @@ class StrixTUIApp(App):  # type: ignore[misc]
         signal.signal(signal.SIGTERM, signal_handler)
         if hasattr(signal, "SIGHUP"):
             signal.signal(signal.SIGHUP, signal_handler)
+
+    def _is_burp_feature_workflow(self) -> bool:
+        return self.scan_config.get("burp_port") is not None
+
+    def _sync_burp_workflow_phase(self) -> None:
+        setattr(self.report_state, "burp_workflow_phase", self._burp_workflow_phase)
+
+    def _set_burp_workflow_phase(self, phase: str) -> None:
+        self._burp_workflow_phase = phase
+        self._sync_burp_workflow_phase()
+
+    def _current_total_proxy_capture_count(self) -> int:
+        capture = self.report_state.proxy_capture_state
+        return max(0, int(getattr(capture, "total_request_count", 0) or 0))
+
+    def _sync_feature_capture_count(self, total_count: int | None = None) -> None:
+        current_total = self._current_total_proxy_capture_count() if total_count is None else max(
+            0, int(total_count or 0)
+        )
+        feature_count = max(0, current_total - self._feature_capture_baseline_total)
+        setattr(self.report_state, "proxy_feature_request_count", feature_count)
+
+    @staticmethod
+    def _feature_capture_label(phase: str) -> str:
+        if phase == "testing":
+            return "当前功能测试"
+        if phase == "capture":
+            return "功能点采集"
+        return "未启用"
 
     def compose(self) -> ComposeResult:
         if self.show_splash:
@@ -985,6 +1031,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._start_proxy_monitor_thread()
 
         self.set_interval(0.5, self._update_ui)
+        if self._is_burp_feature_workflow():
+                self.notify(
+                    "已进入 Burp 功能点采集模式：先手工点击功能收集流量，按 Ctrl+T 开始测试，按 Ctrl+N 切到下一功能点。",
+                    timeout=6,
+                )
 
     def _update_ui(self) -> None:
         if self.show_splash:
@@ -1006,6 +1057,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return
 
         self._sync_agent_graph()
+        self._maybe_nudge_feature_workflow_delegation()
 
         for agent_id, agent_data in list(self.live_view.agents.items()):
             if agent_id not in self._displayed_agents:
@@ -1103,6 +1155,12 @@ class StrixTUIApp(App):  # type: ignore[misc]
         events = self._gather_agent_events(self.selected_agent_id)
 
         if not events:
+            waiting_message = self._waiting_placeholder_message(self.selected_agent_id)
+            if waiting_message is not None:
+                return self._get_chat_placeholder_content(
+                    waiting_message,
+                    "placeholder-waiting",
+                )
             return self._get_chat_placeholder_content(
                 "代理正在启动...", "placeholder-no-activity"
             )
@@ -1113,6 +1171,21 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._displayed_events = current_event_ids
         return self._get_rendered_events_content(events), "chat-content"
+
+    def _waiting_placeholder_message(self, agent_id: str) -> str | None:
+        agent_data = self.live_view.agents.get(agent_id, {})
+        status = str(agent_data.get("status", "") or "").strip()
+        if status != "waiting":
+            return None
+
+        if self.scan_config.get("burp_port") is not None:
+            phase = str(getattr(self, "_burp_workflow_phase", "") or "").strip()
+            if phase == "capture":
+                return "代理已就绪，正在等待你采集当前功能点。采集完成后按 Ctrl+T 开始测试。"
+            if phase == "testing":
+                return "代理当前处于等待状态。当前功能点如已测试完成，可按 Ctrl+N 切回采集模式，或继续发送消息。"
+
+        return "代理当前处于等待状态，等待新的消息或输入。"
 
     def _update_chat_view(self) -> None:
         if len(self.screen_stack) > 1 or self.show_splash or not self.is_mounted:
@@ -1600,20 +1673,25 @@ class StrixTUIApp(App):  # type: ignore[misc]
                         latest_host=snapshot.latest_host,
                         latest_path=snapshot.latest_path,
                         latest_status_code=snapshot.latest_status_code,
+                        total_request_count=snapshot.total_request_count,
                     ),
                 )
+                self._sync_feature_capture_count(snapshot.total_request_count)
 
                 if scope_id is None:
                     continue
                 if not self._should_auto_resume_from_proxy(snapshot):
                     continue
 
-                root_agent_id = self._waiting_root_agent_id()
-                if root_agent_id is None:
+                root_agent_id, root_status = self._root_agent_for_proxy_resume()
+                if root_agent_id is None or root_status is None:
+                    continue
+                if not self._should_dispatch_proxy_resume(snapshot, root_status):
                     continue
 
-                if self._notify_waiting_root_agent(root_agent_id, snapshot):
+                if self._notify_root_agent_from_proxy(root_agent_id, snapshot):
                     self._last_proxy_notified_request_id = snapshot.latest_request_id
+                    self._last_proxy_resume_dispatched_at = time.monotonic()
 
         self._proxy_monitor_thread = threading.Thread(target=monitor_target, daemon=True)
         self._proxy_monitor_thread.start()
@@ -1624,41 +1702,268 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if thread is not None and thread.is_alive():
             thread.join(timeout=1)
 
-    def _waiting_root_agent_id(self) -> str | None:
+    @staticmethod
+    def _select_root_agent_for_proxy_resume(
+        parent_of: dict[str, str | None],
+        statuses: dict[str, str],
+    ) -> tuple[str | None, str | None]:
+        for agent_id, parent_id in parent_of.items():
+            if parent_id is not None:
+                continue
+            status = statuses.get(agent_id)
+            if status in {"running", "waiting"}:
+                return agent_id, status
+            return None, None
+        return None, None
+
+    def _root_agent_for_proxy_resume(self) -> tuple[str | None, str | None]:
         loop = self._scan_loop
         if loop is None or loop.is_closed():
-            return None
+            return None, None
 
         try:
             future = asyncio.run_coroutine_threadsafe(self.coordinator.graph_snapshot(), loop)
             parent_of, statuses, _names = future.result(timeout=2)
         except Exception:
             logger.debug("Unable to read agent graph for proxy monitor", exc_info=True)
-            return None
+            return None, None
+        return self._select_root_agent_for_proxy_resume(parent_of, statuses)
 
+    def _root_agent_for_feature_workflow(self) -> tuple[str | None, str | None]:
+        loop = self._scan_loop
+        if loop is None or loop.is_closed():
+            return None, None
+        try:
+            future = asyncio.run_coroutine_threadsafe(self.coordinator.graph_snapshot(), loop)
+            parent_of, statuses, _names = future.result(timeout=2)
+        except Exception:
+            logger.debug("Unable to read agent graph for feature workflow", exc_info=True)
+            return None, None
         for agent_id, parent_id in parent_of.items():
-            if parent_id is None and statuses.get(agent_id) == "waiting":
-                return agent_id
-        return None
+            if parent_id is None:
+                return agent_id, statuses.get(agent_id)
+        return None, None
 
     def _should_auto_resume_from_proxy(self, snapshot: ProxyCaptureSnapshot) -> bool:
+        if self.scan_config.get("burp_port") is not None and getattr(self, "_manual_burp_workflow", False):
+            return False
         if self.scan_config.get("burp_port") is None:
             return False
         if not snapshot.latest_request_id:
             return False
         return snapshot.latest_request_id != self._last_proxy_notified_request_id
 
+    def _should_dispatch_proxy_resume(
+        self,
+        snapshot: ProxyCaptureSnapshot,
+        root_status: str,
+        *,
+        now_monotonic: float | None = None,
+    ) -> bool:
+        if not StrixTUIApp._should_auto_resume_from_proxy(self, snapshot):
+            return False
+        if root_status == "waiting":
+            return True
+        if root_status != "running":
+            return False
+        current_time = time.monotonic() if now_monotonic is None else now_monotonic
+        return (
+            current_time - self._last_proxy_resume_dispatched_at
+            >= self.PROXY_RESUME_RUNNING_COOLDOWN_SECONDS
+        )
+
     @staticmethod
     def _proxy_resume_message(snapshot: ProxyCaptureSnapshot) -> str:
         count_suffix = "+" if snapshot.recent_request_has_more else ""
         recent_count = max(0, snapshot.recent_request_count)
         return (
-            "检测到新的 Burp 代理流量已进入当前扫描。"
+            "检测到新的 Burp 代理流量批次已进入当前扫描。"
             f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
-            " 请立即重新检查代理历史和站点地图，并仅基于最新捕获流量继续分析。"
+            " 请立即重新检查代理历史、站点地图和代理图，仅基于最新捕获流量重新评估当前攻击面。"
+            " 如已有已完成的子专家仍适用，优先通过 send_message_to_agent 复用；"
+            " 如出现新的测试面，再创建新的子专家继续覆盖。"
         )
 
-    def _notify_waiting_root_agent(
+    @staticmethod
+    def _feature_test_start_message(snapshot: ProxyCaptureSnapshot) -> str:
+        count_suffix = "+" if snapshot.recent_request_has_more else ""
+        recent_count = max(0, snapshot.recent_request_count)
+        latest_summary = " ".join(
+            part
+            for part in [
+                str(snapshot.latest_method or "").strip(),
+                f"{str(snapshot.latest_host or '').strip()}{str(snapshot.latest_path or '').strip()}".strip(),
+            ]
+            if part
+        ).strip()
+        latest_line = latest_summary or "（暂无最近请求摘要）"
+        status_suffix = (
+            f" [{snapshot.latest_status_code}]"
+            if isinstance(snapshot.latest_status_code, int) and snapshot.latest_status_code > 0
+            else ""
+        )
+        return (
+            "当前功能点的手工点击和流量采集已完成，现在开始测试。"
+            " 请只基于本轮最新 Burp 捕获流量重新检查代理历史、站点地图和代理图，"
+            " 严格聚焦当前功能点，不要扩散到无关功能。"
+            " 第一动作必须先调用 view_agent_graph 检查可复用专家。"
+            " 如已有适用专家，优先用 send_message_to_agent 复用；如没有，再创建新的子专家。"
+            " 根代理不要把 create_todo / update_todo 作为本轮唯一动作，也不要长时间自己直接做请求级测试。"
+            " 本功能点测试完成后，请停止继续扩展，并调用 wait_for_message 等待我切换到下一个功能点。"
+            f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
+            f" 最近流量：{latest_line}{status_suffix}。"
+        )
+
+    @staticmethod
+    def _feature_workflow_batch_key(snapshot: ProxyCaptureSnapshot) -> str:
+        latest_request_id = str(snapshot.latest_request_id or "").strip()
+        if latest_request_id:
+            return latest_request_id
+        return f"total:{max(0, snapshot.total_request_count)}"
+
+    @staticmethod
+    def _feature_workflow_delegation_nudge_message(snapshot: ProxyCaptureSnapshot) -> str:
+        count_suffix = "+" if snapshot.recent_request_has_more else ""
+        recent_count = max(0, snapshot.recent_request_count)
+        latest_summary = " ".join(
+            part
+            for part in [
+                str(snapshot.latest_method or "").strip(),
+                f"{str(snapshot.latest_host or '').strip()}{str(snapshot.latest_path or '').strip()}".strip(),
+            ]
+            if part
+        ).strip()
+        latest_line = latest_summary or "（暂无最近请求摘要）"
+        status_suffix = (
+            f" [{snapshot.latest_status_code}]"
+            if isinstance(snapshot.latest_status_code, int) and snapshot.latest_status_code > 0
+            else ""
+        )
+        return (
+            "你还没有复用或创建任何子专家。"
+            " 不要让根代理继续只做待办事项，或长时间自己反复查看/重放请求。"
+            " 现在必须先协调：先调用 view_agent_graph；"
+            " 若已有适配专家，立即用 send_message_to_agent 分派当前功能点；"
+            " 若没有，至少 create_agent 一个与当前功能点直接相关的子专家，"
+            " 再由子专家继续 list_requests、view_request、repeat_request。"
+            " 根代理完成分派后调用 wait_for_message 等待子专家回报。"
+            f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
+            f" 最近流量：{latest_line}{status_suffix}。"
+        )
+
+    def _current_proxy_capture_snapshot(self) -> ProxyCaptureSnapshot:
+        capture = self.report_state.proxy_capture_state
+        return ProxyCaptureSnapshot(
+            recent_request_count=max(0, int(getattr(capture, "recent_request_count", 0) or 0)),
+            recent_request_has_more=bool(getattr(capture, "recent_request_has_more", False)),
+            latest_request_id=str(getattr(capture, "latest_request_id", "") or ""),
+            latest_method=str(getattr(capture, "latest_method", "") or ""),
+            latest_host=str(getattr(capture, "latest_host", "") or ""),
+            latest_path=str(getattr(capture, "latest_path", "") or ""),
+            latest_status_code=getattr(capture, "latest_status_code", None),
+            total_request_count=max(0, int(getattr(capture, "total_request_count", 0) or 0)),
+        )
+
+    def _send_feature_workflow_message(self, root_agent_id: str, message: str) -> bool:
+        submitted = send_user_message_to_agent(
+            coordinator=self.coordinator,
+            loop=self._scan_loop,
+            live_view=self.live_view,
+            target_agent_id=root_agent_id,
+            message=message,
+        )
+        if submitted:
+            self._displayed_events.clear()
+            self._update_chat_view()
+        return submitted
+
+    @staticmethod
+    def _root_agent_has_child_agents(root_agent_id: str, live_agents: dict[str, dict[str, Any]]) -> bool:
+        for agent_id, agent_data in live_agents.items():
+            if agent_id == root_agent_id:
+                continue
+            if str(agent_data.get("parent_id") or "").strip() == root_agent_id:
+                return True
+        return False
+
+    def _should_nudge_feature_workflow_delegation(
+        self,
+        root_agent_id: str,
+        *,
+        now_monotonic: float | None = None,
+    ) -> bool:
+        if not self._manual_burp_workflow:
+            return False
+        if self.scan_config.get("burp_port") is None:
+            return False
+        if str(getattr(self, "_burp_workflow_phase", "") or "").strip() != "testing":
+            return False
+        if StrixTUIApp._root_agent_has_child_agents(root_agent_id, self.live_view.agents):
+            return False
+
+        started_at = float(getattr(self, "_feature_test_started_at_monotonic", 0.0) or 0.0)
+        if started_at <= 0:
+            return False
+
+        current_time = time.monotonic() if now_monotonic is None else now_monotonic
+        if current_time - started_at < self.FEATURE_WORKFLOW_CHILD_AGENT_NUDGE_DELAY_SECONDS:
+            return False
+
+        active_batch_key = str(getattr(self, "_feature_workflow_active_batch_key", "") or "").strip()
+        if not active_batch_key:
+            return False
+
+        last_batch_key = str(getattr(self, "_feature_workflow_last_nudged_batch_key", "") or "").strip()
+        last_nudge_at = float(getattr(self, "_feature_workflow_last_nudge_at_monotonic", 0.0) or 0.0)
+        if (
+            last_batch_key == active_batch_key
+            and current_time - last_nudge_at < self.FEATURE_WORKFLOW_CHILD_AGENT_NUDGE_COOLDOWN_SECONDS
+        ):
+            return False
+        return True
+
+    def _maybe_nudge_feature_workflow_delegation(self) -> None:
+        if not self._manual_burp_workflow:
+            return
+        root_agent_id, _root_status = self._root_agent_for_feature_workflow()
+        if root_agent_id is None:
+            return
+        if not self._should_nudge_feature_workflow_delegation(root_agent_id):
+            return
+
+        snapshot = self._current_proxy_capture_snapshot()
+        submitted = self._send_feature_workflow_message(
+            root_agent_id,
+            self._feature_workflow_delegation_nudge_message(snapshot),
+        )
+        if not submitted:
+            return
+
+        self._feature_workflow_last_nudged_batch_key = str(
+            getattr(self, "_feature_workflow_active_batch_key", "") or ""
+        ).strip()
+        self._feature_workflow_last_nudge_at_monotonic = time.monotonic()
+        self.notify("根代理尚未分派子专家，已自动发送纠偏指令。", timeout=4)
+
+    def _stop_feature_workflow_agents(self, root_agent_id: str) -> bool:
+        loop = self._scan_loop
+        if loop is None or loop.is_closed():
+            return False
+        future = asyncio.run_coroutine_threadsafe(
+            self.coordinator.cancel_descendants_graceful(root_agent_id),
+            loop,
+        )
+        future.add_done_callback(self._log_async_action_failure)
+        return True
+
+    @staticmethod
+    def _log_async_action_failure(future: Any) -> None:
+        try:
+            future.result()
+        except Exception:
+            logger.exception("TUI async control action failed")
+
+    def _notify_root_agent_from_proxy(
         self,
         agent_id: str,
         snapshot: ProxyCaptureSnapshot,
@@ -1892,6 +2197,63 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._update_chat_view()
 
         self.call_after_refresh(self._focus_chat_input)
+
+    def action_start_feature_testing(self) -> None:
+        if self.show_splash or not self.is_mounted:
+            return
+        if not self._is_burp_feature_workflow():
+            self.notify("当前运行不是 Burp 功能点工作流", severity="warning")
+            return
+        root_agent_id, _root_status = self._root_agent_for_feature_workflow()
+        if root_agent_id is None:
+            self.notify("根代理尚未就绪，暂时无法开始测试", severity="warning")
+            return
+        snapshot = self._current_proxy_capture_snapshot()
+        if snapshot.recent_request_count <= 0 and not snapshot.latest_request_id:
+            self.notify("还没有采集到新的代理流量，请先手工点击当前功能点", severity="warning")
+            return
+        self.selected_agent_id = root_agent_id
+        self._set_burp_workflow_phase("testing")
+        self._last_proxy_notified_request_id = snapshot.latest_request_id or self._last_proxy_notified_request_id
+        self._feature_test_started_at_monotonic = time.monotonic()
+        self._feature_workflow_active_batch_key = self._feature_workflow_batch_key(snapshot)
+        self._feature_workflow_last_nudged_batch_key = ""
+        self._feature_workflow_last_nudge_at_monotonic = 0.0
+        submitted = self._send_feature_workflow_message(
+            root_agent_id,
+            self._feature_test_start_message(snapshot),
+        )
+        if not submitted:
+            self.notify("扫描循环尚未就绪，开始测试指令发送失败", severity="warning")
+            self._set_burp_workflow_phase("capture")
+            self._feature_test_started_at_monotonic = 0.0
+            self._feature_workflow_active_batch_key = ""
+            return
+        self.notify("已开始当前功能点测试：根代理将只围绕本轮采集流量继续工作。", timeout=4)
+        self.call_after_refresh(self._focus_chat_input)
+
+    def action_switch_feature_capture(self) -> None:
+        if self.show_splash or not self.is_mounted:
+            return
+        if not self._is_burp_feature_workflow():
+            self.notify("当前运行不是 Burp 功能点工作流", severity="warning")
+            return
+        root_agent_id, _root_status = self._root_agent_for_feature_workflow()
+        self._set_burp_workflow_phase("capture")
+        if root_agent_id is None:
+            self.notify("已切回功能点采集模式", timeout=3)
+            return
+        if not self._stop_feature_workflow_agents(root_agent_id):
+            self.notify("扫描循环尚未就绪，无法切回采集模式", severity="warning")
+            return
+        self._feature_capture_baseline_total = self._current_total_proxy_capture_count()
+        self._sync_feature_capture_count(self._feature_capture_baseline_total)
+        self._feature_test_started_at_monotonic = 0.0
+        self._feature_workflow_active_batch_key = ""
+        self._feature_workflow_last_nudged_batch_key = ""
+        self._feature_workflow_last_nudge_at_monotonic = 0.0
+        self.selected_agent_id = root_agent_id
+        self.notify("已切回功能点采集模式：当前代理会停车，等待你采集下一个功能点。", timeout=4)
 
     def _get_agent_name(self, agent_id: str) -> str:
         try:

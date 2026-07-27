@@ -54,6 +54,20 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 
+def _should_start_root_parked(
+    *,
+    interactive: bool,
+    is_resume: bool,
+    root_status: str | None,
+    scan_config: dict[str, Any],
+) -> bool:
+    if not interactive:
+        return False
+    if is_resume:
+        return root_status != "running"
+    return scan_config.get("burp_port") is not None
+
+
 def _merge_root_prompt_context(
     scope_context: dict[str, Any],
     extra_system_prompt_context: dict[str, Any] | None,
@@ -296,6 +310,22 @@ async def run_strix_scan(
             system_prompt_context=scope_context,
         )
 
+        caido_client_ref = bundle.get("caido_client_ref")
+        if not isinstance(caido_client_ref, dict):
+            caido_client_ref = {"client": bundle.get("caido_client")}
+            bundle["caido_client_ref"] = caido_client_ref
+
+        async def _refresh_caido_client(*, expected_client: Any | None = None) -> Any:
+            client = await session_manager.refresh_bundle_caido_client(
+                bundle,
+                expected_client=expected_client,
+            )
+            caido_client_ref["client"] = client
+            return client
+
+        caido_client_ref["client"] = bundle.get("caido_client")
+        caido_client_ref["refresh"] = _refresh_caido_client
+
         async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:
             return await start_child_agent(
                 coordinator=coordinator,
@@ -313,6 +343,7 @@ async def run_strix_scan(
         context: dict[str, Any] = {
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
+            "caido_client_ref": caido_client_ref,
             "caido_client": bundle["caido_client"],
             "caido_scope_id": scope_context.get("proxy_scope_id"),
             "caido_scope_allowlist": scope_context.get("proxy_scope_allowlist") or [],
@@ -369,6 +400,24 @@ async def run_strix_scan(
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
 
+        start_parked = _should_start_root_parked(
+            interactive=interactive,
+            is_resume=is_resume,
+            root_status=root_status,
+            scan_config=scan_config,
+        )
+        if start_parked and not is_resume:
+            await root_session.add_items(
+                [
+                    {
+                        "role": "user",
+                        "content": str(root_task),
+                    }
+                ]
+            )
+            await coordinator.park_waiting(root_id)
+            initial_input = []
+
         result = await run_agent_loop(
             agent=root_agent,
             initial_input=initial_input,
@@ -379,7 +428,7 @@ async def run_strix_scan(
             agent_id=root_id,
             interactive=interactive,
             session=root_session,
-            start_parked=bool(interactive and is_resume and root_status != "running"),
+            start_parked=start_parked,
             event_sink=event_sink,
             hooks=hooks,
         )

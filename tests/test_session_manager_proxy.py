@@ -218,3 +218,56 @@ async def test_create_or_reuse_bootstraps_caido_with_host_bridge_proxy(
         await session_manager.cleanup(scan_id)
 
     assert captured["released"] is fake_bridge
+
+
+@pytest.mark.asyncio
+async def test_refresh_bundle_caido_client_replaces_bundle_and_shared_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeClient:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stale = _FakeClient("stale")
+    fresh = _FakeClient("fresh")
+    captured: dict[str, object] = {}
+
+    async def _bootstrap_caido(
+        session: object,
+        *,
+        host_url: str,
+        container_url: str,
+        upstream_proxy: object | None = None,
+    ) -> object:
+        captured["session"] = session
+        captured["host_url"] = host_url
+        captured["container_url"] = container_url
+        captured["upstream_proxy"] = upstream_proxy
+        return fresh
+
+    monkeypatch.setattr(session_manager, "bootstrap_caido", _bootstrap_caido)
+
+    bundle = {
+        "session": object(),
+        "caido_client": stale,
+        "caido_client_ref": {"client": stale},
+        "caido_host_url": "http://127.0.0.1:52123",
+        "caido_container_url": "http://127.0.0.1:48080",
+        "caido_upstream_proxy": SimpleNamespace(host="host.docker.internal", port=18081, is_tls=False),
+    }
+
+    refreshed = await session_manager.refresh_bundle_caido_client(
+        bundle,
+        expected_client=stale,
+    )
+
+    assert refreshed is fresh
+    assert bundle["caido_client"] is fresh
+    assert bundle["caido_client_ref"]["client"] is fresh
+    assert stale.closed is True
+    assert captured["host_url"] == "http://127.0.0.1:52123"
+    assert captured["container_url"] == "http://127.0.0.1:48080"

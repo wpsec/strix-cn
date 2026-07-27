@@ -37,6 +37,7 @@ class ProxyCaptureState:
     latest_host: str | None = None
     latest_path: str | None = None
     latest_status_code: int | None = None
+    total_request_count: int = 0
 
 
 def _strix_version() -> str | None:
@@ -223,6 +224,7 @@ class ReportState:
                     latest_host=_string_or_none(proxy_capture.get("latest_host")),
                     latest_path=_string_or_none(proxy_capture.get("latest_path")),
                     latest_status_code=_int_or_none(proxy_capture.get("latest_status_code")),
+                    total_request_count=int(proxy_capture.get("total_request_count") or 0),
                 )
             else:
                 self.proxy_capture_state = ProxyCaptureState()

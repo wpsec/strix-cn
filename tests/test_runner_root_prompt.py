@@ -75,6 +75,13 @@ def _patch_engine_scaffold(
 
     captured: dict[str, Any] = {}
 
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.items: list[dict[str, Any]] = []
+
+        async def add_items(self, items: list[dict[str, Any]]) -> None:
+            self.items.extend(items)
+
     def _build_strix_agent(**kwargs: Any) -> object:
         if kwargs.get("is_root") and "kwargs" not in captured:
             captured["kwargs"] = kwargs
@@ -82,9 +89,12 @@ def _patch_engine_scaffold(
 
     monkeypatch.setattr(runner, "build_strix_agent", _build_strix_agent)
     monkeypatch.setattr(runner, "make_child_factory", lambda **_kwargs: lambda **_k: object())
-    monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: object())
+    fake_session = _FakeSession()
+    captured["root_session"] = fake_session
+    monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: fake_session)
 
     async def _raise_rate_limit(*_args: Any, **_kwargs: Any) -> None:
+        captured["run_agent_loop_kwargs"] = _kwargs
         raise _make_rate_limit_error()
 
     monkeypatch.setattr(runner, "run_agent_loop", _raise_rate_limit)
@@ -208,3 +218,34 @@ async def test_root_prompt_includes_burp_passive_mode_constraints(
     assert "app.example.com" in instructions_override
     assert "*.caido.io" in instructions_override
     assert "PASSIVE BURP MODE" in instructions_override
+
+
+@pytest.mark.asyncio
+async def test_burp_passive_interactive_run_starts_root_parked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    scope_context = {
+        "scope_source": "burp_upstream_proxy",
+        "authorization_source": "operator_routed_proxy_traffic",
+        "authorized_targets": [],
+        "proxy_passive_mode": True,
+        "proxy_scope_enforced": True,
+        "proxy_scope_allowlist": ["app.example.com"],
+        "proxy_scope_denylist": ["caido.io", "*.caido.io"],
+        "user_instructions_do_not_expand_scope": True,
+    }
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep", "burp_port": 8081},
+        scan_id="scan-burp-parked",
+        image="img",
+        coordinator=AgentCoordinator(),
+        interactive=True,
+    )
+
+    run_agent_loop_kwargs = captured["run_agent_loop_kwargs"]
+    assert run_agent_loop_kwargs["start_parked"] is True
+    assert run_agent_loop_kwargs["initial_input"] == []
+    assert captured["root_session"].items == [{"role": "user", "content": "task"}]

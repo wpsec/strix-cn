@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -397,15 +398,33 @@ def _append_proxy_capture_status(stats_text: Text, report_state: Any) -> None:
 
     recent_count = max(0, int(getattr(capture, "recent_request_count", 0) or 0))
     has_more = bool(getattr(capture, "recent_request_has_more", False))
+    total_count = max(0, int(getattr(capture, "total_request_count", 0) or 0))
+    feature_count = max(0, int(getattr(report_state, "proxy_feature_request_count", 0) or 0))
+    workflow_phase = str(getattr(report_state, "burp_workflow_phase", "") or "").strip()
 
     stats_text.append("\n")
     stats_text.append("代理捕获: ", style="bold white")
-    if recent_count <= 0:
+    if total_count > 0:
+        stats_text.append(f"累计 {total_count} 条", style="white")
+    elif recent_count <= 0:
         stats_text.append("暂未看到新流量", style="dim white")
+        return
+    else:
+        count_suffix = "+" if has_more else ""
+        stats_text.append(f"最近 {recent_count}{count_suffix} 条", style="white")
+
+    if workflow_phase:
+        stats_text.append("\n")
+        stats_text.append("当前功能: ", style="bold white")
+        stats_text.append(f"{feature_count} 条", style="white")
+
+    if recent_count <= 0:
         return
 
     count_suffix = "+" if has_more else ""
-    stats_text.append(f"最近 {recent_count}{count_suffix} 条", style="white")
+    stats_text.append("\n")
+    stats_text.append("最近批次: ", style="bold white")
+    stats_text.append(f"{recent_count}{count_suffix} 条", style="white")
 
     method = str(getattr(capture, "latest_method", "") or "").strip()
     host = str(getattr(capture, "latest_host", "") or "").strip()
@@ -420,6 +439,23 @@ def _append_proxy_capture_status(stats_text: Text, report_state: Any) -> None:
     stats_text.append(_truncate_text(latest_summary, 88), style="white")
     if isinstance(status_code, int) and status_code > 0:
         stats_text.append(f" [{status_code}]", style="dim white")
+
+
+def _append_burp_workflow_status(stats_text: Text, report_state: Any) -> None:
+    phase = str(getattr(report_state, "burp_workflow_phase", "") or "").strip()
+    if not phase:
+        return
+
+    label = "当前功能测试" if phase == "testing" else "功能点采集"
+    stats_text.append("\n")
+    stats_text.append("工作流: ", style="bold white")
+    stats_text.append(label, style="white")
+    stats_text.append("\n")
+    stats_text.append("操作: ", style="bold white")
+    stats_text.append("Ctrl+T 开始测试", style="white")
+    stats_text.append("\n")
+    stats_text.append("      ", style="bold white")
+    stats_text.append("Ctrl+N 下一功能点", style="white")
 
 
 def build_final_stats_text(report_state: Any) -> Text:
@@ -475,6 +511,7 @@ def build_live_stats_text(report_state: Any) -> Text:
     _append_burp_upstream_status(stats_text, report_state)
     _append_caido_workbench_status(stats_text, report_state)
     _append_proxy_capture_status(stats_text, report_state)
+    _append_burp_workflow_status(stats_text, report_state)
 
     return stats_text
 
@@ -502,6 +539,7 @@ def build_tui_stats_text(report_state: Any) -> Text:
     _append_burp_upstream_status(stats_text, report_state)
     _append_caido_workbench_status(stats_text, report_state)
     _append_proxy_capture_status(stats_text, report_state)
+    _append_burp_workflow_status(stats_text, report_state)
 
     return stats_text
 
@@ -561,6 +599,10 @@ def _derive_target_label_for_run_name(targets_info: list[dict[str, Any]] | None)
 
 
 def generate_run_name(targets_info: list[dict[str, Any]] | None = None) -> str:
+    if not targets_info:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        return f"pentest_{timestamp}"
+
     base_label = _derive_target_label_for_run_name(targets_info)
     slug = _slugify_for_run_name(base_label)
 

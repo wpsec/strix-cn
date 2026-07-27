@@ -35,6 +35,7 @@ def test_caido_url_round_trips_via_run_record(
             latest_host="app.example.com",
             latest_path="/api/login",
             latest_status_code=200,
+            total_request_count=27,
         ),
         persist=True,
     )
@@ -46,6 +47,7 @@ def test_caido_url_round_trips_via_run_record(
     assert payload["proxy_scope_name"] == "strix-proxy-scope-run"
     assert payload["proxy_capture"]["latest_request_id"] == "req-3"
     assert payload["proxy_capture"]["recent_request_has_more"] is True
+    assert payload["proxy_capture"]["total_request_count"] == 27
 
     restored = ReportState(run_name="run")
     _patch_run_dir(monkeypatch, tmp_path)
@@ -57,6 +59,7 @@ def test_caido_url_round_trips_via_run_record(
     assert restored.proxy_scope_name == "strix-proxy-scope-run"
     assert restored.proxy_capture_state.latest_request_id == "req-3"
     assert restored.proxy_capture_state.recent_request_count == 3
+    assert restored.proxy_capture_state.total_request_count == 27
     assert restored.burp_upstream_unavailable_reason is None
 
 

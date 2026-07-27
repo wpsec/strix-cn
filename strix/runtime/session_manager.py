@@ -258,6 +258,10 @@ async def create_or_reuse(
         "client": client,
         "session": session,
         "caido_client": caido_client,
+        "caido_client_ref": {"client": caido_client},
+        "caido_host_url": host_caido_ui_url,
+        "caido_container_url": container_caido_ui_url,
+        "caido_upstream_proxy": upstream_proxy,
         "caido_url": burp_upstream_url,
         "caido_ui_url": caido_ui_url,
         "burp_upstream_unavailable_reason": burp_upstream_unavailable_reason,
@@ -311,3 +315,38 @@ async def cleanup(scan_id: str) -> None:
             docker_client.close()
         except Exception:  # noqa: BLE001
             logger.debug("cleanup(%s): docker_client.close() raised", scan_id, exc_info=True)
+
+
+async def refresh_bundle_caido_client(
+    bundle: dict[str, Any],
+    *,
+    expected_client: Any | None = None,
+) -> Any:
+    """Re-bootstrap a session bundle's Caido client after a transport failure."""
+    current_client = bundle.get("caido_client")
+    if expected_client is not None and current_client is not None and current_client is not expected_client:
+        client_ref = bundle.get("caido_client_ref")
+        if isinstance(client_ref, dict):
+            client_ref["client"] = current_client
+        return current_client
+
+    host_url = bundle.get("caido_host_url")
+    container_url = bundle.get("caido_container_url")
+    session = bundle.get("session")
+    if not isinstance(host_url, str) or not isinstance(container_url, str) or session is None:
+        raise RuntimeError("Caido refresh metadata missing from session bundle")
+
+    new_client = await bootstrap_caido(
+        session,
+        host_url=host_url,
+        container_url=container_url,
+        upstream_proxy=bundle.get("caido_upstream_proxy"),
+    )
+    bundle["caido_client"] = new_client
+    client_ref = bundle.get("caido_client_ref")
+    if isinstance(client_ref, dict):
+        client_ref["client"] = new_client
+    if current_client is not None and current_client is not new_client:
+        with contextlib.suppress(Exception):
+            await current_client.aclose()
+    return new_client

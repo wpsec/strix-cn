@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import logging
 import os
 import time
 import urllib.request
@@ -55,6 +57,7 @@ _REQ_FIELD_MAP: dict[SortBy, tuple[str, str]] = {
     "response_time": ("resp", "roundtrip"),
     "response_size": ("resp", "length"),
 }
+logger = logging.getLogger(__name__)
 
 
 def caido_url() -> str:
@@ -127,6 +130,55 @@ async def close_client() -> None:
     if client is None:
         return
     await client.aclose()
+
+
+def _iter_exception_chain(exc: BaseException) -> list[BaseException]:
+    seen: set[int] = set()
+    pending: list[BaseException] = [exc]
+    chain: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        chain.append(current)
+        source = getattr(current, "source", None)
+        if isinstance(source, BaseException):
+            pending.append(source)
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            pending.append(cause)
+        context = getattr(current, "__context__", None)
+        if isinstance(context, BaseException):
+            pending.append(context)
+    return chain
+
+
+def is_replay_transport_error(exc: BaseException) -> bool:
+    """Return whether ``exc`` maps to Caido's replay transport reuse failure."""
+    for current in _iter_exception_chain(exc):
+        if current.__class__.__name__ == "TransportAlreadyConnected":
+            return True
+        if "Transport is already connected" in str(current):
+            return True
+    return False
+
+
+async def refresh_client(*, expected_client: Client | None = None) -> Client:
+    """Replace the cached standalone Caido client and return the fresh instance."""
+    stale_client: Client | None = None
+    async with _CLIENT_LOCK:
+        current = _CLIENT_CACHE.get("default")
+        if expected_client is not None and current is not None and current is not expected_client:
+            return current
+        stale_client = _CLIENT_CACHE.pop("default", None)
+        new_client = await _new_client()
+        _CLIENT_CACHE["default"] = new_client
+    if stale_client is not None and stale_client is not new_client:
+        with contextlib.suppress(Exception):
+            await stale_client.aclose()
+    return new_client
 
 
 async def list_requests_with_client(
@@ -459,7 +511,17 @@ async def repeat_request(
         )
         return await replay_send_raw(client, raw=raw, connection=connection)
 
-    return await call_with_client(_run)
+    try:
+        return await call_with_client(_run)
+    except Exception as exc:
+        if not is_replay_transport_error(exc):
+            raise
+        failed_client = _CLIENT_CACHE.get("default")
+        logger.warning(
+            "repeat_request hit a replay transport error; refreshing cached Caido client and retrying once"
+        )
+        await refresh_client(expected_client=failed_client)
+        return await call_with_client(_run)
 
 
 async def scope_rules(
@@ -612,26 +674,30 @@ def _clean_sitemap_response(resp: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _coerce_sitemap_entry_id(raw_id: str | int | None, *, field_name: str) -> tuple[int | None, str | None]:
-    """Normalize a sitemap entry ID to the numeric form Caido expects."""
+def _coerce_sitemap_entry_id(
+    raw_id: str | int | None,
+    *,
+    field_name: str,
+) -> tuple[str | None, str | None]:
+    """Normalize a sitemap entry ID to the string form Caido GraphQL expects."""
     if raw_id is None:
         return None, None
     if isinstance(raw_id, bool):
         return None, (
-            f"无效的 {field_name}：{raw_id!r}。应传入 `list_sitemap` 返回的数字型 sitemap 条目 ID。"
+            f"无效的 {field_name}：{raw_id!r}。应使用 `list_sitemap` 返回的 sitemap 条目 ID。"
         )
     if isinstance(raw_id, int):
-        return raw_id, None
+        return str(raw_id), None
 
     value = str(raw_id).strip()
     if not value:
-        return None, f"无效的 {field_name}：空值。应传入数字型 sitemap 条目 ID。"
-    if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
-        return int(value), None
-    return None, (
-        f"无效的 {field_name}：{raw_id!r}。应传入 `list_sitemap` 返回的数字型 sitemap 条目 ID，"
-        "而不是 request ID。"
-    )
+        return None, f"无效的 {field_name}：空值。应使用 `list_sitemap` 返回的 sitemap 条目 ID。"
+    if value.lower().startswith("req_"):
+        return None, (
+            f"无效的 {field_name}：{raw_id!r}。应使用 `list_sitemap` 返回的 sitemap 条目 ID，"
+            "而不是 request ID。"
+        )
+    return value, None
 
 
 async def list_sitemap_with_client(

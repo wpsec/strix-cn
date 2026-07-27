@@ -50,7 +50,25 @@ _CAIDO_CALL_LOCK = asyncio.Lock()
 
 def _ctx_client(ctx: RunContextWrapper) -> Client | None:
     inner = ctx.context if isinstance(ctx.context, dict) else {}
+    client_ref = inner.get("caido_client_ref")
+    if isinstance(client_ref, dict):
+        client = client_ref.get("client")
+        if client is not None:
+            return client
     return inner.get("caido_client")
+
+
+def _ctx_refresh_client(
+    ctx: RunContextWrapper,
+) -> Callable[..., Awaitable[Client]] | None:
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    client_ref = inner.get("caido_client_ref")
+    if isinstance(client_ref, dict):
+        refresh = client_ref.get("refresh")
+        if callable(refresh):
+            return refresh
+    refresh = inner.get("refresh_caido_client")
+    return refresh if callable(refresh) else None
 
 
 def _ctx_scope_id(ctx: RunContextWrapper) -> str | None:
@@ -401,6 +419,7 @@ async def repeat_request(
         return _no_client()
     mods = modifications or {}
     allowlist, denylist = _ctx_scope_patterns(ctx)
+    refresh_client = _ctx_refresh_client(ctx)
 
     async def _do(client: Client) -> dict[str, Any] | None:
         result = await caido_api.get_request_with_client(client, request_id, part="request")
@@ -425,6 +444,19 @@ async def repeat_request(
 
     try:
         replay = await _call(client, _do)
+    except Exception as exc:  # noqa: BLE001
+        if not caido_api.is_replay_transport_error(exc) or refresh_client is None:
+            return _err("repeat_request", exc)
+        logger.warning(
+            "repeat_request hit a replay transport error; refreshing the shared Caido client and retrying once"
+        )
+        try:
+            client = await refresh_client(expected_client=client)
+            replay = await _call(client, _do)
+        except Exception as retry_exc:  # noqa: BLE001
+            return _err("repeat_request", retry_exc)
+
+    try:
         if replay is None:
             return json.dumps(
                 {"success": False, "error": f"未找到请求 {request_id}"},

@@ -60,11 +60,16 @@ async def test_persistent_rate_limit_stops_gracefully(
     monkeypatch.setattr(runner.session_manager, "cleanup", _cleanup)  # type: ignore[attr-defined]
 
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
-    monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: "")
+    monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: {})
     monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(runner, "build_strix_agent", lambda **_kwargs: object())
     monkeypatch.setattr(runner, "make_child_factory", lambda **_kwargs: lambda **_k: object())
-    monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: object())
+
+    class _FakeSession:
+        async def add_items(self, _items: list[dict[str, Any]]) -> None:
+            return None
+
+    monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: _FakeSession())
 
     async def _raise_rate_limit(*_args: Any, **_kwargs: Any) -> None:
         raise _make_rate_limit_error()

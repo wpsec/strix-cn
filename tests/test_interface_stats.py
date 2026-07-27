@@ -20,6 +20,8 @@ class _ReportState:
         caido_ui_url: str | None = None,
         unavailable_reason: str | None = None,
         proxy_capture_state: ProxyCaptureState | None = None,
+        burp_workflow_phase: str = "",
+        proxy_feature_request_count: int = 0,
     ) -> None:
         self.vulnerability_reports: list[dict[str, Any]] = []
         self.run_record = {"llm_usage": {}}
@@ -28,6 +30,8 @@ class _ReportState:
         self.burp_upstream_unavailable_reason = unavailable_reason
         self.proxy_capture_state = proxy_capture_state or ProxyCaptureState()
         self.proxy_capture_error = None
+        self.burp_workflow_phase = burp_workflow_phase
+        self.proxy_feature_request_count = proxy_feature_request_count
 
     def get_total_llm_usage(self) -> dict[str, Any]:
         return {}
@@ -56,15 +60,34 @@ def test_stats_show_recent_proxy_capture_summary() -> None:
             latest_host="taxdev-sit.eytax.com.cn",
             latest_path="/bscapi/lite/level/getCurrentLevel",
             latest_status_code=200,
+            total_request_count=37,
         )
     )
 
     live_text = build_live_stats_text(report_state).plain
     tui_text = build_tui_stats_text(report_state).plain
 
-    assert "代理捕获: 最近 10+ 条" in live_text
+    assert "代理捕获: 累计 37 条" in live_text
+    assert "最近批次: 10+ 条" in live_text
     assert "最近流量: POST taxdev-sit.eytax.com.cn/bscapi/lite/level/getCurrentLevel [200]" in live_text
-    assert "代理捕获: 最近 10+ 条" in tui_text
+    assert "代理捕获: 累计 37 条" in tui_text
+    assert "最近批次: 10+ 条" in tui_text
+
+
+def test_tui_stats_show_burp_workflow_phase() -> None:
+    text = build_tui_stats_text(
+        _ReportState(
+            burp_workflow_phase="capture",
+            proxy_feature_request_count=12,
+            proxy_capture_state=ProxyCaptureState(total_request_count=42),
+        )
+    ).plain
+
+    assert "工作流: 功能点采集" in text
+    assert "操作: Ctrl+T 开始测试" in text
+    assert "Ctrl+N 下一功能点" in text
+    assert "代理捕获: 累计 42 条" in text
+    assert "当前功能: 12 条" in text
 
 
 def test_tui_stats_show_unavailable_reason_without_fake_endpoint() -> None:

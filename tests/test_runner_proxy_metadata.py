@@ -58,7 +58,12 @@ def _patch_runner_scaffold(
     monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(runner, "build_strix_agent", lambda **_kwargs: object())
     monkeypatch.setattr(runner, "make_child_factory", lambda **_kwargs: lambda **_k: object())
-    monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: object())
+
+    class _FakeSession:
+        async def add_items(self, _items: list[dict[str, Any]]) -> None:
+            return None
+
+    monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: _FakeSession())
 
     async def _return_none(*_args: Any, **_kwargs: Any) -> None:
         return None
