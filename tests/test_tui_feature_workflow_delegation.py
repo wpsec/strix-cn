@@ -115,3 +115,25 @@ def test_should_not_nudge_same_feature_batch_again_within_cooldown() -> None:
         )
         is False
     )
+
+
+def test_should_not_nudge_same_feature_batch_again_after_cooldown() -> None:
+    app = SimpleNamespace(
+        _manual_burp_workflow=True,
+        scan_config={"burp_port": 8081},
+        _burp_workflow_phase="testing",
+        live_view=SimpleNamespace(agents={"root": {"parent_id": None, "status": "running"}}),
+        _feature_test_started_at_monotonic=100.0,
+        _feature_workflow_active_batch_key="req-53",
+        _feature_workflow_last_nudged_batch_key="req-53",
+        _feature_workflow_last_nudge_at_monotonic=110.0,
+        FEATURE_WORKFLOW_CHILD_AGENT_NUDGE_DELAY_SECONDS=8.0,
+        FEATURE_WORKFLOW_CHILD_AGENT_NUDGE_COOLDOWN_SECONDS=20.0,
+    )
+
+    assert (
+        StrixTUIApp._should_nudge_feature_workflow_delegation(  # type: ignore[arg-type]
+            app, "root", now_monotonic=999.0
+        )
+        is False
+    )

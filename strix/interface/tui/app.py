@@ -1780,10 +1780,14 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         try:
             future = asyncio.run_coroutine_threadsafe(self.coordinator.graph_snapshot(), loop)
-            parent_of, statuses, _names = future.result(timeout=2)
+            snapshot = future.result(timeout=2)
         except Exception:
             logger.debug("Unable to read agent graph for proxy monitor", exc_info=True)
             return None, None
+        if not isinstance(snapshot, tuple) or len(snapshot) < 2:
+            logger.debug("Unexpected agent graph snapshot shape for proxy monitor: %r", snapshot)
+            return None, None
+        parent_of, statuses = snapshot[0], snapshot[1]
         return self._select_root_agent_for_proxy_resume(parent_of, statuses)
 
     def _root_agent_for_feature_workflow(self) -> tuple[str | None, str | None]:
@@ -1792,10 +1796,17 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return None, None
         try:
             future = asyncio.run_coroutine_threadsafe(self.coordinator.graph_snapshot(), loop)
-            parent_of, statuses, _names = future.result(timeout=2)
+            snapshot = future.result(timeout=2)
         except Exception:
             logger.debug("Unable to read agent graph for feature workflow", exc_info=True)
             return None, None
+        if not isinstance(snapshot, tuple) or len(snapshot) < 2:
+            logger.debug(
+                "Unexpected agent graph snapshot shape for feature workflow: %r",
+                snapshot,
+            )
+            return None, None
+        parent_of, statuses = snapshot[0], snapshot[1]
         for agent_id, parent_id in parent_of.items():
             if parent_id is None:
                 return agent_id, statuses.get(agent_id)
@@ -1971,11 +1982,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return False
 
         last_batch_key = str(getattr(self, "_feature_workflow_last_nudged_batch_key", "") or "").strip()
-        last_nudge_at = float(getattr(self, "_feature_workflow_last_nudge_at_monotonic", 0.0) or 0.0)
-        if (
-            last_batch_key == active_batch_key
-            and current_time - last_nudge_at < self.FEATURE_WORKFLOW_CHILD_AGENT_NUDGE_COOLDOWN_SECONDS
-        ):
+        # The delegation nudge is a one-shot correction per captured feature batch.
+        # Re-sending the same instruction every cooldown window floods the
+        # transcript and makes the TUI harder to use; a fresh batch or a manual
+        # restart of feature testing resets the key and allows one new nudge.
+        if last_batch_key == active_batch_key:
             return False
         return True
 

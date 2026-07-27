@@ -93,11 +93,21 @@ source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 
-# 提前拉取默认沙箱镜像
+# 确认当前虚拟环境里的版本已经刷新
+.venv/bin/strix --version
+
+# 如果这里仍显示旧版本，可执行一次无依赖重装刷新元数据
+# python -m pip install -e . --no-deps
+
+# 准备基础沙箱镜像（docker-overlay 方式依赖它）
 docker pull ghcr.io/usestrix/strix-sandbox:1.0.0
 
-# 基于当前仓库构建本地 sandbox 镜像
+# 方式 A：完整构建当前分支的本地 sandbox 镜像
 ./scripts/docker.sh local
+
+# 如果上一步因 docker.io/kalilinux 拉取超时失败，
+# 或者你只改了少量容器侧文件，可改用轻量覆盖构建：
+# ./scripts/docker-overlay.sh local
 
 # 在当前 shell 中指定 Strix 使用本地镜像
 export STRIX_IMAGE=strix-sandbox:local
@@ -131,8 +141,9 @@ export LLM_API_BASE="https://your-gateway.example/v1"
 > Windows 下运行前请先确认 Docker Desktop 已安装并处于运行状态；Strix 会自动拉取缺失镜像，但不会自动启动 Docker Desktop。
 
 > [!IMPORTANT]  
-> 上面的 `docker pull ghcr.io/usestrix/strix-sandbox:1.0.0` 只是提前准备基础镜像；真正运行当前 `strix-cn` 分支时，推荐按快速开始里的方式继续执行 `./scripts/docker.sh local`，再通过 `export STRIX_IMAGE=strix-sandbox:local` 明确使用本地构建镜像。  
-> 这样可以确保当前分支在 `containers/`、证书、代理端口、Caido 启动参数、浏览器环境等 sandbox 侧改动也一并生效，而不是误用默认发布镜像。
+> 上面的 `docker pull ghcr.io/usestrix/strix-sandbox:1.0.0` 只是提前准备基础镜像；真正运行当前 `strix-cn` 分支时，推荐继续执行 `./scripts/docker.sh local` 或 `./scripts/docker-overlay.sh local`，再通过 `export STRIX_IMAGE=strix-sandbox:local` 明确使用本地构建镜像。  
+> 这样可以确保当前分支在 `containers/`、证书、代理端口、Caido 启动参数、浏览器环境等 sandbox 侧改动也一并生效，而不是误用默认发布镜像。  
+> 如果你所在环境经常访问不到 `docker.io/kalilinux`，优先使用 `docker-overlay` 会更稳。
 
 如果你之后开了一个新的 shell，或者想重新确认当前用的是本地镜像，可以再执行一次：
 
@@ -163,6 +174,24 @@ export STRIX_IMAGE=strix-sandbox:local
 
 如果你所在环境访问 `ghcr.io` 较慢或受限，建议先手动执行上面的 `docker pull`，确认镜像 `ghcr.io/usestrix/strix-sandbox:1.0.0` 已可用后再启动扫描。
 
+### Burp 被动扫描快速开始
+
+推荐按“一个功能一个功能”测试，不要一次性把整个站点的大量接口流量都导给 Strix。
+
+```bash
+# 启动 Strix，监听给 Burp 的上游代理端口
+.venv/bin/strix --burp-port 8081
+```
+
+1. 在 Burp 里把上游代理指向 `127.0.0.1:8081`。
+2. 浏览器继续走 Burp，先手工点完一个完整功能点，让相关请求进入当前采集批次。
+3. 回到 Strix 后按 `Ctrl+T`，开始测试当前功能点。
+4. 当前功能点测完后按 `Ctrl+N`，切换到下一个功能采集批次。
+5. 按这个节奏循环，直到全部功能点测试完成。
+
+> [!TIP]
+> 这种“单功能采集 -> 开始测试 -> 切换下一个功能”的方式，比一次性灌入整站流量更稳定，也更符合当前 `strix-cn` 的 Burp 被动扫描工作流。
+
 ### ChatGPT 订阅登录
 
 如果你不想直接使用按量 API Key，也可以使用上游新增的 ChatGPT 订阅登录能力：
@@ -178,14 +207,14 @@ strix auth logout
 
 ### 本地 Viewer
 
-Strix 1.3.1 新增了本地 Viewer。每次扫描结果都会实时落盘，你可以直接在浏览器里查看运行状态、漏洞详情、代理图和历史运行：
+当前版本已内置本地 Viewer。每次扫描结果都会实时落盘，你可以直接在浏览器里查看运行状态、漏洞详情、代理图和历史运行：
 
 ```bash
 # 打开最近一次运行
-strix view
+.venv/bin/strix view
 
 # 或者打开指定运行
-strix view <run-name>
+.venv/bin/strix view <run-name>
 ```
 
 Viewer 默认只绑定到本机回环地址，读取本地 `strix_runs/` 目录中的结果文件，不需要额外前端构建。

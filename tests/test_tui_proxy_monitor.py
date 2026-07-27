@@ -8,6 +8,14 @@ from strix.interface.tui.app import StrixTUIApp
 from strix.runtime.proxy_capture import ProxyCaptureSnapshot
 
 
+class _ImmediateFuture:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def result(self, timeout: float | None = None) -> object:  # noqa: ARG002
+        return self._value
+
+
 def test_should_auto_resume_from_proxy_when_new_request_arrives() -> None:
     app = SimpleNamespace(
         scan_config={"burp_port": 8082},
@@ -155,6 +163,27 @@ def test_select_root_agent_for_proxy_resume_ignores_completed_root() -> None:
         None,
         None,
     )
+
+
+def test_root_agent_helpers_accept_four_value_graph_snapshot(monkeypatch) -> None:
+    snapshot = (
+        {"root": None, "child": "root"},
+        {"root": "waiting", "child": "running"},
+        {"root": "Strix", "child": "SQLi"},
+        {"root": "", "child": ""},
+    )
+    monkeypatch.setattr(
+        "strix.interface.tui.app.asyncio.run_coroutine_threadsafe",
+        lambda _coro, _loop: _ImmediateFuture(snapshot),
+    )
+    app = SimpleNamespace(
+        _scan_loop=SimpleNamespace(is_closed=lambda: False),
+        coordinator=SimpleNamespace(graph_snapshot=lambda: None),
+        _select_root_agent_for_proxy_resume=StrixTUIApp._select_root_agent_for_proxy_resume,
+    )
+
+    assert StrixTUIApp._root_agent_for_proxy_resume(app) == ("root", "waiting")  # type: ignore[arg-type]
+    assert StrixTUIApp._root_agent_for_feature_workflow(app) == ("root", "waiting")  # type: ignore[arg-type]
 
 
 def test_should_dispatch_proxy_resume_immediately_for_waiting_root() -> None:
