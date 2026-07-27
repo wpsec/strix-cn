@@ -74,7 +74,7 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
     assert "## 漏洞描述" in md
     assert "## 影响" in md
     assert "## 技术分析" in md
-    assert "## 利用方式" in md
+    assert "## Proof of Concept" in md
     assert "## 修复建议" in md
     assert "**接口：** /api/login" in md
 
@@ -111,6 +111,30 @@ def test_render_vulnerability_md_includes_dependency_fields() -> None:
     assert "**修复成本：** 极低" in md
     assert "## 证据" in md
     assert "## 前提假设" in md
+
+
+def test_render_vulnerability_md_poc_code_cannot_break_out_of_fence() -> None:
+    # LLM/target-authored PoC content containing its own ``` must not close the
+    # fence early and turn the injected markdown into live headings/images.
+    injected = "curl x\n```\n\n## Injected Heading\n![x](https://evil.example/beacon.png)"
+    md = render_vulnerability_md(_sample_report(poc_script_code=injected))
+    lines = md.split("\n")
+    opening = next(ln for ln in lines[lines.index("## Proof of Concept") + 1 :] if ln.strip())
+    ticks = opening[: len(opening) - len(opening.lstrip("`"))]
+    assert len(ticks) >= 4  # wider than the payload's 3-backtick run
+    assert "`" not in opening.removeprefix(ticks)  # backtick run + language tag only
+    assert f"\n{ticks}\n" in md  # pure-backtick closing fence of the same width
+    assert injected in md  # the payload survives verbatim, inside the fence
+
+
+def test_render_vulnerability_md_snippet_cannot_break_out_of_fence() -> None:
+    snippet = "row = q()\n```\n## Injected"
+    md = render_vulnerability_md(
+        _sample_report(code_locations=[{"file": "app.py", "snippet": snippet}]),
+    )
+    assert (
+        "  ````\n  row = q()\n  ```\n  ## Injected\n  ````"
+    ) in md  # indented fence widened past the payload's ``` run
 
 
 def test_write_vulnerabilities_creates_markdown_csv_and_json(tmp_path: Path) -> None:

@@ -115,7 +115,7 @@ def stage_symlink_safe_dir(src_root: Path) -> tuple[Path, Path | None]:
     # symlink in the LocalDir source path chain, so resolve the temp root first
     # and create the staging dir under the canonical path.
     tmp_root = Path(tempfile.gettempdir()).resolve()
-    staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=str(tmp_root)))
+    staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=str(tmp_root))).resolve()
     try:
         _stage_dir(root, staged, root, frozenset({root}))
     except OSError:

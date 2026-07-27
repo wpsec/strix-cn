@@ -61,8 +61,14 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   指向自定义配置文件（JSON）的路径，用于替代 `~/.strix/cli-config.json`。
 </ParamField>
 
-<ParamField path="--max-budget-usd" type="number">
-  为整次扫描设置 LLM 总预算上限（美元）。该预算会累计统计根代理与所有子代理的消耗。系统会在每次模型响应结束后检查预算；一旦累计成本达到阈值，扫描会以 `stopped` 状态干净停止，而不是失败，并同时销毁沙箱。
+<ParamField path="--max-budget, --max-budget-usd" type="number">
+  为整次扫描设置 LLM 总预算上限（美元）。该预算会累计统计根代理与所有子代理的消耗。系统会在每次模型响应结束后检查预算。
+
+  在无头模式（`-n`）下，一旦累计成本达到阈值，扫描会以 `stopped` 状态干净停止，而不是失败，并同时销毁沙箱。子代理会在预算到达 90% 时提前停止，为根代理收尾和生成最终报告预留预算。
+
+  在交互模式下，达到预算不会直接结束扫描，而是把代理整体暂停到 `budget_paused` 状态；你只要再发送任意消息，就会按原预算额度继续延长并恢复运行。交互模式下不会为子代理预留单独预算切片。
+
+  接近预算阈值时，系统会向所有代理发送渐进式收尾提醒，催促它们尽快完成当前工作并调用生命周期工具。根代理默认在 **70% / 85% / 95%** 收到提醒，并在 100% 停止；子代理在无头模式下默认在 **75% / 80% / 85%** 收到提醒，并在 90% 停止。
 
   该值必须大于 `0`。不传入则表示不限制预算。
 
@@ -71,6 +77,14 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   - 检查发生在响应返回之后，因此若阈值被跨越时仍有请求在飞，最终花费可能会略微超出预算，尤其是在多个子代理并发运行时更明显。
   - 成本是基于 token 使用量与模型价格进行的尽力估算；若某些提供商不返回带价格的信息，统计可能偏低。
   - 对于通过 LiteLLM 路由的模型，Strix 会开启流式成功回调来捕获提供商上报的成本。消息正文不会被纳入，但同一进程中配置的第三方 LiteLLM 回调可能会收到其他流式元数据，例如模型名、请求 ID 和 token 计数。
+</ParamField>
+
+<ParamField path="--max-turns" type="integer" default="500">
+  为每个代理设置最大 turns 上限。这里的 turn 指一次模型响应以及其对应的一轮工具调用。
+
+  达到上限后，对应代理会被强制停止。接近上限时，系统会在 **70% / 85% / 95%** 这三个阶段给该代理插入收尾提醒，要求它优先完成剩余工作并调用生命周期工具：根代理使用 `finish_scan`，子代理使用 `agent_finish`。
+
+  该值必须大于 `0`。
 </ParamField>
 
 ## 示例
@@ -98,6 +112,9 @@ strix --target api.example.com --instruction "Focus on IDOR and auth bypass"
 # CI/CD 模式
 strix -n --target ./ --scan-mode quick
 
+# 限制预算和每个代理的 turns
+strix --target https://example.com --max-budget 25 --max-turns 300
+
 # 针对指定基线强制启用 diff-scope
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
@@ -120,5 +137,6 @@ strix --target ./app-directory
 
 | 代码 | 含义 |
 |------|------|
-| 0 | 扫描完成，未发现漏洞 |
+| 0 | 扫描正常结束。交互模式始终返回 `0`；无头模式下表示未发现漏洞 |
+| 1 | 扫描在启动前或运行过程中发生致命错误，例如环境变量缺失、Docker 不可用、配置文件非法或未处理异常 |
 | 2 | 发现漏洞（仅无头模式） |

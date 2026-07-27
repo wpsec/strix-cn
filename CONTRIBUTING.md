@@ -109,6 +109,20 @@ Skills 是用于增强代理能力的专业知识包。详细规范请查看 [st
 - 简要考虑实现方向
 - 保持开放讨论
 
+## 🖥️ Local viewer SPA
+
+`strix view` serves a prebuilt web UI whose source lives in
+`strix/interface/viewer/frontend/` (a Vite + React project) and whose built output is
+committed to `strix/interface/viewer/static/` and shipped in the package. End users never
+run a JS build. If you change anything under `strix/interface/viewer/frontend/`, rebuild
+and commit the output:
+
+```bash
+make viewer   # or: cd strix/interface/viewer/frontend && npm ci && npm run build
+```
+
+Commit both the source change and the regenerated `strix/interface/viewer/static/`.
+
 ## 🤝 社区
 
 - **Discord**：[加入社区](https://discord.gg/strix-ai)

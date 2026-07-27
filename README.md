@@ -163,6 +163,33 @@ export STRIX_IMAGE=strix-sandbox:local
 
 如果你所在环境访问 `ghcr.io` 较慢或受限，建议先手动执行上面的 `docker pull`，确认镜像 `ghcr.io/usestrix/strix-sandbox:1.0.0` 已可用后再启动扫描。
 
+### ChatGPT 订阅登录
+
+如果你不想直接使用按量 API Key，也可以使用上游新增的 ChatGPT 订阅登录能力：
+
+```bash
+strix auth login chatgpt
+export STRIX_LLM="chatgpt/gpt-5.4"
+strix --target ./app-directory
+
+strix auth status
+strix auth logout
+```
+
+### 本地 Viewer
+
+Strix 1.3.1 新增了本地 Viewer。每次扫描结果都会实时落盘，你可以直接在浏览器里查看运行状态、漏洞详情、代理图和历史运行：
+
+```bash
+# 打开最近一次运行
+strix view
+
+# 或者打开指定运行
+strix view <run-name>
+```
+
+Viewer 默认只绑定到本机回环地址，读取本地 `strix_runs/` 目录中的结果文件，不需要额外前端构建。
+
 ### 先看帮助
 
 ```bash
@@ -366,6 +393,20 @@ export STRIX_REASONING_EFFORT="high"  # 控制思考强度（默认 high，quick
 
 > [!TIP]  
 > 如果你的网络环境访问外部模型或安装源受限，可以在运行前设置 `HTTP_PROXY`、`HTTPS_PROXY` 和 `ALL_PROXY`，并通过 `LLM_API_BASE` 指向可访问的兼容网关。
+
+#### 使用 ChatGPT 订阅登录
+
+如果你不想直接使用按量 API Key，也可以使用 ChatGPT Plus / Pro 订阅能力：
+
+```bash
+strix auth login chatgpt
+
+export STRIX_LLM="chatgpt/gpt-5.4"
+strix --target ./app-directory
+
+strix auth status
+strix auth logout
+```
 
 **本分支优先推荐的模型接入路径：**
 

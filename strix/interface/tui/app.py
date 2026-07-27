@@ -7,6 +7,7 @@ import signal
 import sys
 import threading
 import time
+import webbrowser
 from collections.abc import Callable
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
@@ -33,6 +34,7 @@ from textual.widgets.tree import TreeNode
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
 from strix.core.hooks import BudgetExceededError
+from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.interface.branding import (
     STRIX_WEBSITE,
@@ -47,6 +49,13 @@ from strix.interface.tui.renderers import render_tool_widget
 from strix.interface.tui.renderers.agent_message_renderer import AgentMessageRenderer
 from strix.interface.tui.renderers.user_message_renderer import UserMessageRenderer
 from strix.interface.utils import build_tui_stats_text
+from strix.report.state import ProxyCaptureState, ReportState, set_global_report_state
+from strix.report.writer import (
+    guess_language_name,
+    parse_fenced_code,
+    resolve_lexer,
+    safe_fence,
+)
 from strix.report.state import ProxyCaptureState, ReportState, set_global_report_state
 from strix.runtime import session_manager
 from strix.runtime.proxy_capture import ProxyCaptureSnapshot, fetch_proxy_capture_snapshot
@@ -346,12 +355,11 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             return "#65a30d"
         return "#6b7280"
 
-    def _highlight_python(self, code: str) -> Text:
+    def _highlight_python(self, code: str, language: str | None = None) -> Text:
         try:
-            from pygments.lexers import PythonLexer
             from pygments.styles import get_style_by_name
 
-            lexer = PythonLexer()
+            lexer = resolve_lexer(language, code)
             style = get_style_by_name("native")
             colors = {
                 token: f"#{style_def['color']}" for token, style_def in style if style_def["color"]
@@ -517,10 +525,11 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
 
         poc_script_code = vuln.get("poc_script_code", "")
         if poc_script_code:
+            poc_language, poc_code = parse_fenced_code(poc_script_code)
             text.append("\n\n")
             text.append("PoC 代码", style=self.FIELD_STYLE)
             text.append("\n")
-            text.append_text(self._highlight_python(poc_script_code))
+            text.append_text(self._highlight_python(poc_code, poc_language))
 
         remediation_steps = vuln.get("remediation_steps", "")
         if remediation_steps:
@@ -617,9 +626,12 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 lines.append(vuln["poc_description"])
                 lines.append("")
             if vuln.get("poc_script_code"):
-                lines.append("```python")
-                lines.append(vuln["poc_script_code"])
-                lines.append("```")
+                poc_language, poc_code = parse_fenced_code(vuln["poc_script_code"])
+                fence_lang = poc_language or guess_language_name(poc_code)
+                fence = safe_fence(poc_code)
+                lines.append(f"{fence}{fence_lang}")
+                lines.append(poc_code)
+                lines.append(fence)
 
         if vuln.get("code_locations"):
             lines.extend(["", "## 代码分析", ""])
@@ -635,7 +647,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 if loc.get("label"):
                     lines.append(f"  {loc['label']}")
                 if loc.get("snippet"):
-                    lines.append(f"```\n{loc['snippet']}\n```")
+                    snippet = str(loc["snippet"])
+                    snippet_fence = safe_fence(snippet)
+                    lines.append(f"{snippet_fence}\n{snippet}\n{snippet_fence}")
                 if loc.get("fix_before") or loc.get("fix_after"):
                     lines.append("**建议修复：**")
                     lines.append("```diff")
@@ -799,6 +813,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         Binding("ctrl+q", "request_quit", "退出", priority=True),
         Binding("ctrl+c", "request_quit", "退出", priority=True),
         Binding("escape", "stop_selected_agent", "停止代理", priority=True),
+        Binding("ctrl+o", "open_viewer", "打开 Viewer", priority=True),
     ]
 
     def __init__(self, args: argparse.Namespace):
@@ -825,6 +840,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._displayed_events: list[str] = []
 
         self._scan_thread: threading.Thread | None = None
+        self._viewer_httpd: Any = None
+        self._viewer_url: str | None = None
         self._scan_loop: asyncio.AbstractEventLoop | None = None
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
@@ -840,6 +857,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._feature_workflow_active_batch_key: str = ""
         self._feature_workflow_last_nudged_batch_key: str = ""
         self._feature_workflow_last_nudge_at_monotonic: float = 0.0
+        self._error_noted_agents: set[str] = set()
+        self._budget_pause_notified = False
 
         self._spinner_frame_index: int = 0
         self._sweep_num_squares: int = 6
@@ -976,7 +995,12 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
             vulnerabilities_panel = VulnerabilitiesPanel(id="vulnerabilities_panel")
 
-            sidebar = Vertical(agents_tree, vulnerabilities_panel, stats_scroll, id="sidebar")
+            viewer_cta = Static(self._viewer_cta_markup(), id="viewer_cta")
+            viewer_cta.ALLOW_SELECT = False
+
+            sidebar = Vertical(
+                viewer_cta, agents_tree, vulnerabilities_panel, stats_scroll, id="sidebar"
+            )
 
             content_container.mount(chat_area_container)
             content_container.mount(sidebar)
@@ -1086,25 +1110,49 @@ class StrixTUIApp(App):  # type: ignore[misc]
             else:
                 self._agent_graph_sync_future = None
                 try:
-                    parent_of, statuses, names = future.result()
+                    parent_of, statuses, names, errors = future.result()
                 except Exception:
                     logger.exception("TUI agent graph sync failed")
                 else:
                     for agent_id, status in statuses.items():
+                        error = errors.get(agent_id)
                         self.live_view.upsert_agent(
                             agent_id,
                             name=names.get(agent_id, agent_id),
                             parent_id=parent_of.get(agent_id),
                             status=status,
+                            error_message=error,
                         )
+                        if status in {"failed", "crashed"} and error:
+                            if agent_id not in self._error_noted_agents:
+                                self._error_noted_agents.add(agent_id)
+                                self.live_view.record_agent_error(agent_id, error)
+                        else:
+                            self._error_noted_agents.discard(agent_id)
+                    self._notify_budget_pause(statuses)
 
         if self._scan_loop is None or self._scan_loop.is_closed():
             return
 
-        async def collect() -> tuple[dict[str, str | None], dict[str, Any], dict[str, str]]:
+        async def collect() -> tuple[
+            dict[str, str | None], dict[str, Any], dict[str, str], dict[str, str]
+        ]:
             return await self.coordinator.graph_snapshot()
 
         self._agent_graph_sync_future = asyncio.run_coroutine_threadsafe(collect(), self._scan_loop)
+
+    def _notify_budget_pause(self, statuses: dict[str, Any]) -> None:
+        paused = any(status == "budget_paused" for status in statuses.values())
+        if paused and not self._budget_pause_notified:
+            self._budget_pause_notified = True
+            self.notify(
+                "Budget limit reached \u2014 agents paused. Send a message to continue "
+                "(this extends the budget), or ctrl-q to quit.",
+                severity="warning",
+                timeout=15,
+            )
+        elif not paused:
+            self._budget_pause_notified = False
 
     def _update_agent_node(self, agent_id: str, agent_data: dict[str, Any]) -> bool:
         if agent_id not in self.agent_nodes:
@@ -1118,8 +1166,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
             status_indicators = {
                 "running": "⚪",
                 "waiting": "⏸",
+                "budget_paused": "⏸",
                 "completed": "🟢",
                 "failed": "🔴",
+                "crashed": "🔴",
                 "stopped": "■",
             }
 
@@ -1335,20 +1385,29 @@ class StrixTUIApp(App):  # type: ignore[misc]
             text.append(msg)
             return (text, Text(), False)
 
-        if status == "failed":
+        if status in {"failed", "crashed"}:
             error_msg = agent_data.get("error_message", "")
             text = Text()
             if error_msg:
                 text.append(error_msg, style="red")
             else:
                 text.append("扫描失败", style="red")
+            text.append(" · ", style="dim")
+            text.append("发送消息以恢复", style="dim")
             self._stop_dot_animation()
             return (text, Text(), False)
 
-        if status == "waiting":
+        if status in {"waiting", "budget_paused"}:
             text = Text()
-            text.append("发送消息以继续", style="dim")
-            return (text, Text(), False)
+            keymap = Text()
+            if status == "budget_paused":
+                text.append("预算已达到上限", style="yellow")
+                text.append(" \u00b7 ", style="dim")
+                text.append("发送消息以继续", style="dim")
+                keymap = keymap_styled([("ctrl-q", "退出")])
+            else:
+                text.append("发送消息以继续", style="dim")
+            return (text, keymap, False)
 
         if status == "running":
             if self._agent_has_real_activity(agent_id):
@@ -1593,6 +1652,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                                 coordinator=self.coordinator,
                                 interactive=True,
                                 max_budget_usd=getattr(self.args, "max_budget_usd", None),
+                                max_turns=getattr(self.args, "max_turns", DEFAULT_MAX_TURNS),
                                 event_sink=self._capture_sdk_event,
                             ),
                         )
@@ -1600,10 +1660,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     logger.info("Scan interrupted by user")
                 except BudgetExceededError:
-                    # Defensive: the runner stops the scan cleanly on budget and
-                    # returns, so this normally never propagates. Treat it as a
-                    # graceful stop, not a scan error, if it ever does.
-                    logger.info("Scan stopped: --max-budget-usd limit reached")
+                    logger.info("Scan stopped: --max-budget limit reached")
                 except (ConnectionError, TimeoutError) as e:
                     logger.exception("Network error during scan")
                     self._scan_error = e
@@ -2022,8 +2079,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
         status_indicators = {
             "running": "⚪",
             "waiting": "⏸",
+            "budget_paused": "⏸",
             "completed": "🟢",
             "failed": "🔴",
+            "crashed": "🔴",
             "stopped": "■",
         }
 
@@ -2067,8 +2126,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
         status_indicators = {
             "running": "⚪",
             "waiting": "⏸",
+            "budget_paused": "⏸",
             "completed": "🟢",
             "failed": "🔴",
+            "crashed": "🔴",
             "stopped": "■",
         }
 
@@ -2190,7 +2251,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
             message=message,
         )
         if not submitted:
-            self.notify("Scan loop is not ready; message was not sent", severity="warning")
+            if self._scan_completed.is_set():
+                self.notify("The scan has ended; message was not sent", severity="warning")
+            else:
+                self.notify("Scan loop is not ready; message was not sent", severity="warning")
             return
 
         self._displayed_events.clear()
@@ -2380,6 +2444,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _cleanup_before_exit(self, *, interrupted: bool = False) -> None:
         self._stop_proxy_monitor_thread()
+        shutdown_viewer = getattr(self, "_shutdown_viewer", None)
+        if callable(shutdown_viewer):
+            shutdown_viewer()
         thread = self._scan_thread
         if thread is not None and thread.is_alive():
             self._scan_stop_event.set()
@@ -2390,6 +2457,70 @@ class StrixTUIApp(App):  # type: ignore[misc]
             self.report_state.cleanup(status="interrupted")
         else:
             self.report_state.cleanup()
+
+    def _viewer_cta_markup(self, url: str | None = None) -> str:
+        if url:
+            return f"[@click=app.open_viewer][#22c55e]● Viewer 已启动[/][/]\n[dim]{url}[/]"
+        return "[@click=app.open_viewer]▶ 在浏览器中查看[/]"
+
+    def _set_viewer_cta(self, markup: str) -> None:
+        with contextlib.suppress(Exception):
+            self.query_one("#viewer_cta", Static).update(markup)
+
+    def action_open_viewer(self) -> None:
+        if self._viewer_url:
+            with contextlib.suppress(Exception):
+                webbrowser.open(self._viewer_url)
+            return
+        try:
+            from strix.interface.viewer.server import authorized_url, bundle_is_built, serve
+
+            if not bundle_is_built():
+                self._set_viewer_cta("[#eab308]Viewer 前端尚未构建[/]")
+                return
+            run_dir = self.report_state.get_run_dir()
+
+            def _viewer_steer(agent_id: str, message: str) -> bool:
+                # Reuse the exact TUI delivery path, but target the agent the
+                # web graph selected (not the TUI's current selection).
+                return send_user_message_to_agent(
+                    coordinator=self.coordinator,
+                    loop=self._scan_loop,
+                    live_view=self.live_view,
+                    target_agent_id=agent_id,
+                    message=message,
+                )
+
+            httpd, url, token = serve(run_dir, open_browser=True, steer_handler=_viewer_steer)
+        except Exception:
+            logger.debug("failed to start local viewer", exc_info=True)
+            self._set_viewer_cta("[red]Viewer 启动失败[/]")
+            return
+        self._viewer_httpd = httpd
+        # Store the tokened URL so reopening the CTA re-authorizes the browser
+        # (this viewer carries a steer handler, so the session is required).
+        self._viewer_url = authorized_url(url, token)
+        self._set_viewer_cta(self._viewer_cta_markup(self._viewer_url))
+
+        with contextlib.suppress(Exception):
+            from strix.telemetry import posthog
+
+            live = self.report_state.run_record.get("status") not in {
+                "completed",
+                "stopped",
+                "failed",
+                "interrupted",
+            }
+            posthog.viewer_opened(source="tui", live=live)
+
+    def _shutdown_viewer(self) -> None:
+        httpd = self._viewer_httpd
+        if httpd is None:
+            return
+        self._viewer_httpd = None
+        with contextlib.suppress(Exception):
+            httpd.shutdown()
+            httpd.server_close()
 
     def _fire_sandbox_cleanup(self, *, wait: bool = False, timeout: float = 5.0) -> bool:
         self.coordinator.mark_shutting_down()

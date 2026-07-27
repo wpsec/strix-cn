@@ -109,22 +109,36 @@ def test_nested_symlinks_inside_linked_dir(tmp_path: Path) -> None:
     assert not (staged / "shared" / "escape").exists()
 
 
-def test_staged_dir_uses_canonical_temp_root_when_tempdir_is_symlink(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_staged_path_has_no_symlink_ancestor(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """The staging directory itself must never sit behind a symlink.
+
+    ``tempfile.mkdtemp()`` honors ``$TMPDIR``, and on macOS the default
+    ``$TMPDIR`` resolves through ``/var``, which is itself a symlink to
+    ``/private/var``. ``LocalDir`` rejects any symlink component in its
+    source path, so returning the raw ``mkdtemp()`` result breaks every
+    local-dir upload on macOS whenever the source tree contains a symlink.
+    This reproduces that shape without depending on the host OS layout.
+    """
     repo = _make_repo(tmp_path)
     (repo / "link.py").symlink_to(repo / "pkg" / "mod.py")
 
-    real_tmp = tmp_path / "real-tmp"
-    real_tmp.mkdir()
-    symlink_tmp = tmp_path / "tmp-link"
-    symlink_tmp.symlink_to(real_tmp, target_is_directory=True)
+    real_tmp_root = tmp_path / "real_tmp"
+    real_tmp_root.mkdir()
+    symlinked_tmp_root = tmp_path / "tmp_symlink"
+    symlinked_tmp_root.symlink_to(real_tmp_root)
 
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(symlink_tmp))
+    def fake_mkdtemp(prefix: str = "", dir: str | None = None) -> str:  # noqa: A002
+        real_dir = real_tmp_root / f"{prefix}fake"
+        real_dir.mkdir()
+        return str(symlinked_tmp_root / real_dir.name)
+
+    monkeypatch.setattr(
+        "strix.runtime.local_dir_staging.tempfile.mkdtemp", fake_mkdtemp
+    )
 
     upload_path, staged = stage_symlink_safe_dir(repo)
 
     assert staged is not None
     assert upload_path == staged
-    assert staged.parent == real_tmp.resolve()
-    assert not str(staged).startswith(str(symlink_tmp))
+    for path in (staged, *staged.parents):
+        assert not path.is_symlink(), f"staged path has a symlink ancestor: {path}"

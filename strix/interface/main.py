@@ -5,6 +5,7 @@ Strix Agent Interface
 
 import argparse
 import asyncio
+import os
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from rich.text import Text
 
 from strix.config import (
     apply_config_override,
+    codex,
     load_settings,
     persist_current,
 )
@@ -29,9 +31,17 @@ from strix.config.models import (
     is_known_openai_bare_model,
     is_recommended_or_frontier_model,
 )
+from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
+from strix.interface.update_check import (
+    is_binary_install,
+    notify_update,
+    prompt_update_if_available,
+    self_update,
+    start_background_check,
+)
 from strix.interface.utils import (
     assign_workspace_subdirs,
     build_final_stats_text,
@@ -84,6 +94,16 @@ def validate_environment() -> None:
     missing_optional_vars = []
 
     settings = load_settings()
+
+    if codex.subscription_model(settings.llm.model):
+        if not codex.is_authenticated():
+            console.print(
+                f"[red]STRIX_LLM={settings.llm.model} uses your ChatGPT subscription, "
+                "but you're not signed in.[/] Run [cyan]strix auth login chatgpt[/] first."
+            )
+            sys.exit(1)
+        logger.info("Environment OK (ChatGPT subscription)")
+        return
 
     if not settings.llm.model:
         missing_required_vars.append("STRIX_LLM")
@@ -194,7 +214,7 @@ def validate_environment() -> None:
             padding=(1, 2),
         )
 
-        logger.error("Missing required env vars: %s", missing_required_vars)
+        logger.debug("Missing required env vars: %s", missing_required_vars)
         console.print("\n")
         console.print(panel)
         console.print()
@@ -207,7 +227,7 @@ def validate_environment() -> None:
 
 def check_docker_installed() -> None:
     if shutil.which("docker") is None:
-        logger.error("Docker CLI not found in PATH")
+        logger.debug("Docker CLI not found in PATH")
         console = Console()
         error_text = Text()
         error_text.append("未安装 Docker", style="bold red")
@@ -270,6 +290,29 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     return None
 
 
+def _subscription_error_hint(exc: BaseException) -> str | None:
+    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
+    if not codex.subscription_model(load_settings().llm.model):
+        return None
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "not supported when using codex with a chatgpt account" in joined:
+        return (
+            "当前订阅不支持这个模型。"
+            "请把 STRIX_LLM 调整为你的套餐可用模型，例如 `chatgpt/gpt-5.4`。"
+        )
+    if (
+        "error code: 401" in joined
+        or "http 401" in joined
+        or "unauthorized" in joined
+        or "invalid_grant" in joined
+    ):
+        return (
+            "当前 ChatGPT 登录态已过期或被撤销，请重新登录：\n"
+            "  strix auth login chatgpt"
+        )
+    return None
+
+
 async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
@@ -279,8 +322,8 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         settings = load_settings()
         configure_sdk_model_defaults(settings)
         llm = settings.llm
-
         raw_model = (llm.model or "").strip()
+
         if (
             raw_model
             and "/" not in raw_model
@@ -355,23 +398,59 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         )
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
+        if settings.dedupe.model:
+            from strix.report.dedupe import _dedupe_extra_args
+
+            dedupe_model = settings.dedupe.model.strip()
+            raw_model = dedupe_model
+            deduper = StrixProvider().get_model(dedupe_model)
+            # Match the runtime path: send the dedupe key/endpoint per call so a
+            # separate-provider dedupe model authenticates during warm-up too.
+            deduper_extra = _dedupe_extra_args(settings.dedupe)
+            deduper_settings = ModelSettings(extra_args=deduper_extra or None)
+            await asyncio.wait_for(
+                deduper.get_response(
+                    system_instructions="You are a helpful assistant.",
+                    input="Reply with just 'OK'.",
+                    model_settings=deduper_settings,
+                    tools=[],
+                    output_schema=None,
+                    handoffs=[],
+                    tracing=ModelTracing.DISABLED,
+                    previous_response_id=None,
+                    conversation_id=None,
+                    prompt=None,
+                ),
+                timeout=llm.timeout,
+            )
+            logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
+
     except Exception as e:
-        logger.exception("LLM warm-up failed")
+        logger.debug("LLM warm-up failed", exc_info=True)
         error_text = Text()
-        error_text.append("LLM 连接失败", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("无法与语言模型建立连接。\n", style="white")
-        error_text.append("请检查配置后重试。\n", style="white")
-        hint = _provider_import_hint(e, raw_model)
-        if hint is not None:
-            error_text.append(f"\n{hint}\n", style="bold yellow")
-        error_text.append(f"\n错误：{e}", style="dim white")
+        sub_hint = _subscription_error_hint(e)
+        if sub_hint is not None:
+            border_style = "yellow"
+            error_text.append("当前订阅不可用", style="bold yellow")
+            error_text.append("\n\n", style="white")
+            error_text.append(f"{sub_hint}\n", style="white")
+            error_text.append(f"\n错误详情：{e}", style="dim white")
+        else:
+            border_style = "red"
+            error_text.append("LLM 连接失败", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append("无法与语言模型建立连接。\n", style="white")
+            error_text.append("请检查配置后重试。\n", style="white")
+            hint = _provider_import_hint(e, raw_model)
+            if hint is not None:
+                error_text.append(f"\n{hint}\n", style="bold yellow")
+            error_text.append(f"\n错误：{e}", style="dim white")
 
         panel = Panel(
             error_text,
             title="[bold white]STRIX",
             title_align="left",
-            border_style="red",
+            border_style=border_style,
             padding=(1, 2),
         )
 
@@ -410,6 +489,16 @@ def _tcp_port(value: str) -> int:
     if not 1 <= port <= 65535:
         raise argparse.ArgumentTypeError("端口必须在 1 到 65535 之间。")
     return port
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"无效的整数参数：{value!r}") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("必须是大于 0 的整数。")
+    return parsed
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -464,6 +553,14 @@ def parse_arguments() -> argparse.Namespace:
         "--version",
         action="version",
         version=f"strix {get_version()}",
+    )
+
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update strix to the latest version and exit. Self-updates the "
+        "standalone binary install; for pip/pipx/uv installs, prints the "
+        "matching upgrade command instead.",
     )
 
     parser.add_argument(
@@ -558,10 +655,28 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--max-budget",
         "--max-budget-usd",
+        dest="max_budget_usd",
+        metavar="USD",
         type=_positive_budget,
         default=None,
-        help="LLM 最大成本上限（美元，需大于 0）。达到上限后任务会安全停止。",
+        help=(
+            "LLM 最大成本上限（美元，需大于 0）。达到阈值后任务会安全停止；"
+            "接近预算时会向所有代理发送渐进式收尾提醒。"
+        ),
+    )
+
+    parser.add_argument(
+        "--max-turns",
+        dest="max_turns",
+        metavar="N",
+        type=_positive_int,
+        default=DEFAULT_MAX_TURNS,
+        help=(
+            "每个代理允许的最大 turns 数（需大于 0，默认 %(default)s）。"
+            "达到上限后代理会被强制停止；接近上限时会收到渐进式收尾提醒。"
+        ),
     )
 
     parser.add_argument(
@@ -583,6 +698,9 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     args = parser.parse_args()
+
+    if args.update:
+        sys.exit(0 if self_update() else 1)
 
     if args.instruction and args.instruction_file:
         parser.error("不能同时指定 --instruction 和 --instruction-file，请二选一。")
@@ -678,6 +796,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "status": "running",
         "start_time": datetime.now(UTC).isoformat(),
         "end_time": None,
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
@@ -772,6 +891,13 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     results_text.append(str(results_path), style="#60a5fa")
     panel_parts.extend(["\n", results_text])
 
+    view_text = Text()
+    view_text.append("\n")
+    view_text.append("View", style="dim")
+    view_text.append("         ")
+    view_text.append(f"strix view {args.run_name}", style="#22c55e")
+    panel_parts.extend(["\n", view_text])
+
     if not scan_completed:
         resume_text = Text()
         resume_text.append("\n")
@@ -801,6 +927,8 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
         "[#60a5fa]discord.gg/strix-ai[/]"
     )
     console.print()
+    if not args.non_interactive:
+        notify_update(console)
 
 
 def _local_sandbox_build_tag(image: str) -> str | None:
@@ -887,7 +1015,7 @@ def pull_docker_image() -> None:
                 last_update = process_pull_line(line, layers_info, status, last_update)
 
         except DockerException as e:
-            logger.exception("Failed to pull docker image %s", image)
+            logger.debug("Failed to pull docker image %s", image, exc_info=True)
             console.print()
             error_text = Text()
             error_text.append("拉取镜像失败", style="bold red")
@@ -918,10 +1046,31 @@ def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    # `strix view [<run>]` is a viewer-only subcommand, dispatched before the
+    # scan argument parser (which requires a target) and before any scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "view":
+        from strix.interface.viewer.cli import run_view
+
+        run_view(sys.argv[2:])
+        return
+
+    # `strix auth …` manages model-subscription sign-in and exits; it needs no
+    # target, Docker, or scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "auth":
+        from strix.interface.auth_cli import run_auth
+
+        sys.exit(run_auth(sys.argv[2:]))
+
     args = parse_arguments()
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+
+    start_background_check()
+    if not args.non_interactive and prompt_update_if_available(Console()):
+        if is_binary_install() and sys.platform != "win32":
+            os.execv(sys.executable, sys.argv)  # noqa: S606  # nosec B606
+        sys.exit(0)
 
     check_docker_installed()
     pull_docker_image()
@@ -979,6 +1128,7 @@ def main() -> None:
 
     _telemetry_start_kwargs = {
         "model": load_settings().llm.model,
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "scan_mode": args.scan_mode,
         "is_whitebox": is_whitebox_scan(args.targets_info),
         "interactive": not args.non_interactive,
@@ -1012,6 +1162,7 @@ def main() -> None:
             scarf.end(report_state, exit_reason=exit_reason)
 
     results_path = run_dir_for(args.run_name)
+
     display_completion_message(args, results_path)
 
     if args.non_interactive:

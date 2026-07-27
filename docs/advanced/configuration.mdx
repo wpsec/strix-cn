@@ -35,7 +35,52 @@ description: "Strix 的环境变量与配置文件说明"
   上下文压缩操作的超时时间，单位为秒。
 </ParamField>
 
+### Dedicated deduplication model
+
+Finding deduplication is a cheap, structured classification task. By default it
+runs on the main model, but you can route it to a smaller/cheaper model without
+affecting the agents that do the actual testing.
+
+<ParamField path="STRIX_DEDUPE_MODEL" type="string">
+  Model used to judge whether a candidate finding duplicates an existing report.
+  Falls back to `STRIX_LLM` when unset.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_KEY" type="string">
+  Optional provider key for the deduplication model.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_BASE" type="string">
+  Optional custom API base URL for the deduplication model. Use when the dedupe
+  model runs on a different endpoint than the main model.
+</ParamField>
+
+<ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
+  Reasoning effort for the deduplication model. Defaults to the model's own
+  baseline when unset.
+</ParamField>
+
 ## 可选功能
+
+### 独立去重模型
+
+漏洞去重本质上是一个成本较低、结构化很强的分类任务。默认情况下它会复用主模型；如果你希望把真正的渗透测试能力和去重判断拆开，可以单独指定一个更便宜或更快的模型。
+
+<ParamField path="STRIX_DEDUPE_MODEL" type="string">
+  用于判断候选漏洞是否与现有报告重复的模型。未设置时回退到 `STRIX_LLM`。
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_KEY" type="string">
+  独立去重模型可选的 provider API Key。
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_BASE" type="string">
+  独立去重模型可选的 API Base 地址。当去重模型与主模型不在同一个兼容网关或 provider 时使用。
+</ParamField>
+
+<ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
+  独立去重模型的推理强度。未设置时使用该模型自身的默认行为。
+</ParamField>
 
 <ParamField path="PERPLEXITY_API_KEY" type="string">
   Perplexity AI 的 API Key。配置后可在扫描中启用实时 Web 搜索，用于 OSINT 与漏洞研究。
