@@ -13,7 +13,7 @@ main = importlib.import_module("strix.interface.main")
 def test_local_sandbox_build_tag_detects_local_strix_image() -> None:
     assert main._local_sandbox_build_tag("strix-sandbox:burp-split") == "burp-split"
     assert main._local_sandbox_build_tag("strix-sandbox") == "dev"
-    assert main._local_sandbox_build_tag("ghcr.io/usestrix/strix-sandbox:1.0.0") is None
+    assert main._local_sandbox_build_tag("ghcr.io/usestrix/strix-sandbox:1.1.0") is None
 
 
 def test_pull_docker_image_fails_fast_with_local_build_hint(
@@ -49,4 +49,4 @@ def test_pull_docker_image_fails_fast_with_local_build_hint(
     assert "本地镜像未找到" in plain
     assert "./scripts/docker-overlay.sh burp-split" in plain
     assert "./scripts/docker.sh burp-split" in plain
-    assert "ghcr.io/usestrix/strix-sandbox:1.0.0" in plain
+    assert "ghcr.io/usestrix/strix-sandbox:1.1.0" in plain

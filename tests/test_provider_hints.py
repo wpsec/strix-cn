@@ -12,6 +12,10 @@ BEDROCK_EXTRA_NAME = "bedrock"
 INSTALL_EXTRA_COMMAND_FRAGMENT = 'pipx install "strix-agent['
 WRAPPED_VERTEX_GOOGLE_ERROR = "litellm.APIConnectionError: No module named 'google'"
 WRAPPED_BEDROCK_BOTO3_ERROR = "litellm.APIConnectionError: No module named 'boto3'"
+SOCKS_PROXY_ERROR = (
+    "Using SOCKS proxy, but the 'socksio' package is not installed. "
+    "Make sure to install httpx using `pip install httpx[socks]`."
+)
 
 
 def test_bedrock_boto3_hint() -> None:
@@ -72,3 +76,11 @@ def test_non_import_error_returns_none() -> None:
 def test_unrelated_provider_returns_none() -> None:
     exc = ImportError("No module named 'something'")
     assert _provider_import_hint(exc, "openai/gpt-4") is None
+
+
+def test_socks_proxy_missing_dependency_hint() -> None:
+    exc = RuntimeError(SOCKS_PROXY_ERROR)
+    hint = _provider_import_hint(exc, "openai/gpt-5.4")
+    assert hint is not None
+    assert "python -m pip install -e ." in hint
+    assert "python -m pip install socksio" in hint

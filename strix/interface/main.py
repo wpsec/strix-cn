@@ -79,6 +79,13 @@ VERTEX_MISSING_MODULE_ERROR = "No module named 'google"
 VERTEX_EXTRA_HINT = (
     'Vertex AI 支持是可选依赖。可通过以下命令安装：pipx install "strix-agent[vertex]"'
 )
+SOCKS_PROXY_MISSING_MODULE_ERROR = "Using SOCKS proxy, but the 'socksio' package is not installed"
+SOCKS_PROXY_HINT = (
+    "检测到当前环境正在使用 SOCKS 代理，但缺少 `socksio` 依赖。\n"
+    "如果你当前是在源码仓库里运行，请执行：`python -m pip install -e .`\n"
+    "如果你只想先快速补齐当前虚拟环境，也可以执行：`python -m pip install socksio`\n"
+    "如果你并不需要 SOCKS 代理，可临时 `unset all_proxy ALL_PROXY` 后重试。"
+)
 
 
 import logging  # noqa: E402
@@ -287,6 +294,8 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
         and VERTEX_MODEL_MARKER in model_name
     ):
         return VERTEX_EXTRA_HINT
+    if any(SOCKS_PROXY_MISSING_MODULE_ERROR in message for message in messages):
+        return SOCKS_PROXY_HINT
     return None
 
 

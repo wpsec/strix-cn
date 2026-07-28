@@ -102,12 +102,20 @@ python -m pip install -e .
 # 准备基础沙箱镜像（docker-overlay 方式依赖它）
 docker pull ghcr.io/usestrix/strix-sandbox:1.1.0
 
-# 方式 A：完整构建当前分支的本地 sandbox 镜像
-./scripts/docker.sh local
+export STRIX_KALI_APT_MIRROR="http://mirrors.tuna.tsinghua.edu.cn/kali"
+export STRIX_GO_PROXY="https://goproxy.cn,direct"
+export STRIX_GO_SUMDB="sum.golang.google.cn"
+export STRIX_NPM_REGISTRY="https://registry.npmmirror.com"
+export STRIX_PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
 
-# 如果上一步因 docker.io/kalilinux 拉取超时失败，
-# 或者你只改了少量容器侧文件，可改用轻量覆盖构建：
-# ./scripts/docker-overlay.sh local
+# 推荐：轻量覆盖构建当前分支的本地 sandbox 镜像
+# 这条路径只依赖上面已经拉到本机的 ghcr 基础镜像，
+# 在国内网络下通常比完整构建更稳
+./scripts/docker-overlay.sh local
+
+# 如果你明确改了大量基础环境，必须重建完整 Kali sandbox，
+# 再执行完整构建：
+# ./scripts/docker.sh local
 
 # 在当前 shell 中指定 Strix 使用本地镜像
 export STRIX_IMAGE=strix-sandbox:local
@@ -131,48 +139,16 @@ export LLM_API_BASE="https://your-gateway.example/v1"
 
 # 扫描app-directory
 .venv/bin/strix --target ./app-directory
+# 被动扫描
+.venv/bin/strix --burp-port 8081
 ```
 
 > [!NOTE]  
 > 上面的方式安装的是当前 `strix-cn` 分支源码，不是官方安装脚本拉取的发布版。首次运行会自动拉取沙箱 Docker 镜像。扫描结果会保存在 `strix_runs/<run-name>`。  
-> 当前分支默认输出中文报告；如果你需要英文或双语结果，可在 `--instruction` 中显式说明。
+> 当前分支默认输出中文报告；如果你需要英文或双语结果，可在 `--instruction` 中显式说明.
 
 > [!TIP]
-> Windows 下运行前请先确认 Docker Desktop 已安装并处于运行状态；Strix 会自动拉取缺失镜像，但不会自动启动 Docker Desktop。
-
-> [!IMPORTANT]  
-> 上面的 `docker pull ghcr.io/usestrix/strix-sandbox:1.1.0` 只是提前准备基础镜像；真正运行当前 `strix-cn` 分支时，推荐继续执行 `./scripts/docker.sh local` 或 `./scripts/docker-overlay.sh local`，再通过 `export STRIX_IMAGE=strix-sandbox:local` 明确使用本地构建镜像。  
-> 这样可以确保当前分支在 `containers/`、证书、代理端口、Caido 启动参数、浏览器环境等 sandbox 侧改动也一并生效，而不是误用默认发布镜像。  
-> 如果你所在环境经常访问不到 `docker.io/kalilinux`，优先使用 `docker-overlay` 会更稳。
-
-如果你之后开了一个新的 shell，或者想重新确认当前用的是本地镜像，可以再执行一次：
-
-```bash
-export STRIX_IMAGE=strix-sandbox:local
-
-# 后续运行会继续复用这个设置，直到你关闭当前 shell 或重新覆盖该变量
-.venv/bin/strix --target ./app-directory
-```
-
-如果你只想临时指定一次，也可以这样运行：
-
-```bash
-STRIX_IMAGE=strix-sandbox:local .venv/bin/strix --target ./app-directory
-```
-
-如果你只是改了 `containers/docker-entrypoint.sh`、少量启动脚本，或者当前网络环境无法顺利访问 `docker.io/kalilinux`，也可以优先使用轻量覆盖构建：
-
-```bash
-# 基于本机已有的发布镜像覆一层，只替换当前分支修改过的容器文件
-./scripts/docker-overlay.sh local
-
-export STRIX_IMAGE=strix-sandbox:local
-.venv/bin/strix --target ./app-directory
-```
-
-轻量覆盖构建默认基于本机已有的 `ghcr.io/usestrix/strix-sandbox:1.1.0`。如果这个基础镜像已经在本地，通常不需要再访问 `docker.io`。
-
-如果你所在环境访问 `ghcr.io` 较慢或受限，建议先手动执行上面的 `docker pull`，确认镜像 `ghcr.io/usestrix/strix-sandbox:1.1.0` 已可用后再启动扫描。
+> Windows 下运行前请先确认 Docker Desktop 已安装并处于运行状态；Strix 会自动拉取缺失镜像，但不会自动启动 Docker Desktop。没有在windows上测试过。
 
 ### Burp 被动扫描快速开始
 

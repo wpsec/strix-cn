@@ -3,7 +3,40 @@
 # module/build caches never reach the runtime image. The resulting binaries are
 # statically linked and copied into the final stage.
 # ---------------------------------------------------------------------------
-FROM kalilinux/kali-rolling:latest AS gobuilder
+ARG BASE_IMAGE=kalilinux/kali-rolling:latest
+FROM ${BASE_IMAGE} AS gobuilder
+
+ARG KALI_APT_MIRROR=""
+ARG GO_MODULE_PROXY="https://proxy.golang.org,direct"
+ARG GO_SUMDB="sum.golang.org"
+
+RUN set -eux; \
+    apt_mirror="$KALI_APT_MIRROR"; \
+    fallback_sources_file=/etc/apt/sources.list.d/strix-kali-fallback.list; \
+    if [ -n "$apt_mirror" ] && [ "${apt_mirror#https://}" != "$apt_mirror" ]; then \
+        apt_mirror="http://${apt_mirror#https://}"; \
+    fi; \
+    if [ -n "$apt_mirror" ]; then \
+        for sources_file in /etc/apt/sources.list /etc/apt/sources.list.d/*; do \
+            [ -f "$sources_file" ] || continue; \
+            sed -i \
+                -e "s|http://http.kali.org/kali|$apt_mirror|g" \
+                -e "s|https://http.kali.org/kali|$apt_mirror|g" \
+                -e "s|http://kali.download/kali|$apt_mirror|g" \
+                -e "s|https://kali.download/kali|$apt_mirror|g" \
+                "$sources_file"; \
+        done; \
+        printf '%s\n' \
+            'deb http://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware' \
+            > "$fallback_sources_file"; \
+    else \
+        rm -f "$fallback_sources_file"; \
+    fi; \
+    printf '%s\n' \
+        'Acquire::Retries "5";' \
+        'Acquire::http::Timeout "30";' \
+        'Acquire::https::Timeout "30";' \
+        > /etc/apt/apt.conf.d/80strix-retries
 
 RUN apt-get update && \
     apt-get install -y kali-archive-keyring && \
@@ -11,6 +44,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends golang-go git ca-certificates
 
 ENV GOBIN=/out/bin
+ENV GOPROXY=${GO_MODULE_PROXY}
+ENV GOSUMDB=${GO_SUMDB}
 RUN mkdir -p /out/bin && \
     go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
@@ -21,15 +56,41 @@ RUN mkdir -p /out/bin && \
 # ---------------------------------------------------------------------------
 # Runtime stage
 # ---------------------------------------------------------------------------
-FROM kalilinux/kali-rolling:latest
+FROM ${BASE_IMAGE}
+
+ARG KALI_APT_MIRROR=""
+ARG NPM_REGISTRY=""
+ARG PIP_INDEX_URL=""
+
+RUN set -eux; \
+    apt_mirror="$KALI_APT_MIRROR"; \
+    fallback_sources_file=/etc/apt/sources.list.d/strix-kali-fallback.list; \
+    if [ -n "$apt_mirror" ] && [ "${apt_mirror#https://}" != "$apt_mirror" ]; then \
+        apt_mirror="http://${apt_mirror#https://}"; \
+    fi; \
+    if [ -n "$apt_mirror" ]; then \
+        for sources_file in /etc/apt/sources.list /etc/apt/sources.list.d/*; do \
+            [ -f "$sources_file" ] || continue; \
+            sed -i \
+                -e "s|http://http.kali.org/kali|$apt_mirror|g" \
+                -e "s|https://http.kali.org/kali|$apt_mirror|g" \
+                -e "s|http://kali.download/kali|$apt_mirror|g" \
+                -e "s|https://kali.download/kali|$apt_mirror|g" \
+                "$sources_file"; \
+        done; \
+        printf '%s\n' \
+            'deb http://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware' \
+            > "$fallback_sources_file"; \
+    else \
+        rm -f "$fallback_sources_file"; \
+    fi; \
+    printf '%s\n' \
+        'Acquire::Retries "5";' \
+        'Acquire::http::Timeout "30";' \
+        'Acquire::https::Timeout "30";' \
+        > /etc/apt/apt.conf.d/80strix-retries
 
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
-
-RUN printf '%s\n' \
-    'Acquire::Retries "5";' \
-    'Acquire::http::Timeout "30";' \
-    'Acquire::https::Timeout "30";' \
-    > /etc/apt/apt.conf.d/80strix-retries
 
 RUN apt-get update && \
     apt-get install -y --fix-missing kali-archive-keyring sudo && \
@@ -107,7 +168,8 @@ RUN pipx install arjun && \
 ENV NPM_CONFIG_PREFIX=/home/pentester/.npm-global
 RUN mkdir -p /home/pentester/.npm-global
 
-RUN npm install -g retire@latest && \
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi && \
+    npm install -g retire@latest && \
     npm install -g eslint@latest && \
     npm install -g js-beautify@latest && \
     npm install -g @ast-grep/cli@latest && \
@@ -230,10 +292,16 @@ RUN mkdir -p /workspace && chown -R pentester:pentester /workspace /app
 
 USER pentester
 RUN python3 -m venv /app/.venv && \
-    /app/.venv/bin/pip install --no-cache-dir caido-sdk-client && \
-    /app/.venv/bin/pip install --no-cache-dir \
-        requests httpx beautifulsoup4 lxml pyjwt cryptography && \
-    /app/.venv/bin/pip install --no-cache-dir -r /home/pentester/tools/jwt_tool/requirements.txt && \
+    pip_install() { \
+        if [ -n "$PIP_INDEX_URL" ]; then \
+            /app/.venv/bin/pip install --no-cache-dir --index-url "$PIP_INDEX_URL" "$@"; \
+        else \
+            /app/.venv/bin/pip install --no-cache-dir "$@"; \
+        fi; \
+    }; \
+    pip_install caido-sdk-client && \
+    pip_install requests httpx beautifulsoup4 lxml pyjwt cryptography && \
+    pip_install -r /home/pentester/tools/jwt_tool/requirements.txt && \
     printf '%s\n' \
         '#!/bin/bash' \
         'exec /app/.venv/bin/python /home/pentester/tools/jwt_tool/jwt_tool.py "$@"' \

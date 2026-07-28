@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/usestrix/strix-sandbox:1.0.0
+ARG BASE_IMAGE=ghcr.io/usestrix/strix-sandbox:1.1.0
 FROM ${BASE_IMAGE}
 
 USER root
