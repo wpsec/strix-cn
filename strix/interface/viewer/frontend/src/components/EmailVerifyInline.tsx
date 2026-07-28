@@ -11,10 +11,10 @@ import { track } from "@/lib/cta";
  */
 
 const OTP_START_ERRORS: Record<string, string> = {
-  work_email_required: "Please use your work email, not a personal one.",
-  rate_limited: "Too many requests. Wait a minute and try again.",
-  invalid_email: "That email does not look right. Check it and try again.",
-  unavailable: "The email service is unavailable right now. Try again shortly.",
+  work_email_required: "请使用工作邮箱，不要使用个人邮箱。",
+  rate_limited: "请求过于频繁，请稍后再试。",
+  invalid_email: "邮箱格式不正确，请检查后重试。",
+  unavailable: "邮件服务暂时不可用，请稍后再试。",
 };
 
 // A small set of common personal providers for instant client-side feedback.
@@ -36,7 +36,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
   const submitEmail = async () => {
     const value = email.trim();
     if (!value) {
-      setError("Enter your email to continue.");
+      setError("请输入邮箱后继续。");
       return;
     }
     const domain = value.slice(value.lastIndexOf("@") + 1).toLowerCase();
@@ -51,18 +51,18 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
     setBusy(false);
     if (result.ok) {
       track("email_submitted", { purpose: "verify" });
-      setNotice(`We sent a 6-digit code to ${value}.`);
+      setNotice(`6 位验证码已发送到 ${value}。`);
       setStep("code");
     } else {
       if (result.error === "work_email_required") track("work_email_required");
-      setError(OTP_START_ERRORS[result.error] ?? "Could not send a code. Try again.");
+      setError(OTP_START_ERRORS[result.error] ?? "无法发送验证码，请稍后再试。");
     }
   };
 
   const submitCode = async () => {
     const value = code.trim();
     if (value.length < 4) {
-      setError("Enter the 6-digit code from your email.");
+      setError("请输入邮件中的 6 位验证码。");
       return;
     }
     setBusy(true);
@@ -70,7 +70,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
     const result = await otpVerify(email.trim(), value);
     setBusy(false);
     if (!result.verified) {
-      setError("That code did not match. Check it and try again.");
+      setError("验证码不正确，请检查后重试。");
       return;
     }
     track("email_verified", { purpose: "verify" });
@@ -96,7 +96,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
           }}
         >
           <label className="block">
-            <span className="mb-1.5 block text-xs text-[#888]">Your work email</span>
+            <span className="mb-1.5 block text-xs text-[#888]">工作邮箱</span>
             <input
               type="email"
               autoFocus
@@ -106,7 +106,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
               className="w-full rounded-lg bg-black px-3 py-2.5 text-sm text-white outline-none transition-colors focus:border-[#444]"
               style={{ border: "1px solid #2a2a2a" }}
             />
-            <span className="mt-1.5 block text-[11px] text-[#666]">Use your work email.</span>
+            <span className="mt-1.5 block text-[11px] text-[#666]">请使用工作邮箱。</span>
           </label>
           <button
             type="submit"
@@ -114,7 +114,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            Send me a code
+            发送验证码
           </button>
         </form>
       ) : (
@@ -126,7 +126,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
           }}
         >
           <label className="block">
-            <span className="mb-1.5 block text-xs text-[#888]">6-digit code</span>
+            <span className="mb-1.5 block text-xs text-[#888]">6 位验证码</span>
             <input
               inputMode="numeric"
               autoFocus
@@ -143,7 +143,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
             className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            Verify
+            验证
           </button>
           <button
             type="button"
@@ -154,7 +154,7 @@ export default function EmailVerifyInline({ onVerified }: { onVerified: () => vo
             }}
             className="w-full cursor-pointer text-center text-xs text-[#666] transition-colors hover:text-[#aaa]"
           >
-            Use a different email
+            使用其他邮箱
           </button>
         </form>
       )}

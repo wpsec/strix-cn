@@ -531,17 +531,15 @@ def _field_block(
 def _finding_flowables(
     styles: dict[str, ParagraphStyle], index: int, vuln: dict[str, Any]
 ) -> list[Flowable]:
-    title = vuln.get("title") or "Untitled finding"
+    title = vuln.get("title") or "未命名问题"
     severity = str(vuln.get("severity") or "").lower().strip() or "low"
 
     meta_bits = []
     if vuln.get("cvss") is not None:
         meta_bits.append(f"<b>CVSS</b> {_esc(vuln.get('cvss'))}")
-    meta_bits.extend(
-        f"<b>{key.title()}</b> {_esc(vuln.get(key))}"
-        for key in ("target", "endpoint", "method")
-        if vuln.get(key)
-    )
+    for key, label in (("target", "目标"), ("endpoint", "接口"), ("method", "方法")):
+        if vuln.get(key):
+            meta_bits.append(f"<b>{label}</b> {_esc(vuln.get(key))}")
 
     header: list[Flowable] = [
         Paragraph(f"{index}. {_esc(title)}", styles["finding"]),
@@ -552,18 +550,18 @@ def _finding_flowables(
         header.append(Paragraph("&nbsp;&nbsp;".join(meta_bits), styles["meta_inline"]))
 
     story: list[Flowable] = [KeepTogether(header)]
-    story.extend(_field_block(styles, "Description", vuln.get("description")))
-    story.extend(_field_block(styles, "Impact", vuln.get("impact")))
-    story.extend(_field_block(styles, "Technical analysis", vuln.get("technical_analysis")))
-    story.extend(_field_block(styles, "Proof of concept", vuln.get("poc_description")))
+    story.extend(_field_block(styles, "漏洞描述", vuln.get("description")))
+    story.extend(_field_block(styles, "影响", vuln.get("impact")))
+    story.extend(_field_block(styles, "技术分析", vuln.get("technical_analysis")))
+    story.extend(_field_block(styles, "概念验证", vuln.get("poc_description")))
     poc_script = _strip_code_fence(vuln.get("poc_script_code"))
-    story.extend(_field_block(styles, "PoC script", poc_script, code=True))
-    story.extend(_field_block(styles, "Evidence", vuln.get("evidence"), code=True))
+    story.extend(_field_block(styles, "PoC 脚本", poc_script, code=True))
+    story.extend(_field_block(styles, "证据", vuln.get("evidence"), code=True))
 
     remediation = vuln.get("remediation_steps")
     if isinstance(remediation, list):
         remediation = "\n".join(str(step) for step in remediation)
-    story.extend(_field_block(styles, "Remediation", remediation))
+    story.extend(_field_block(styles, "修复建议", remediation))
 
     story.append(Spacer(1, 22))
     return story
@@ -573,11 +571,11 @@ def _overview_flowables(
     styles: dict[str, ParagraphStyle], record: dict[str, Any], total: int, counts: dict[str, int]
 ) -> list[Flowable]:
     story: list[Flowable] = [
-        _section(styles, "Executive Summary"),
+        _section(styles, "执行摘要"),
         Spacer(1, 16),
         _severity_grid(styles, counts),
         Spacer(1, 10),
-        Paragraph(f"<b>{total}</b> total findings across this assessment.", styles["body"]),
+        Paragraph(f"本次评估共发现 <b>{total}</b> 个问题。", styles["body"]),
     ]
     scan_results = record.get("scan_results")
     if not isinstance(scan_results, dict):
@@ -587,9 +585,9 @@ def _overview_flowables(
         story.append(Spacer(1, 16))
         story.extend(_markdown_flowables(_strip_leading_heading(summary), styles))
     for label, key in (
-        ("Methodology", "methodology"),
-        ("Technical Analysis", "technical_analysis"),
-        ("Recommendations", "recommendations"),
+        ("测试方法", "methodology"),
+        ("技术分析", "technical_analysis"),
+        ("修复建议", "recommendations"),
     ):
         value = scan_results.get(key)
         if isinstance(value, str) and value.strip():
@@ -625,13 +623,13 @@ def generate_report_pdf(run_dir: Path) -> bytes:
     story.extend(_overview_flowables(styles, record, len(vulns), counts))
 
     story.append(PageBreak())
-    story.append(_section(styles, "Findings"))
+    story.append(_section(styles, "问题列表"))
     story.append(Spacer(1, 16))
     if vulns:
         for index, vuln in enumerate(vulns, start=1):
             story.extend(_finding_flowables(styles, index, vuln))
     else:
-        story.append(Paragraph("No findings were recorded for this run.", styles["body"]))
+        story.append(Paragraph("本次运行未记录到问题。", styles["body"]))
 
     doc.build(story, canvasmaker=_NumberedCanvas)
     return buffer.getvalue()

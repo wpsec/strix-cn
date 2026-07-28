@@ -19,12 +19,12 @@ import { SIGNUP_URL, PRICING_URL, ctaUrl, trackCta } from "@/lib/cta";
  */
 
 const CLOUD_HIGHLIGHTS: { icon: React.ElementType; label: string }[] = [
-  { icon: GitPullRequest, label: "PR security reviews" },
-  { icon: Shield, label: "Attack surface monitoring" },
-  { icon: Zap, label: "Real-time threat intelligence" },
-  { icon: CalendarClock, label: "Scheduled pentesting" },
-  { icon: WandSparkles, label: "One-click autofix" },
-  { icon: Plug, label: "Jira, Linear & Slack integrations" },
+  { icon: GitPullRequest, label: "PR 安全审查" },
+  { icon: Shield, label: "攻击面监控" },
+  { icon: Zap, label: "实时威胁情报" },
+  { icon: CalendarClock, label: "计划化渗透测试" },
+  { icon: WandSparkles, label: "一键自动修复" },
+  { icon: Plug, label: "Jira、Linear 与 Slack 集成" },
 ];
 
 export function UpgradeModal({
@@ -80,7 +80,7 @@ export function UpgradeModal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Upgrade your plan"
+      aria-label="升级方案"
     >
       <div
         data-state={state}
@@ -90,14 +90,14 @@ export function UpgradeModal({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close"
+          aria-label="关闭"
           className="absolute right-4 top-4 rounded-md p-1 text-[#888] transition-colors hover:bg-[#1a1a1a] hover:text-white"
         >
           <X className="h-4 w-4" />
         </button>
 
         <div>
-          <h2 className="text-lg text-white">Available in Strix Cloud</h2>
+          <h2 className="text-lg text-white">Strix Cloud 提供此能力</h2>
           {description && (
             <p className="mt-2 text-base leading-relaxed text-[#e5e5e5]">{description}</p>
           )}
@@ -107,7 +107,7 @@ export function UpgradeModal({
           <div className="rounded-xl border border-[#333] bg-[#0a0a0a] p-4 sm:rounded-lg">
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-blue-400" />
-              <span className="text-sm font-medium text-white">Strix Cloud also includes</span>
+              <span className="text-sm font-medium text-white">Strix Cloud 还包含</span>
             </div>
             <ul className="space-y-2 text-sm text-[#888]">
               {CLOUD_HIGHLIGHTS.map((f) => (
@@ -127,7 +127,7 @@ export function UpgradeModal({
               onClick={() => trackCta("upgrade_try_free", source)}
               className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-semibold text-black transition-colors hover:bg-neutral-200"
             >
-              Open Strix Cloud
+              打开 Strix Cloud
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
             <a
@@ -137,7 +137,7 @@ export function UpgradeModal({
               onClick={() => trackCta("upgrade_view_plans", source)}
               className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-[#333] px-4 text-sm font-medium text-[#888] transition-colors hover:border-[#555] hover:text-white"
             >
-              Learn more
+              了解更多
               <ExternalLink className="h-3 w-3" />
             </a>
           </div>

@@ -79,19 +79,19 @@ export function ScanPromptComposer({
       const agent = agents.find((a) => a.id === fixedAgentId) ?? null;
       return {
         targetId: fixedAgentId ?? null,
-        targetName: agent?.name ?? "this agent",
+        targetName: agent?.name ?? "当前代理",
       };
     }
     if (selectedTarget === ROOT_TARGET_VALUE) {
       return {
         targetId: rootAgent?.id ?? null,
-        targetName: "Root agent",
+        targetName: "根代理",
       };
     }
     const agent = agents.find((a) => a.id === selectedTarget) ?? null;
     return {
       targetId: agent?.id ?? rootAgent?.id ?? null,
-      targetName: agent?.name ?? "Root agent",
+      targetName: agent?.name ?? "根代理",
     };
   }, [agents, fixedAgentId, isModal, rootAgent, selectedTarget]);
 
@@ -128,12 +128,12 @@ export function ScanPromptComposer({
     setSending(false);
     if (res.ok) {
       setValue("");
-      setFeedback(`Sent to ${name}`);
+      setFeedback(`已发送给 ${name}`);
       track("agent_steered");
     } else if (res.error === "not_delivered") {
-      setFeedback("Could not reach that agent (it may have finished).");
+      setFeedback("无法联系该代理，它可能已经结束。");
     } else {
-      setFeedback("Could not send that message. Try again.");
+      setFeedback("消息发送失败，请重试。");
     }
   }, [sending, value, targetId, targetName]);
 
@@ -147,11 +147,11 @@ export function ScanPromptComposer({
           className
         )}
         aria-expanded={false}
-        aria-label="Expand live prompt composer"
+        aria-label="展开实时提示面板"
       >
         <div className="flex min-w-0 items-center gap-2">
           <Sparkles className="h-4 w-4 shrink-0 text-[#666]" />
-          <span className="truncate text-sm font-medium text-white">Guide the agent</span>
+          <span className="truncate text-sm font-medium text-white">指导代理</span>
         </div>
         <ChevronUp className="h-4 w-4 shrink-0 text-[#777]" />
       </button>
@@ -170,18 +170,18 @@ export function ScanPromptComposer({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-[#666]" />
-            <p className="text-sm font-medium text-white">Live prompt</p>
+            <p className="text-sm font-medium text-white">实时提示</p>
           </div>
-          <p className="mt-0.5 text-xs text-[#777]">Connected</p>
+          <p className="mt-0.5 text-xs text-[#777]">已连接</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {isModal ? (
             <div className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-xs text-[#aaa]">
-              Target: <span className="text-white">{targetName}</span>
+              目标：<span className="text-white">{targetName}</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-[#aaa]">Target:</span>
+              <span className="text-xs text-[#aaa]">目标：</span>
               <div className="relative">
                 <button
                   type="button"
@@ -200,7 +200,7 @@ export function ScanPromptComposer({
                     role="listbox"
                   >
                     <TargetMenuItem
-                      label="Root agent"
+                      label="根代理"
                       active={selectedTarget === ROOT_TARGET_VALUE}
                       onSelect={() => {
                         setSelectedTarget(ROOT_TARGET_VALUE);
@@ -227,7 +227,7 @@ export function ScanPromptComposer({
             type="button"
             onClick={handleCollapse}
             className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#777] transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
-            aria-label="Collapse live prompt composer"
+            aria-label="收起实时提示面板"
           >
             <ChevronDown className="h-4 w-4" />
           </button>
@@ -248,7 +248,7 @@ export function ScanPromptComposer({
               void handleSend();
             }
           }}
-          placeholder="Send a live prompt to the running pentest…"
+          placeholder="向正在运行的测试发送实时提示…"
           maxLength={4000}
           disabled={sending}
           className="block w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-6 text-white placeholder:text-[#444] focus:outline-none disabled:opacity-60 max-h-[160px] overflow-y-auto"
@@ -256,7 +256,7 @@ export function ScanPromptComposer({
       </div>
 
       <div className="flex items-center justify-between gap-3 px-4 pb-4">
-        <div className="text-xs text-[#666]">{feedback ?? "Press Enter to send."}</div>
+        <div className="text-xs text-[#666]">{feedback ?? "按 Enter 发送。"}</div>
         <button
           type="button"
           onClick={(event) => {
@@ -276,7 +276,7 @@ export function ScanPromptComposer({
           ) : (
             <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
           )}
-          <span>Send prompt</span>
+          <span>发送提示</span>
         </button>
       </div>
     </div>

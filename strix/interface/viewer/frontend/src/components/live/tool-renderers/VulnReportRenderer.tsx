@@ -46,26 +46,26 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
       {description && <TruncatedText text={description} maxLines={20} />}
       {impact && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Impact</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">影响</span>
           <div className="mt-1"><TruncatedText text={impact} maxLines={15} /></div>
         </div>
       )}
       {technicalAnalysis && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Technical Analysis</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">技术分析</span>
           <div className="mt-1"><TruncatedText text={technicalAnalysis} maxLines={20} /></div>
         </div>
       )}
       {(pocDescription || pocCode) && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Proof of Concept</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">概念验证</span>
           {pocDescription && <div className="mt-1"><Markdown text={pocDescription} /></div>}
           {pocCode && <MdCodeBlock className={pocLang ? `language-${pocLang}` : undefined}>{pocCode}</MdCodeBlock>}
         </div>
       )}
       {remediation && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Remediation</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">修复建议</span>
           <div className="mt-1"><TruncatedText text={remediation} maxLines={15} /></div>
         </div>
       )}

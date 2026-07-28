@@ -102,13 +102,13 @@ function SmoothControls() {
       className="!bg-transparent !border-none !shadow-none"
     >
       <div className="flex flex-col overflow-hidden rounded-lg border border-[#222]">
-        <button onClick={() => zoomIn({ duration: ZOOM_DURATION })} className="flex items-center justify-center w-7 h-7 bg-[#111] text-white hover:bg-[#2a2a2a] transition-colors" title="Zoom in">
+        <button onClick={() => zoomIn({ duration: ZOOM_DURATION })} className="flex items-center justify-center w-7 h-7 bg-[#111] text-white hover:bg-[#2a2a2a] transition-colors" title="放大">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5"><path d="M12 5v14M5 12h14" /></svg>
         </button>
-        <button onClick={() => zoomOut({ duration: ZOOM_DURATION })} className="flex items-center justify-center w-7 h-7 bg-[#111] text-white hover:bg-[#2a2a2a] border-y border-[#222] transition-colors" title="Zoom out">
+        <button onClick={() => zoomOut({ duration: ZOOM_DURATION })} className="flex items-center justify-center w-7 h-7 bg-[#111] text-white hover:bg-[#2a2a2a] border-y border-[#222] transition-colors" title="缩小">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5"><path d="M5 12h14" /></svg>
         </button>
-        <button onClick={() => fitView({ padding: 0.3, duration: ZOOM_DURATION })} className="flex items-center justify-center w-7 h-7 bg-[#111] text-white hover:bg-[#2a2a2a] transition-colors" title="Fit view">
+        <button onClick={() => fitView({ padding: 0.3, duration: ZOOM_DURATION })} className="flex items-center justify-center w-7 h-7 bg-[#111] text-white hover:bg-[#2a2a2a] transition-colors" title="适应视图">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
         </button>
       </div>
@@ -189,8 +189,8 @@ export default function AgentGraph({
         </div>
         <p className="text-sm text-[#555]">
           {scanCompleted
-            ? "Agent trace data is not available for this pentest"
-            : "Waiting for agent data\u2026"}
+            ? "当前渗透测试没有可用的代理轨迹数据"
+            : "正在等待代理数据…"}
         </p>
       </div>
     );

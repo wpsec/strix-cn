@@ -38,7 +38,7 @@ export function TrustToast({ message }: { message: string }) {
         <p className="text-xs leading-relaxed text-[#aaa]">{message}</p>
         <button
           onClick={dismiss}
-          aria-label="Dismiss"
+          aria-label="关闭提示"
           className="-mr-0.5 -mt-0.5 flex-shrink-0 cursor-pointer rounded p-0.5 text-[#666] transition-colors hover:text-white"
         >
           <X className="h-3.5 w-3.5" />

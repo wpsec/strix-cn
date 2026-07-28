@@ -74,7 +74,7 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
     assert "## 漏洞描述" in md
     assert "## 影响" in md
     assert "## 技术分析" in md
-    assert "## Proof of Concept" in md
+    assert "## 概念验证" in md
     assert "## 修复建议" in md
     assert "**接口：** /api/login" in md
 
@@ -119,7 +119,7 @@ def test_render_vulnerability_md_poc_code_cannot_break_out_of_fence() -> None:
     injected = "curl x\n```\n\n## Injected Heading\n![x](https://evil.example/beacon.png)"
     md = render_vulnerability_md(_sample_report(poc_script_code=injected))
     lines = md.split("\n")
-    opening = next(ln for ln in lines[lines.index("## Proof of Concept") + 1 :] if ln.strip())
+    opening = next(ln for ln in lines[lines.index("## 概念验证") + 1 :] if ln.strip())
     ticks = opening[: len(opening) - len(opening.lstrip("`"))]
     assert len(ticks) >= 4  # wider than the payload's 3-backtick run
     assert "`" not in opening.removeprefix(ticks)  # backtick run + language tag only

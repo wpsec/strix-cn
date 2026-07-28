@@ -261,7 +261,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         lines.append("")
 
     if report.get("poc_description") or report.get("poc_script_code"):
-        lines.append("## Proof of Concept\n")
+        lines.append("## 概念验证\n")
         if report.get("poc_description"):
             lines.append(str(report["poc_description"]))
             lines.append("")

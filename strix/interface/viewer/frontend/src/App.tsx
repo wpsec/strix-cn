@@ -11,7 +11,7 @@ import {
   History,
 } from "lucide-react";
 import type { Vulnerability, VulnerabilitySeverity } from "@/types/issues";
-import { SEVERITY_COLORS } from "@/types/issues";
+import { SEVERITY_COLORS, SEVERITY_LABELS } from "@/types/issues";
 import { getSeverityDot } from "@/lib/vulnerability-utils";
 import VulnerabilityDetail from "@/components/vulnerability/VulnerabilityDetail";
 import { ContentSection } from "@/components/vulnerability/ContentSection";
@@ -43,11 +43,12 @@ import { RunDetails } from "@/components/RunDetails";
 import { TrustToast } from "@/components/TrustToast";
 import FeedbackView from "@/components/FeedbackView";
 import { ProInlineCta } from "@/components/ProCta";
+import { formatRunStatusLabel, formatScanModeLabel } from "@/lib/utils";
 
 export type View = "overview" | "issues" | "agents" | "history" | "email" | "feedback";
 
 const TRUST_BANNER =
-  "Your findings stay on your machine. They're rendered here locally in your browser and never uploaded or stored by Strix.";
+  "你的扫描结果始终保留在本机。这里的内容仅在浏览器本地渲染，不会被 Strix 上传或存储。";
 
 const SEVERITY_ORDER: VulnerabilitySeverity[] = ["critical", "high", "medium", "low"];
 const POLL_MS = 500;
@@ -133,7 +134,7 @@ export default function App() {
         schedule();
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Could not load run data.");
+        setError(e instanceof Error ? e.message : "无法加载运行数据。");
         schedule();
       }
     };
@@ -150,7 +151,7 @@ export default function App() {
         }
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Could not load run data.");
+        setError(e instanceof Error ? e.message : "无法加载运行数据。");
         schedule();
       }
     })();
@@ -270,7 +271,7 @@ export default function App() {
               rel="noopener noreferrer"
               onClick={() => trackCta("logo", "topbar")}
               className="flex items-center gap-1.5 opacity-90 transition-opacity hover:opacity-100 lg:hidden"
-              title="Open Strix Cloud"
+              title="打开 Strix Cloud"
             >
               <img src="./logo.png" alt="Strix" className="w-10 h-8 object-cover" />
               <div className="text-base text-white font-medium tracking-tight">Strix</div>
@@ -281,7 +282,7 @@ export default function App() {
                 <RunSwitcher
                   runs={runs}
                   activeRun={activeRun}
-                  launchedName={runTitle(run?.summary.targets[0] ?? null, run?.summary.runName ?? run?.summary.runId ?? "Current run")}
+                  launchedName={runTitle(run?.summary.targets[0] ?? null, run?.summary.runName ?? run?.summary.runId ?? "当前运行")}
                   onSelect={selectRun}
                 />
               )}
@@ -292,7 +293,7 @@ export default function App() {
                 onClick={() => trackCta("run_in_cloud", "topbar")}
                 className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity hover:opacity-90"
               >
-                Run in the cloud
+                在云端运行
                 <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
               </a>
             </div>
@@ -334,7 +335,7 @@ export default function App() {
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <History className="w-5 h-5 text-[#888]" aria-hidden="true" />
-                <h1 className="text-2xl font-semibold text-white">Past runs</h1>
+                <h1 className="text-2xl font-semibold text-white">历史运行</h1>
               </div>
               <PastRunsView
                 runs={runs}
@@ -346,7 +347,7 @@ export default function App() {
           ) : !run && !error ? (
             <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-10 text-center">
               <div className="w-6 h-6 mx-auto mb-3 rounded-full border-2 border-[#333] border-t-white animate-spin" />
-              <p className="text-sm text-[#888]">Loading run data…</p>
+              <p className="text-sm text-[#888]">正在加载运行数据…</p>
             </div>
           ) : run && counts ? (
             <>
@@ -355,14 +356,14 @@ export default function App() {
               {/* Tab strip: shown on small screens where the sidebar is hidden. */}
               <div className="flex gap-5 border-b border-[#2a2a2a] lg:hidden">
                 <TabButton active={view === "overview"} onClick={() => userSetView("overview")}>
-                  Pentest Overview
+                  测试总览
                 </TabButton>
                 <TabButton active={view === "issues"} onClick={() => userSetView("issues")}>
-                  Issues{run.vulnerabilities.length > 0 ? ` (${run.vulnerabilities.length})` : ""}
+                  问题{run.vulnerabilities.length > 0 ? ` (${run.vulnerabilities.length})` : ""}
                 </TabButton>
                 {agentCount > 0 && (
                   <TabButton active={view === "agents"} onClick={() => userSetView("agents")}>
-                    Agents ({agentCount})
+                    代理 ({agentCount})
                   </TabButton>
                 )}
               </div>
@@ -385,7 +386,7 @@ export default function App() {
                     onClick={() => setSelectedId(null)}
                     className="cursor-pointer inline-flex items-center gap-1.5 text-sm text-[#888] hover:text-white transition-colors"
                   >
-                    <ArrowLeft className="w-4 h-4" /> Back to all findings
+                    <ArrowLeft className="w-4 h-4" /> 返回全部问题
                   </button>
                   <VulnerabilityDetail vulnerability={selected} />
                 </div>
@@ -425,11 +426,11 @@ function RunSwitcher({
       <button
         onClick={() => setOpen((o) => !o)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        aria-label="Switch pentest"
+        aria-label="切换测试"
         className="flex items-center gap-2 rounded-lg border border-[#3a3a3a] bg-[rgba(255,255,255,0.05)] px-3 py-2 text-sm text-white transition-colors hover:border-[#555] hover:bg-[rgba(255,255,255,0.09)]"
       >
         <History className="h-4 w-4 flex-shrink-0 text-[#888]" aria-hidden="true" />
-        <span className="flex-shrink-0 text-[#888]">Pentest</span>
+        <span className="flex-shrink-0 text-[#888]">测试</span>
         <span className="max-w-[260px] truncate font-medium">{current}</span>
         <ChevronDown className="h-4 w-4 flex-shrink-0 text-[#aaa]" aria-hidden="true" />
       </button>
@@ -439,7 +440,7 @@ function RunSwitcher({
           style={{ border: "1px solid #3a3a3a", background: "#0a0a0a" }}
         >
           <div className="border-b border-[#222] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#666]">
-            Switch pentest
+            切换测试
           </div>
           {runs.runs.map((r) => {
             const active = r.name === activeRun;
@@ -470,7 +471,7 @@ function LiveIndicator({ finished }: { finished: boolean }) {
     return (
       <span className="ml-3 inline-flex items-center gap-1.5 text-xs text-[#888]">
         <span className="w-1.5 h-1.5 rounded-full bg-[#555]" />
-        Complete
+        已完成
       </span>
     );
   }
@@ -480,7 +481,7 @@ function LiveIndicator({ finished }: { finished: boolean }) {
         <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
       </span>
-      Live
+      进行中
     </span>
   );
 }
@@ -499,15 +500,15 @@ function SummaryHeader({ summary }: { summary: ParsedRunSummary }) {
   return (
     <div>
       <h1 className="text-2xl font-semibold text-white">
-        {runTitle(summary.targets[0] ?? null, summary.runName ?? summary.runId ?? "Pentest results")}
+        {runTitle(summary.targets[0] ?? null, summary.runName ?? summary.runId ?? "渗透测试结果")}
       </h1>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[#888]">
         {summary.targets.length > 0 && (
           <span className="font-mono text-[#aaa]">{summary.targets.join(", ")}</span>
         )}
-        {summary.scanMode && <Meta label={summary.scanMode} />}
+        {summary.scanMode && <Meta label={formatScanModeLabel(summary.scanMode) ?? summary.scanMode} />}
         {duration && <Meta label={duration} />}
-        {summary.status && <Meta label={summary.status} />}
+        {summary.status && <Meta label={formatRunStatusLabel(summary.status) ?? summary.status} />}
       </div>
     </div>
   );
@@ -538,17 +539,17 @@ function FindingsList({
     return (
       <div className="space-y-4">
         <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-8 text-center text-sm text-[#888]">
-          {finished ? "No findings in this run." : "No findings yet. The pentest is still running…"}
+          {finished ? "本次运行没有发现问题。" : "暂未发现问题，测试仍在进行中…"}
         </div>
         {finished && (
           <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-            <p className="text-sm font-medium text-white">Stay ahead of new exposures</p>
+            <p className="text-sm font-medium text-white">提前发现新的暴露面</p>
             <p className="mt-0.5 mb-3 text-xs text-[#666]">
-              Attack surface monitoring catches new exposures for your org over time.
+              持续监控攻击面，及时发现组织新增暴露点。
             </p>
             <ProInlineCta
-              label="Attack surface monitoring"
-              desc="Continuous coverage for your whole org."
+              label="攻击面监控"
+              desc="为整个组织提供持续覆盖。"
               slug="asm"
               surface="empty_state"
               icon={Radar}
@@ -576,7 +577,7 @@ function FindingsList({
           <span
             className={`text-xs font-semibold px-2 py-0.5 rounded-full border capitalize ${SEVERITY_COLORS[v.severity]}`}
           >
-            {v.severity}
+            {SEVERITY_LABELS[v.severity]}
           </span>
         </button>
       ))}
@@ -621,13 +622,13 @@ function EmailReportCta({ onOpenEmail }: { onOpenEmail: () => void }) {
           <Mail className="h-4 w-4 text-emerald-400" aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white">Email an encrypted PDF report of this run</p>
+          <p className="text-sm font-semibold text-white">将本次运行的加密 PDF 报告发送到邮箱</p>
           <p className="mt-0.5 text-xs text-[#888]">
-            Encrypted with a key only you can see, email verified with a one-time code before sending.
+            报告会使用仅你可见的密码加密，发送前需通过一次性验证码验证邮箱。
           </p>
         </div>
         <span className="flex-shrink-0 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity group-hover:opacity-90">
-          Export report to PDF
+          导出 PDF 报告
         </span>
       </div>
     </button>
@@ -653,10 +654,10 @@ function OverviewTab({
 }) {
   const sections = (
     [
-      ["Executive Summary", summary.executiveSummary],
-      ["Technical Analysis", summary.technicalAnalysis],
-      ["Methodology", summary.methodology],
-      ["Recommendations", summary.recommendations],
+      ["执行摘要", summary.executiveSummary],
+      ["技术分析", summary.technicalAnalysis],
+      ["测试方法", summary.methodology],
+      ["修复建议", summary.recommendations],
     ] as const
   )
     .filter(([, content]) => !!content)
@@ -694,7 +695,7 @@ function OverviewTab({
         </div>
       ) : (
         total === 0 && (
-          <p className="text-sm text-[#888]">No summary available for this run yet.</p>
+          <p className="text-sm text-[#888]">当前运行暂未生成摘要。</p>
         )
       )}
 
@@ -739,13 +740,13 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
       <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
         <div className="flex items-center gap-2">
           <Bot className="w-4 h-4 text-[#888]" aria-hidden="true" />
-          <h2 className="text-sm font-semibold text-white">Agent graph</h2>
+          <h2 className="text-sm font-semibold text-white">代理关系图</h2>
           <span className="text-xs text-[#666]">
-            {agents.length} agent{agents.length === 1 ? "" : "s"}
+            {agents.length} 个代理
           </span>
         </div>
         <p className="mt-1 mb-4 text-xs text-[#666]">
-          Click an agent to open its full transcript.
+          点击代理可查看完整对话记录。
         </p>
         <div className="h-[480px] rounded-lg border border-[#1a1a1a] overflow-hidden">
           <AgentGraph
@@ -764,12 +765,12 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
 
       {/* Re-run always routes to Strix Cloud. */}
       <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-        <p className="text-sm font-semibold text-white">Run this pentest with more depth</p>
-        <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra in the cloud.</p>
+        <p className="text-sm font-semibold text-white">使用更深入的方式重新运行本次测试</p>
+        <p className="mt-0.5 text-xs text-[#666]">在云端托管基础设施上重新执行这次渗透测试。</p>
         <div className="mt-3 flex flex-wrap gap-2.5">
           <ProInlineCta
-            label="Re-run in Strix Pro with more depth"
-            desc="Run this pentest on managed infra with more depth."
+            label="在 Strix Pro 中深入复测"
+            desc="在托管基础设施上更深入地运行这次渗透测试。"
             slug="live_scan"
             surface="agents"
             icon={Rocket}

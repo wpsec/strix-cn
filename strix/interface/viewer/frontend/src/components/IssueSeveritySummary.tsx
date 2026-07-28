@@ -20,16 +20,16 @@ interface IssueSeveritySummaryProps {
 }
 
 const SEVERITIES = [
-  { key: "critical", label: "critical", dotClass: "bg-red-500", textClass: "text-red-500" },
-  { key: "high", label: "high", dotClass: "bg-orange-500", textClass: "text-orange-500" },
-  { key: "medium", label: "medium", dotClass: "bg-yellow-500", textClass: "text-yellow-500" },
-  { key: "low", label: "low", dotClass: "bg-blue-500", textClass: "text-blue-500" },
+  { key: "critical", label: "严重", dotClass: "bg-red-500", textClass: "text-red-500" },
+  { key: "high", label: "高危", dotClass: "bg-orange-500", textClass: "text-orange-500" },
+  { key: "medium", label: "中危", dotClass: "bg-yellow-500", textClass: "text-yellow-500" },
+  { key: "low", label: "低危", dotClass: "bg-blue-500", textClass: "text-blue-500" },
 ] as const;
 
 export function IssueSeveritySummary({
   findings,
   className,
-  unit = "issues",
+  unit = "项问题",
   trailing,
 }: IssueSeveritySummaryProps) {
   if (findings.total <= 0) return null;
