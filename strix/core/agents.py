@@ -294,6 +294,13 @@ class AgentCoordinator:
             await self.request_stop(aid)
         await self._maybe_snapshot()
 
+    async def cancel_children_graceful(self, agent_id: str) -> None:
+        async with self._lock:
+            order = [aid for aid in self._subtree_order_locked(agent_id) if aid != agent_id]
+        for aid in reversed(order):
+            await self.request_stop(aid)
+        await self._maybe_snapshot()
+
     async def attach_stream(
         self,
         agent_id: str,

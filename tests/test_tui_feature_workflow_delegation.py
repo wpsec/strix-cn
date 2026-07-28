@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from strix.interface.tui.app import StrixTUIApp
@@ -33,7 +34,7 @@ def test_feature_workflow_delegation_nudge_message_demands_child_agent() -> None
         recent_request_has_more=True,
         latest_request_id="req-53",
         latest_method="POST",
-        latest_host="taxdev-sit.eytax.com.cn",
+        latest_host="app-sit.example.com",
         latest_path="/api/login",
         latest_status_code=403,
     )
@@ -137,3 +138,27 @@ def test_should_not_nudge_same_feature_batch_again_after_cooldown() -> None:
         )
         is False
     )
+
+
+def test_stop_feature_workflow_agents_only_stops_children(monkeypatch) -> None:
+    class _Future:
+        def add_done_callback(self, _callback) -> None:
+            return
+
+    seen: list[str] = []
+
+    async def _cancel_children_graceful(agent_id: str) -> None:
+        seen.append(agent_id)
+
+    monkeypatch.setattr(
+        "strix.interface.tui.app.asyncio.run_coroutine_threadsafe",
+        lambda coro, _loop: (_ := asyncio.run(coro), _Future())[1],
+    )
+    app = SimpleNamespace(
+        _scan_loop=SimpleNamespace(is_closed=lambda: False),
+        coordinator=SimpleNamespace(cancel_children_graceful=_cancel_children_graceful),
+        _log_async_action_failure=lambda _future: None,
+    )
+
+    assert StrixTUIApp._stop_feature_workflow_agents(app, "root") is True  # type: ignore[arg-type]
+    assert seen == ["root"]

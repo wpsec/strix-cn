@@ -57,8 +57,8 @@ def test_stats_show_recent_proxy_capture_summary() -> None:
             recent_request_count=10,
             recent_request_has_more=True,
             latest_method="POST",
-            latest_host="taxdev-sit.eytax.com.cn",
-            latest_path="/bscapi/lite/level/getCurrentLevel",
+            latest_host="app-sit.example.com",
+            latest_path="/api/levels/current",
             latest_status_code=200,
             total_request_count=37,
         )
@@ -69,7 +69,7 @@ def test_stats_show_recent_proxy_capture_summary() -> None:
 
     assert "代理捕获: 累计 37 条" in live_text
     assert "最近批次: 10+ 条" in live_text
-    assert "最近流量: POST taxdev-sit.eytax.com.cn/bscapi/lite/level/getCurrentLevel [200]" in live_text
+    assert "最近流量: POST app-sit.example.com/api/levels/current [200]" in live_text
     assert "代理捕获: 累计 37 条" in tui_text
     assert "最近批次: 10+ 条" in tui_text
 

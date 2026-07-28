@@ -244,6 +244,23 @@ async def test_root_not_released_by_reserve_alone() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_children_graceful_preserves_root_agent() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    await coordinator.register("grandchild", "validator", parent_id="child")
+    await coordinator.set_status("root", "waiting")
+    await coordinator.set_status("child", "running")
+    await coordinator.set_status("grandchild", "waiting")
+
+    await coordinator.cancel_children_graceful("root")
+
+    assert coordinator.statuses["root"] == "waiting"
+    assert coordinator.statuses["child"] == "stopped"
+    assert coordinator.statuses["grandchild"] == "stopped"
+
+
+@pytest.mark.asyncio
 async def test_snapshot_during_concurrent_claims_is_consistent() -> None:
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)

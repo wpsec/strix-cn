@@ -143,6 +143,17 @@ def test_waiting_placeholder_message_falls_back_for_non_burp_waiting_agent() -> 
     assert message == "代理当前处于等待状态，等待新的消息或输入。"
 
 
+def test_no_activity_placeholder_message_reports_stopped_agent_truthfully() -> None:
+    app = SimpleNamespace(
+        live_view=SimpleNamespace(agents={"root": {"status": "stopped"}}),
+        _waiting_placeholder_message=lambda _agent_id: None,
+    )
+
+    message = StrixTUIApp._no_activity_placeholder_message(app, "root")  # type: ignore[arg-type]
+
+    assert message == "代理已停止，当前会话不会继续处理新的测试任务。"
+
+
 def test_select_root_agent_for_proxy_resume_accepts_waiting_and_running_root() -> None:
     parent_of = {"root": None, "child": "root"}
 
@@ -184,6 +195,25 @@ def test_root_agent_helpers_accept_four_value_graph_snapshot(monkeypatch) -> Non
 
     assert StrixTUIApp._root_agent_for_proxy_resume(app) == ("root", "waiting")  # type: ignore[arg-type]
     assert StrixTUIApp._root_agent_for_feature_workflow(app) == ("root", "waiting")  # type: ignore[arg-type]
+
+
+def test_root_agent_for_feature_workflow_ignores_stopped_root(monkeypatch) -> None:
+    snapshot = (
+        {"root": None},
+        {"root": "stopped"},
+        {"root": "Strix"},
+        {"root": ""},
+    )
+    monkeypatch.setattr(
+        "strix.interface.tui.app.asyncio.run_coroutine_threadsafe",
+        lambda _coro, _loop: _ImmediateFuture(snapshot),
+    )
+    app = SimpleNamespace(
+        _scan_loop=SimpleNamespace(is_closed=lambda: False),
+        coordinator=SimpleNamespace(graph_snapshot=lambda: None),
+    )
+
+    assert StrixTUIApp._root_agent_for_feature_workflow(app) == (None, None)  # type: ignore[arg-type]
 
 
 def test_should_dispatch_proxy_resume_immediately_for_waiting_root() -> None:

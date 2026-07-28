@@ -1205,10 +1205,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
         events = self._gather_agent_events(self.selected_agent_id)
 
         if not events:
-            waiting_message = self._waiting_placeholder_message(self.selected_agent_id)
-            if waiting_message is not None:
+            placeholder_message = self._no_activity_placeholder_message(self.selected_agent_id)
+            if placeholder_message is not None:
                 return self._get_chat_placeholder_content(
-                    waiting_message,
+                    placeholder_message,
                     "placeholder-waiting",
                 )
             return self._get_chat_placeholder_content(
@@ -1236,6 +1236,24 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 return "代理当前处于等待状态。当前功能点如已测试完成，可按 Ctrl+N 切回采集模式，或继续发送消息。"
 
         return "代理当前处于等待状态，等待新的消息或输入。"
+
+    def _no_activity_placeholder_message(self, agent_id: str) -> str | None:
+        agent_data = self.live_view.agents.get(agent_id, {})
+        status = str(agent_data.get("status", "") or "").strip()
+        if status == "waiting":
+            return self._waiting_placeholder_message(agent_id)
+        if status == "budget_paused":
+            return "预算已达到上限，发送消息以继续。"
+        if status == "stopped":
+            return "代理已停止，当前会话不会继续处理新的测试任务。"
+        if status == "completed":
+            return "代理已完成。"
+        if status in {"failed", "crashed"}:
+            error_message = str(agent_data.get("error_message", "") or "").strip()
+            if error_message:
+                return f"代理运行失败：{error_message}"
+            return "代理运行失败。"
+        return None
 
     def _update_chat_view(self) -> None:
         if len(self.screen_stack) > 1 or self.show_splash or not self.is_mounted:
@@ -1809,7 +1827,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
         parent_of, statuses = snapshot[0], snapshot[1]
         for agent_id, parent_id in parent_of.items():
             if parent_id is None:
-                return agent_id, statuses.get(agent_id)
+                status = statuses.get(agent_id)
+                if status in {"running", "waiting", "budget_paused"}:
+                    return agent_id, status
+                return None, None
         return None, None
 
     def _should_auto_resume_from_proxy(self, snapshot: ProxyCaptureSnapshot) -> bool:
@@ -2018,7 +2039,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if loop is None or loop.is_closed():
             return False
         future = asyncio.run_coroutine_threadsafe(
-            self.coordinator.cancel_descendants_graceful(root_agent_id),
+            self.coordinator.cancel_children_graceful(root_agent_id),
             loop,
         )
         future.add_done_callback(self._log_async_action_failure)
