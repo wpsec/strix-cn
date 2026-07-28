@@ -987,7 +987,7 @@ def pull_docker_image() -> None:
         )
         error_text.append(
             "构建完成后重新运行当前命令；如果你想改回默认发布镜像，"
-            "请将 STRIX_IMAGE 设为 ghcr.io/usestrix/strix-sandbox:1.0.0。",
+            "请将 STRIX_IMAGE 设为 ghcr.io/usestrix/strix-sandbox:1.1.0。",
             style="white",
         )
         panel = Panel(

@@ -100,7 +100,7 @@ python -m pip install -e .
 # python -m pip install -e . --no-deps
 
 # 准备基础沙箱镜像（docker-overlay 方式依赖它）
-docker pull ghcr.io/usestrix/strix-sandbox:1.0.0
+docker pull ghcr.io/usestrix/strix-sandbox:1.1.0
 
 # 方式 A：完整构建当前分支的本地 sandbox 镜像
 ./scripts/docker.sh local
@@ -141,7 +141,7 @@ export LLM_API_BASE="https://your-gateway.example/v1"
 > Windows 下运行前请先确认 Docker Desktop 已安装并处于运行状态；Strix 会自动拉取缺失镜像，但不会自动启动 Docker Desktop。
 
 > [!IMPORTANT]  
-> 上面的 `docker pull ghcr.io/usestrix/strix-sandbox:1.0.0` 只是提前准备基础镜像；真正运行当前 `strix-cn` 分支时，推荐继续执行 `./scripts/docker.sh local` 或 `./scripts/docker-overlay.sh local`，再通过 `export STRIX_IMAGE=strix-sandbox:local` 明确使用本地构建镜像。  
+> 上面的 `docker pull ghcr.io/usestrix/strix-sandbox:1.1.0` 只是提前准备基础镜像；真正运行当前 `strix-cn` 分支时，推荐继续执行 `./scripts/docker.sh local` 或 `./scripts/docker-overlay.sh local`，再通过 `export STRIX_IMAGE=strix-sandbox:local` 明确使用本地构建镜像。  
 > 这样可以确保当前分支在 `containers/`、证书、代理端口、Caido 启动参数、浏览器环境等 sandbox 侧改动也一并生效，而不是误用默认发布镜像。  
 > 如果你所在环境经常访问不到 `docker.io/kalilinux`，优先使用 `docker-overlay` 会更稳。
 
@@ -170,9 +170,9 @@ export STRIX_IMAGE=strix-sandbox:local
 .venv/bin/strix --target ./app-directory
 ```
 
-轻量覆盖构建默认基于本机已有的 `ghcr.io/usestrix/strix-sandbox:1.0.0`。如果这个基础镜像已经在本地，通常不需要再访问 `docker.io`。
+轻量覆盖构建默认基于本机已有的 `ghcr.io/usestrix/strix-sandbox:1.1.0`。如果这个基础镜像已经在本地，通常不需要再访问 `docker.io`。
 
-如果你所在环境访问 `ghcr.io` 较慢或受限，建议先手动执行上面的 `docker pull`，确认镜像 `ghcr.io/usestrix/strix-sandbox:1.0.0` 已可用后再启动扫描。
+如果你所在环境访问 `ghcr.io` 较慢或受限，建议先手动执行上面的 `docker pull`，确认镜像 `ghcr.io/usestrix/strix-sandbox:1.1.0` 已可用后再启动扫描。
 
 ### Burp 被动扫描快速开始
 
