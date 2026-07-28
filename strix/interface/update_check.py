@@ -56,6 +56,36 @@ def is_binary_install() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def _source_checkout_root() -> Path | None:
+    root = Path(__file__).resolve().parents[2]
+    if (root / ".git").exists() and (root / "pyproject.toml").exists():
+        return root
+    return None
+
+
+def _source_checkout_notice_lines(latest: str | None) -> tuple[str, ...]:
+    root = _source_checkout_root()
+    branch_name = root.name if root is not None else "current-source-branch"
+    current = get_version()
+    latest_label = latest or "unknown"
+    return (
+        f"上游 strix 主线最新发布版：{latest_label}",
+        f"当前 {branch_name} 分支版本：{current}",
+        "当前在源码仓库中运行，已禁用按 y 自升级，避免把本地分支覆盖为上游发布包。",
+        "如需同步主线版本，请后续手工合并上游代码，再执行 `python -m pip install -e .`。",
+    )
+
+
+def _print_source_checkout_notice(console: Console, latest: str | None) -> None:
+    console.print()
+    title, current, disabled, guidance = _source_checkout_notice_lines(latest)
+    console.print(f"[#eab308]{title}[/]")
+    console.print(f"[dim]{current}[/]")
+    console.print(f"[dim]{disabled}[/]")
+    console.print(f"[dim]{guidance}[/]")
+    console.print()
+
+
 def get_install_method() -> str:
     if is_binary_install():
         return "binary"
@@ -207,6 +237,9 @@ def notify_update(console: Console) -> None:
     latest = get_available_update()
     if not latest:
         return
+    if _source_checkout_root() is not None:
+        _print_source_checkout_notice(console, latest)
+        return
     console.print(
         f"[#eab308]A new version of strix is available:[/] "
         f"[dim]{get_version()}[/] [dim]→[/] [bold #22c55e]{latest}[/]"
@@ -241,6 +274,9 @@ def prompt_update_if_available(console: Console) -> bool:
     """
     latest = get_available_update()
     if not latest or not sys.stdin.isatty() or not sys.stdout.isatty():
+        return False
+    if _source_checkout_root() is not None:
+        _print_source_checkout_notice(console, latest)
         return False
     console.print()
     console.print(
@@ -352,6 +388,10 @@ def self_update(console: Console | None = None, version: str | None = None) -> b
     prints the right upgrade command and returns False.
     """
     console = console or Console()
+
+    if _source_checkout_root() is not None:
+        _print_source_checkout_notice(console, version or get_available_update(respect_skip=False))
+        return False
 
     if not is_binary_install():
         method = get_install_method()

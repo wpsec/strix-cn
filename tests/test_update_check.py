@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import platform
+import sys
 import time
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from strix.interface import update_check
 def _isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update_check, "_CACHE_PATH", tmp_path / "update-check.json")
     monkeypatch.setattr(update_check, "_background_thread", None)
+    monkeypatch.setattr(update_check, "_source_checkout_root", lambda: None)
     monkeypatch.delenv("STRIX_NO_UPDATE_CHECK", raising=False)
     for key in ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL", "BUILDKITE", "CIRCLECI"):
         monkeypatch.delenv(key, raising=False)
@@ -144,6 +146,61 @@ def test_self_update_non_binary_prints_command(monkeypatch: pytest.MonkeyPatch) 
     buffer = io.StringIO()
     assert update_check.self_update(Console(file=buffer)) is False
     assert "upgrade" in buffer.getvalue()
+
+
+def test_prompt_update_source_checkout_shows_notice_without_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    update_check._CACHE_PATH.write_text(
+        json.dumps({"latest_version": "1.4.1", "checked_at": time.time()})
+    )
+    monkeypatch.setattr(update_check, "_source_checkout_root", lambda: tmp_path / "strix-cn")
+    monkeypatch.setattr(update_check, "get_version", lambda: "1.3.1")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(update_check.Prompt, "ask", lambda *_args, **_kwargs: pytest.fail("prompt called"))
+    buffer = io.StringIO()
+
+    assert update_check.prompt_update_if_available(Console(file=buffer)) is False
+    plain = buffer.getvalue()
+    assert "上游 strix 主线最新发布版：1.4.1" in plain
+    assert "当前 strix-cn 分支版本：1.3.1" in plain
+    assert "已禁用按 y 自升级" in plain
+
+
+def test_notify_update_source_checkout_shows_notice_without_upgrade_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    update_check._CACHE_PATH.write_text(
+        json.dumps({"latest_version": "1.4.1", "checked_at": time.time()})
+    )
+    monkeypatch.setattr(update_check, "_source_checkout_root", lambda: tmp_path / "strix-cn")
+    monkeypatch.setattr(update_check, "get_version", lambda: "1.3.1")
+    buffer = io.StringIO()
+
+    update_check.notify_update(Console(file=buffer))
+
+    plain = buffer.getvalue()
+    assert "上游 strix 主线最新发布版：1.4.1" in plain
+    assert "当前 strix-cn 分支版本：1.3.1" in plain
+    assert "pip install --upgrade strix-agent" not in plain
+
+
+def test_self_update_source_checkout_shows_notice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_check, "_source_checkout_root", lambda: tmp_path / "strix-cn")
+    monkeypatch.setattr(update_check, "get_version", lambda: "1.3.1")
+    buffer = io.StringIO()
+
+    assert update_check.self_update(Console(file=buffer), version="1.4.1") is False
+    plain = buffer.getvalue()
+    assert "上游 strix 主线最新发布版：1.4.1" in plain
+    assert "当前 strix-cn 分支版本：1.3.1" in plain
+    assert "已禁用按 y 自升级" in plain
 
 
 def test_self_update_already_latest(monkeypatch: pytest.MonkeyPatch) -> None:
