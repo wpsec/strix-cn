@@ -438,6 +438,7 @@ async def run_strix_scan(
 
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
+            root_error = coordinator.errors.get(root_id)
 
         start_parked = _should_start_root_parked(
             interactive=interactive,
@@ -445,6 +446,8 @@ async def run_strix_scan(
             root_status=root_status,
             scan_config=scan_config,
         )
+        if is_resume and root_status == "waiting" and bool(root_error):
+            start_parked = False
         if start_parked and not is_resume:
             await root_session.add_items(
                 [

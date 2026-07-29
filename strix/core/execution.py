@@ -21,6 +21,7 @@ from openai import (
     RateLimitError,
 )
 
+from strix.config import codex
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -87,6 +88,11 @@ async def _compact_session(
         force=force,
     )
 
+
+_GUARDRAIL_PARK_ERROR = (
+    "Blocked by the model's content guardrail (flagged as a possible cybersecurity risk). "
+    "Set STRIX_LLM to a model that isn't blocked and resume the scan to continue."
+)
 
 _TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
 _MAX_TRANSIENT_MODEL_RETRIES = 4
@@ -304,6 +310,7 @@ async def respawn_subagents(
             if coordinator.parent_of.get(aid) is None or aid == root_id:
                 continue
             md["_restored_status"] = status
+            md["_restored_error"] = coordinator.errors.get(aid)
             candidates.append(
                 (
                     aid,
@@ -316,7 +323,8 @@ async def respawn_subagents(
     for child_id, name, parent_id, md in candidates:
         try:
             restored_status = str(md.get("_restored_status") or "running")
-            start_parked = interactive and restored_status != "running"
+            recoverable_park = restored_status == "waiting" and bool(md.get("_restored_error"))
+            start_parked = interactive and restored_status != "running" and not recoverable_park
 
             if start_parked:
                 logger.warning(
@@ -417,7 +425,7 @@ async def _run_noninteractive_until_lifecycle(
 
         if invalid_final_outputs >= invalid_final_output_limit:
             await coordinator.set_status(agent_id, "crashed")
-            await _notify_parent_on_crash(coordinator, agent_id, "crashed")
+            await _notify_parent_on_terminal(coordinator, agent_id, "crashed")
             raise MaxTurnsExceeded(
                 "Agent exhausted non-interactive recovery attempts without calling "
                 "finish_scan or agent_finish."
@@ -572,6 +580,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 if session is not None:
                     input_data = []
                 continue
+            if codex.is_content_guardrail_error(exc):
+                return await _handle_content_guardrail(
+                    coordinator, agent_id, exc, interactive=interactive
+                )
             if not interactive:
                 raise
             if isinstance(exc, MaxTurnsExceeded):
@@ -582,11 +594,27 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 status = "crashed"
             logger.exception("agent run failed for %s; parking as %s", agent_id, status)
             await coordinator.set_status(agent_id, status, error=str(exc) or type(exc).__name__)
-            await _notify_parent_on_crash(coordinator, agent_id, status)
+            await _notify_parent_on_terminal(coordinator, agent_id, status)
             return None
         else:
             await _settle_run_result(coordinator, agent_id, interactive)
             return stream
+
+
+async def _handle_content_guardrail(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    exc: BaseException,
+    *,
+    interactive: bool,
+) -> RunResultBase | None:
+    logger.warning("agent %s blocked by the model's content guardrail: %s", agent_id, exc)
+    if interactive:
+        await coordinator.set_status(agent_id, "waiting", error=_GUARDRAIL_PARK_ERROR)
+        return None
+    await coordinator.set_status(agent_id, "failed", error=_GUARDRAIL_PARK_ERROR)
+    await _notify_parent_on_terminal(coordinator, agent_id, "failed")
+    return None
 
 
 async def _settle_run_result(
@@ -646,12 +674,31 @@ async def _append_noninteractive_tool_required_message(
     return []
 
 
-async def _notify_parent_on_crash(
+_TERMINAL_NOTICE = {
+    "crashed": (
+        "[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
+        "Stop waiting on this child unless you want to message it again."
+    ),
+    "failed": (
+        "[Agent failed] {name} ({agent_id}) stopped with an error and will not "
+        "send a completion report. Stop waiting on this child unless you want to "
+        "message it again."
+    ),
+    "stopped": (
+        "[Agent capped] {name} ({agent_id}) hit its turn limit and was stopped "
+        "before finishing. It will not send a completion report, so stop waiting "
+        "on this child; account for its capped subtask and continue."
+    ),
+}
+
+
+async def _notify_parent_on_terminal(
     coordinator: AgentCoordinator,
     agent_id: str,
     status: str,
 ) -> None:
-    if status != "crashed":
+    template = _TERMINAL_NOTICE.get(status)
+    if template is None:
         return
     async with coordinator._lock:
         parent = coordinator.parent_of.get(agent_id)
@@ -662,13 +709,11 @@ async def _notify_parent_on_crash(
         parent,
         {
             "from": agent_id,
-            "type": "crash",
+            "type": status,
             "priority": "high",
-            "content": (
-                f"[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
-                "Stop waiting on this child unless you want to message it again."
-            ),
+            "content": template.format(name=name, agent_id=agent_id),
         },
+        interrupt=False,
     )
 
 

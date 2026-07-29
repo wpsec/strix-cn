@@ -277,6 +277,51 @@ def _configure_litellm_compatibility() -> None:
     litellm.suppress_debug_info = True
 
     _register_litellm_cost_callback()
+    _install_openrouter_stream_cost_capture()
+
+
+def _install_openrouter_stream_cost_capture() -> None:
+    """Preserve OpenRouter's per-stream cost, which LiteLLM drops when streaming.
+
+    OpenRouter reports the real charge in ``usage.cost`` of the final stream
+    chunk, but LiteLLM rebuilds streamed responses from token-only fields and
+    discards it (its non-streamed path stashes the cost in hidden params; the
+    streaming path does not). Every scan streams, so without this the cost is
+    lost and Strix falls back to a cost-map estimate that is missing entirely
+    for new models (e.g. kimi-k3), reporting $0. Subclass the OpenRouter
+    streaming handler to record the cost keyed by response id so the cost
+    callback can recover the exact charge for the matching rebuilt response.
+    """
+    import litellm
+    from litellm.llms.openrouter.chat.transformation import (
+        OpenRouterChatCompletionStreamingHandler,
+        OpenrouterConfig,
+    )
+
+    from strix.report.state import streamed_openrouter_costs
+
+    class _StrixOpenRouterStreamingHandler(OpenRouterChatCompletionStreamingHandler):
+        def chunk_parser(self, chunk: dict[str, Any]) -> Any:
+            stream = super().chunk_parser(chunk)
+            streamed_openrouter_costs.remember(
+                chunk.get("id") or getattr(stream, "id", None), chunk.get("usage")
+            )
+            return stream
+
+    class _StrixOpenrouterConfig(OpenrouterConfig):
+        def get_model_response_iterator(
+            self, streaming_response: Any, sync_stream: bool, json_mode: bool | None = False
+        ) -> Any:
+            return _StrixOpenRouterStreamingHandler(
+                streaming_response=streaming_response,
+                sync_stream=sync_stream,
+                json_mode=json_mode,
+            )
+
+    # LiteLLM's provider-config factory reads litellm.OpenrouterConfig at call
+    # time, so overriding the attribute is enough for the subclass to take
+    # effect. (type: ignore — mypy rejects reassigning a class attribute.)
+    litellm.OpenrouterConfig = _StrixOpenrouterConfig  # type: ignore[misc]
 
 
 _OPENROUTER_ATTRIBUTION_HEADERS = {
