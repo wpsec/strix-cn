@@ -251,3 +251,50 @@ async def test_burp_passive_interactive_run_starts_root_parked(
     assert run_agent_loop_kwargs["start_parked"] is True
     assert run_agent_loop_kwargs["initial_input"] == []
     assert captured["root_session"].items == [{"role": "user", "content": "task"}]
+
+
+@pytest.mark.asyncio
+async def test_resume_recoverable_waiting_root_does_not_restart_parked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    scope_context = {
+        "scope_source": "burp_upstream_proxy",
+        "authorization_source": "operator_routed_proxy_traffic",
+        "authorized_targets": [],
+        "proxy_passive_mode": True,
+        "proxy_scope_enforced": True,
+        "proxy_scope_allowlist": ["app.example.com"],
+        "proxy_scope_denylist": ["caido.io", "*.caido.io"],
+        "user_instructions_do_not_expand_scope": True,
+    }
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
+    (tmp_path / "agents.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "agents.db").write_text("", encoding="utf-8")
+
+    coordinator = AgentCoordinator()
+
+    async def _restore(_snap: dict[str, Any]) -> None:
+        coordinator.parent_of = {"root": None}
+        coordinator.statuses = {"root": "waiting"}
+        coordinator.errors = {"root": "STRIX_LLM guardrail"}
+
+    monkeypatch.setattr(coordinator, "restore", _restore)
+
+    async def _noop_respawn(**_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(runner, "respawn_subagents", _noop_respawn)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep", "burp_port": 8081},
+        scan_id="scan-burp-resume-recoverable",
+        image="img",
+        coordinator=coordinator,
+        interactive=True,
+    )
+
+    run_agent_loop_kwargs = captured["run_agent_loop_kwargs"]
+    assert run_agent_loop_kwargs["start_parked"] is False
+    assert run_agent_loop_kwargs["initial_input"] == []
+    assert captured["root_session"].items == []

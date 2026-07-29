@@ -200,7 +200,9 @@ class AgentCoordinator:
         logger.info("agent.status %s=%s", agent_id, status)
         await self._maybe_snapshot()
 
-    async def send(self, target_agent_id: str, message: dict[str, Any]) -> bool:
+    async def send(
+        self, target_agent_id: str, message: dict[str, Any], *, interrupt: bool = True
+    ) -> bool:
         """Deliver a user/peer message by appending it to the target SDK session."""
         if message.get("from") == "user" and self._budget_paused:
             await self.resume_from_budget_pause(exclude=target_agent_id)
@@ -211,7 +213,7 @@ class AgentCoordinator:
             runtime = self.runtimes.setdefault(target_agent_id, AgentRuntime())
             session = runtime.session
             stream = runtime.stream
-            interrupt = runtime.interrupt_on_message
+            interrupt_on_message = runtime.interrupt_on_message
         if session is None:
             logger.warning(
                 "agent.send dropped target=%s because its SDK session is not attached",
@@ -230,7 +232,7 @@ class AgentCoordinator:
         async with self._lock:
             self.pending_counts[target_agent_id] = self.pending_counts.get(target_agent_id, 0) + 1
             self.runtimes.setdefault(target_agent_id, AgentRuntime()).wake.set()
-        if stream is not None and interrupt:
+        if stream is not None and interrupt and interrupt_on_message:
             stream.cancel(mode="immediate")
         await self._maybe_snapshot()
         return True
