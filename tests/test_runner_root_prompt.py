@@ -219,6 +219,9 @@ async def test_root_prompt_includes_burp_passive_mode_constraints(
     assert "individually scoped" in instructions_override
     assert "app.example.com" in instructions_override
     assert "*.caido.io" in instructions_override
+    assert "PASSIVE PROXY FEATURE-BATCH COORDINATION" in instructions_override
+    assert "attack-surface mapping specialist" in instructions_override
+    assert "create_vulnerability_report" in instructions_override
     assert "PASSIVE BURP MODE" in instructions_override
 
 

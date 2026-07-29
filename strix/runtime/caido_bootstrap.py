@@ -175,6 +175,18 @@ async def bootstrap_caido(
     return client
 
 
+async def select_strix_project(client: Client) -> Project:
+    """Select the writable Strix sandbox project on an already-connected client."""
+    project = await _select_existing_project(
+        client,
+        project_name=_STRIX_PROJECT_NAME,
+        log_reuse=False,
+    )
+    if project is None:
+        raise RuntimeError(f"Caido project {_STRIX_PROJECT_NAME!r} not found")
+    return project
+
+
 async def _create_or_recover_project(client: Client, *, project_name: str) -> Project:
     try:
         return await _create_and_select_project(client, project_name=project_name)
@@ -233,7 +245,12 @@ async def _create_and_select_project(client: Client, *, project_name: str) -> Pr
     return project
 
 
-async def _select_existing_project(client: Client, *, project_name: str) -> Project | None:
+async def _select_existing_project(
+    client: Client,
+    *,
+    project_name: str,
+    log_reuse: bool = True,
+) -> Project | None:
     projects = await client.project.list()
     candidates = [
         project
@@ -245,7 +262,8 @@ async def _select_existing_project(client: Client, *, project_name: str) -> Proj
 
     project = max(candidates, key=lambda item: (item.updated_at, item.created_at, str(item.id)))
     await client.project.select(project.id)
-    logger.warning("Reusing existing temporary Caido project %s (%s)", project.name, project.id)
+    if log_reuse:
+        logger.warning("Reusing existing temporary Caido project %s (%s)", project.name, project.id)
     return project
 
 

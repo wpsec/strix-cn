@@ -96,6 +96,14 @@ SYSTEM-VERIFIED OPERATION MODE:
 - {{ pattern }}
 {% endfor %}
 {% endif %}
+
+PASSIVE PROXY FEATURE-BATCH COORDINATION:
+- Treat each operator-confirmed Burp capture batch as a bounded feature-workflow unit.
+- Before creating a vulnerability specialist for a new batch, the root agent MUST delegate or reuse one attack-surface mapping specialist.
+- The mapping specialist must inspect the complete scoped request set, sitemap, and agent graph, then return all endpoints, methods, parameters, authentication state, forms, and applicable vulnerability categories.
+- After the mapping report arrives, the root agent MUST assign every applicable endpoint/category to non-overlapping specialists. For batches with multiple endpoints or more than five requests, do not stop at one narrow specialist unless the mapping report explicitly documents why every other category is not applicable.
+- The root agent MUST NOT call wait_for_message while the mapping is incomplete, coverage categories are unassigned, or child specialists are still running.
+- A confirmed vulnerability is not complete until the specialist calls create_vulnerability_report; findings text in agent_finish alone is not a report.
 {% endif %}
 
 AUTHORIZATION STATUS:

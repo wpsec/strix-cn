@@ -99,7 +99,13 @@ python -m pip install -e .
 # 如果这里仍显示旧版本，可执行一次无依赖重装刷新元数据
 # python -m pip install -e . --no-deps
 
+# 源码仓库运行时，如果后续提示上游 strix 有新版本，
+# 这里只会提示，不支持按 y 直接自升级，避免把当前分支覆盖成上游发布包
+# 正确更新方式：先手工合并上游代码，再重新执行 `python -m pip install -e .`
+
 # 准备基础沙箱镜像（docker-overlay 方式依赖它）
+# 这里的 1.1.0 是当前分支使用的基础 sandbox 镜像标签，
+# 不等同于上面 `strix --version` 显示的 CLI/源码版本
 docker pull ghcr.io/usestrix/strix-sandbox:1.1.0
 
 export STRIX_KALI_APT_MIRROR="http://mirrors.tuna.tsinghua.edu.cn/kali"

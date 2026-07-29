@@ -10,6 +10,8 @@ from typing import Any
 
 from caido_sdk_client import Client, TokenAuthOptions
 
+from strix.runtime.caido_bootstrap import select_strix_project
+
 
 _LOGIN_AS_GUEST_BODY = (
     '{"query":"mutation LoginAsGuest { loginAsGuest { token { accessToken } } }"}'
@@ -52,6 +54,7 @@ async def fetch_proxy_capture_snapshot(
     await client.connect()
 
     try:
+        await select_strix_project(client)
         builder = client.request.list().first(max(1, recent_limit)).descending("req", "created_at")
         if scope_id:
             builder = builder.scope(scope_id)

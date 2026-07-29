@@ -1895,10 +1895,20 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "当前功能点的手工点击和流量采集已完成，现在开始测试。"
             " 请只基于本轮最新 Burp 捕获流量重新检查代理历史、站点地图和代理图，"
             " 严格聚焦当前功能点，不要扩散到无关功能。"
-            " 第一动作必须先调用 view_agent_graph 检查可复用专家。"
-            " 如已有适用专家，优先用 send_message_to_agent 复用；如没有，再创建新的子专家。"
+            " 第一阶段必须先调用 view_agent_graph 检查可复用专家，"
+            " 如已有适用专家，优先使用 send_message_to_agent 复用；"
+            " 然后复用或创建一个名为‘当前功能点攻击面分析专家’的映射专家。"
+            " 映射专家必须分页检查本轮作用域内的全部请求，而不是只看最近一条，"
+            " 汇总所有接口、方法、参数、认证状态、表单和可适用的漏洞类别，"
+            " 并在 agent_finish 中返回完整的覆盖清单；映射阶段不要以单个端点测试代替盘点。"
+            " 根代理收到映射清单后，必须按接口和漏洞类别批量复用或创建不重叠的测试专家，"
+            " 至少覆盖认证/会话、授权/越权、注入、XSS、CSRF/业务逻辑等适用方向，"
+            " 对多接口或大于 5 条请求的批次，除非映射专家明确排除，否则不得只创建一个窄任务专家。"
             " 根代理不要把 create_todo / update_todo 作为本轮唯一动作，也不要长时间自己直接做请求级测试。"
-            " 本功能点测试完成后，请停止继续扩展，并调用 wait_for_message 等待我切换到下一个功能点。"
+            " 所有确认的漏洞必须先调用 create_vulnerability_report，再调用 agent_finish；"
+            " agent_finish 中的 findings 文字不能替代正式报告。"
+            " 在仍有未盘点接口、未覆盖漏洞类别或运行中的子专家时，根代理不得调用 wait_for_message。"
+            " 本功能点测试完成后，确认覆盖清单和正式报告均已更新，再调用 wait_for_message 等待我切换到下一个功能点。"
             f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
             f" 最近流量：{latest_line}{status_suffix}。"
         )
@@ -1911,7 +1921,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
         return f"total:{max(0, snapshot.total_request_count)}"
 
     @staticmethod
-    def _feature_workflow_delegation_nudge_message(snapshot: ProxyCaptureSnapshot) -> str:
+    def _feature_workflow_delegation_nudge_message(
+        snapshot: ProxyCaptureSnapshot,
+        *,
+        phase: str = "mapping",
+    ) -> str:
         count_suffix = "+" if snapshot.recent_request_has_more else ""
         recent_count = max(0, snapshot.recent_request_count)
         latest_summary = " ".join(
@@ -1928,14 +1942,26 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if isinstance(snapshot.latest_status_code, int) and snapshot.latest_status_code > 0
             else ""
         )
+        if phase == "dispatch":
+            return (
+                "当前功能点的攻击面分析专家已经完成映射，但根代理还没有补齐测试分派。"
+                " 请读取映射专家的完整接口、参数和漏洞类别清单，"
+                " 立即批量复用或创建所有适用且不重叠的测试专家，"
+                " 不得只创建一个专家后等待，也不得把 create_todo / update_todo 当成本轮唯一动作。"
+                " 每个确认漏洞必须调用 create_vulnerability_report 后再 agent_finish。"
+                " 只有全部接口和适用类别都有负责人、且所有子专家完成后，才能 wait_for_message。"
+                f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
+                f" 最近流量：{latest_line}{status_suffix}。"
+            )
+
         return (
-            "你还没有复用或创建任何子专家。"
-            " 不要让根代理继续只做待办事项，或长时间自己反复查看/重放请求。"
-            " 现在必须先协调：先调用 view_agent_graph；"
-            " 若已有适配专家，立即用 send_message_to_agent 分派当前功能点；"
-            " 若没有，至少 create_agent 一个与当前功能点直接相关的子专家，"
-            " 再由子专家继续 list_requests、view_request、repeat_request。"
-            " 根代理完成分派后调用 wait_for_message 等待子专家回报。"
+            "当前功能点尚未完成攻击面映射。"
+            " 现在必须先调用 view_agent_graph，优先复用已有映射专家；"
+            " 若没有，立即 create_agent 一个名为‘当前功能点攻击面分析专家’的子专家。"
+            " 映射专家必须分页检查本轮作用域内的全部请求、站点地图和代理图，"
+            " 返回完整的接口、参数、认证状态和适用漏洞类别清单。"
+            " 根代理不得继续只做待办事项、反复重放请求或直接测试单个端点，"
+            " 也不得在映射完成前 wait_for_message。"
             f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
             f" 最近流量：{latest_line}{status_suffix}。"
         )
@@ -1975,6 +2001,42 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 return True
         return False
 
+    @staticmethod
+    def _feature_workflow_delegation_phase(
+        root_agent_id: str,
+        live_agents: dict[str, dict[str, Any]],
+    ) -> str | None:
+        """Return the missing coordination phase for the active feature batch."""
+        children = [
+            (agent_id, data)
+            for agent_id, data in live_agents.items()
+            if agent_id != root_agent_id
+            and str(data.get("parent_id") or "").strip() == root_agent_id
+        ]
+        mapping_agent_ids = {
+            agent_id
+            for agent_id, data in children
+            if "攻击面" in str(data.get("name") or "")
+            and any(marker in str(data.get("name") or "") for marker in ("分析", "映射"))
+        }
+        if not mapping_agent_ids:
+            return "mapping"
+
+        mapping_statuses = {
+            str(data.get("status") or "").strip()
+            for agent_id, data in children
+            if agent_id in mapping_agent_ids
+        }
+        if "completed" not in mapping_statuses:
+            if mapping_statuses & {"running", "waiting", "budget_paused"}:
+                return None
+            return "mapping-retry"
+
+        has_specialist = any(agent_id not in mapping_agent_ids for agent_id, _data in children)
+        if not has_specialist:
+            return "dispatch"
+        return None
+
     def _should_nudge_feature_workflow_delegation(
         self,
         root_agent_id: str,
@@ -1987,7 +2049,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return False
         if str(getattr(self, "_burp_workflow_phase", "") or "").strip() != "testing":
             return False
-        if StrixTUIApp._root_agent_has_child_agents(root_agent_id, self.live_view.agents):
+        phase = StrixTUIApp._feature_workflow_delegation_phase(
+            root_agent_id,
+            self.live_view.agents,
+        )
+        if phase is None:
             return False
 
         started_at = float(getattr(self, "_feature_test_started_at_monotonic", 0.0) or 0.0)
@@ -2003,11 +2069,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return False
 
         last_batch_key = str(getattr(self, "_feature_workflow_last_nudged_batch_key", "") or "").strip()
+        nudge_key = f"{active_batch_key}:{phase}"
         # The delegation nudge is a one-shot correction per captured feature batch.
-        # Re-sending the same instruction every cooldown window floods the
-        # transcript and makes the TUI harder to use; a fresh batch or a manual
-        # restart of feature testing resets the key and allows one new nudge.
-        if last_batch_key == active_batch_key:
+        # Each batch has at most one mapping nudge and one dispatch nudge. This
+        # keeps a narrow child from suppressing the later coverage correction.
+        if last_batch_key in {active_batch_key, nudge_key}:
             return False
         return True
 
@@ -2021,18 +2087,25 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return
 
         snapshot = self._current_proxy_capture_snapshot()
+        phase = StrixTUIApp._feature_workflow_delegation_phase(
+            root_agent_id,
+            self.live_view.agents,
+        )
+        if phase is None:
+            return
         submitted = self._send_feature_workflow_message(
             root_agent_id,
-            self._feature_workflow_delegation_nudge_message(snapshot),
+            self._feature_workflow_delegation_nudge_message(snapshot, phase=phase),
         )
         if not submitted:
             return
 
-        self._feature_workflow_last_nudged_batch_key = str(
-            getattr(self, "_feature_workflow_active_batch_key", "") or ""
-        ).strip()
+        self._feature_workflow_last_nudged_batch_key = (
+            f"{str(getattr(self, '_feature_workflow_active_batch_key', '') or '').strip()}:{phase}"
+        )
         self._feature_workflow_last_nudge_at_monotonic = time.monotonic()
-        self.notify("根代理尚未分派子专家，已自动发送纠偏指令。", timeout=4)
+        notice = "攻击面映射" if phase.startswith("mapping") else "专家批量分派"
+        self.notify(f"根代理尚未完成{notice}，已自动发送纠偏指令。", timeout=4)
 
     def _stop_feature_workflow_agents(self, root_agent_id: str) -> bool:
         loop = self._scan_loop
