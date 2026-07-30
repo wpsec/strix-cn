@@ -4,6 +4,10 @@
 
 Strix开源 AI 渗透测试工具。面向中文用户持续维护，优先解决国内模型、Burp 工作流与兼容性适配。
 
+这个是原项目地址：[https://github.com/usestrix/strix](https://github.com/usestrix/strix)
+
+当前是分支：[https://github.com/wpsec/strix-cn](https://github.com/wpsec/strix-cn)
+
 > [!TIP]  
 > **新功能**：Strix 已可无缝接入 GitHub Actions 和 CI/CD 流水线。你可以在每个 Pull Request 上自动执行漏洞扫描，在不安全代码进入生产环境前直接拦截。可前往 [app.strix.ai](https://app.strix.ai) 体验免配置接入。
 
@@ -30,30 +34,6 @@ Strix 是一组自治 AI 渗透测试代理，工作方式尽量贴近真实黑�
 - **自动修复与报告**：可生成补丁与适合合规场景的渗透测试报告
 - **模型兼容优先**：优先验证 OpenAI-compatible、LiteLLM 路由和本地模型接入
 - **语言与环境适配**：默认中文报告，并持续修复跨平台与代理环境兼容问题
-
-<!-- 这是一张图片，ocr 内容为： -->
-
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1784536956050-e0b0a273-a147-4e27-991a-66fd1fb3754f.png)
-
-burp 被动扫描模式
-
-<!-- 这是一张图片，ocr 内容为： -->
-
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1784712512567-eabda74b-64ec-4cc8-89d2-003481b604f0.png)
-
-主 agent 下发任务
-
-各类子 agent 扮演专家，执行安全测试，结果返回给主 agent
-
-<!-- 这是一张图片，ocr 内容为： -->
-
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1784728665153-44214901-8922-430f-8104-65c064e3753e.png)
-
-报告自带 poc ，方便复现
-
-<!-- 这是一张图片，ocr 内容为： -->
-
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1784730867493-84b575d8-5fd7-4a76-8374-15f168864d85.png)
 
 ## 使用场景
 
@@ -153,7 +133,7 @@ export LLM_API_BASE="https://your-gateway.example/v1"
 > 上面的方式安装的是当前 `strix-cn` 分支源码，不是官方安装脚本拉取的发布版。首次运行会自动拉取沙箱 Docker 镜像。扫描结果会保存在 `strix_runs/<run-name>`。  
 > 当前分支默认输出中文报告；如果你需要英文或双语结果，可在 `--instruction` 中显式说明.
 
-> [!TIP]
+> [!TIP]  
 > Windows 下运行前请先确认 Docker Desktop 已安装并处于运行状态；Strix 会自动拉取缺失镜像，但不会自动启动 Docker Desktop。没有在windows上测试过。
 
 ### Burp 被动扫描快速开始
@@ -171,8 +151,60 @@ export LLM_API_BASE="https://your-gateway.example/v1"
 4. 当前功能点测完后按 `Ctrl+N`，切换到下一个功能采集批次。
 5. 按这个节奏循环，直到全部功能点测试完成。
 
-> [!TIP]
+> [!TIP]  
 > 这种“单功能采集 -> 开始测试 -> 切换下一个功能”的方式，比一次性灌入整站流量更稳定，也更符合当前 `strix-cn` 的 Burp 被动扫描工作流。
+
+**这样既能保证功能都测试到了，也能缓解流量过多造成的 AI 幻觉等问题**
+
+burp 被动扫描模式
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785324796747-e9535f6b-d4fa-49a8-b3d9-0b59a17923ec.png)
+
+burp 开启代理
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785324817437-b9b33e4b-d9e3-4489-8573-53005b03bcab.png)
+
+功能测试完成，按下 ctrl+t 开始测试
+
+**主 agent 接收到流量下发任务**
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785324988720-41e11014-6d83-4a16-8060-a417e9c0563b.png)
+
+---
+
+**各类子 agent 扮演专家，执行安全测试，结果返回给主 agent**
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325439367-c1170f38-c5d5-432a-b788-98593b1f3710.png)
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325437035-0870761d-af50-4779-832c-a53a6cfea7c9.png)
+
+**报告自带 poc ，方便复现**
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325476847-5d898e95-b30c-40ce-9028-af8dbdb516a1.png)
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325528579-3cb0790a-f8f4-469f-aa00-605775e97cc5.png)
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325560838-625dfe38-bd20-40cb-8e07-81495576f1df.png)
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325629999-27910663-7a4a-40e8-83a2-180b5861d325.png)
 
 ### ChatGPT 订阅登录
 
