@@ -230,12 +230,20 @@ async def run_strix_scan(
         root_id = uuid.uuid4().hex[:8]
 
     logger.info("Bringing up sandbox session for scan %s", scan_id)
-    bundle = await session_manager.create_or_reuse(
-        scan_id,
-        image=image,
-        local_sources=local_sources or [],
-        burp_port=scan_config.get("burp_port"),
-    )
+    try:
+        bundle = await session_manager.create_or_reuse(
+            scan_id,
+            image=image,
+            local_sources=local_sources or [],
+            burp_port=scan_config.get("burp_port"),
+        )
+    except BaseException:
+        # The normal scan finally starts after the bundle is returned. Cover
+        # startup failures too, including port conflicts and partial Docker
+        # sessions that never reached the in-process cache.
+        with contextlib.suppress(Exception):
+            await session_manager.cleanup(scan_id)
+        raise
     logger.info("Sandbox ready for scan %s", scan_id)
 
     report_state = get_global_report_state()

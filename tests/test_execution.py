@@ -475,7 +475,15 @@ async def test_terminal_child_wakes_parked_parent(tmp_path: Any, status: str) ->
 
     await asyncio.wait_for(root_waiter, timeout=1.0)
     assert coordinator.pending_counts.get("root", 0) > 0
+    items = await session.get_items()
+    assert "Reason: 子 agent 达到 turn 上限" in str(items[-1])
     session.close()
+
+
+def test_terminal_error_detail_classifies_quota_failures() -> None:
+    assert "配额不足" in execution._terminal_error_detail(
+        "Error code: 429 insufficient_quota"
+    )
 
 
 @pytest.mark.asyncio

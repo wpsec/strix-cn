@@ -52,6 +52,8 @@ logger = logging.getLogger(__name__)
 
 
 _SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
+_STRIX_MANAGED_LABEL = "com.strix.managed"
+_STRIX_SCAN_LABEL = "com.strix.scan_id"
 
 
 def _sandbox_network() -> str | None:
@@ -164,6 +166,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] | None = None
     strix_exposed_port_bindings: dict[int, int | None] | None = None
+    strix_scan_id: str | None = None
 
     async def _create_container(
         self,
@@ -235,6 +238,11 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         _apply_sandbox_network(create_kwargs)
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
+
+        labels = create_kwargs.setdefault("labels", {})
+        labels[_STRIX_MANAGED_LABEL] = "true"
+        if self.strix_scan_id:
+            labels[_STRIX_SCAN_LABEL] = self.strix_scan_id
 
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
         # that bypass the SDK's file-by-file LocalDir copy.

@@ -10,6 +10,7 @@ import pytest
 
 from strix.report.writer import (
     read_run_record,
+    render_complete_report,
     render_vulnerability_md,
     write_executive_report,
     write_run_record,
@@ -177,6 +178,59 @@ def test_write_vulnerabilities_skips_already_saved_ids(tmp_path: Path) -> None:
 def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     write_executive_report(tmp_path, "Scan complete. No critical issues.")
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
-    assert "# 安全渗透测试报告" in content
-    assert "**生成时间：**" in content
+    assert "<h1>安全渗透测试报告</h1>" in content
+    assert "## 目录" in content
+    assert "#executive-summary" in content
     assert "Scan complete. No critical issues." in content
+
+
+def test_complete_report_contains_cover_toc_risk_table_and_findings() -> None:
+    report = render_complete_report(
+        """# 执行摘要
+
+发现一个问题。
+
+# 测试方法
+
+使用代理流量和人工验证。
+
+# 技术分析
+
+分析详情。
+
+# 修复建议
+
+优先修复高危问题。
+""",
+        run_record={
+            "run_name": "交付测试",
+            "status": "completed",
+            "scan_mode": "deep",
+            "start_time": "2026-07-31T10:00:00+00:00",
+            "end_time": "2026-07-31T11:00:00+00:00",
+            "targets_info": [{"original": "https://app.example.com"}],
+        },
+        vulnerability_reports=[
+            _sample_report(
+                id="vuln-0001",
+                title="高危 SQL 注入",
+                severity="high",
+                description="已确认。",
+            ),
+            _sample_report(
+                id="vuln-0002",
+                title="低危信息泄露",
+                severity="low",
+                description="已确认。",
+            ),
+        ],
+    )
+
+    assert "<h1>安全渗透测试报告</h1>" in report
+    assert "[vuln-0001" in report
+    assert "| 高危 | 1 |" in report
+    assert "| 低危 | 1 |" in report
+    assert "| **合计** | **2** |" in report
+    assert "### vuln-0001" in report
+    assert "#### 漏洞描述" in report
+    assert "## 6. 附录：交付物说明" in report

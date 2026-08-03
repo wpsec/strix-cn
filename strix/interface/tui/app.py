@@ -1233,7 +1233,25 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if phase == "capture":
                 return "代理已就绪，正在等待你采集当前功能点。采集完成后按 Ctrl+T 开始测试。"
             if phase == "testing":
-                return "代理当前处于等待状态。当前功能点如已测试完成，可按 Ctrl+N 切回采集模式，或继续发送消息。"
+                children = [
+                    data
+                    for child_id, data in self.live_view.agents.items()
+                    if child_id != agent_id
+                    and str(data.get("parent_id") or "").strip() == agent_id
+                ]
+                if any(
+                    str(data.get("status") or "").strip()
+                    in {"running", "waiting", "budget_paused"}
+                    for data in children
+                ):
+                    return "根代理正在等待运行中的子 agent 返回结果，请稍候。"
+                if any(
+                    str(data.get("status") or "").strip()
+                    in {"failed", "crashed", "stopped"}
+                    for data in children
+                ):
+                    return "当前功能点有子 agent 未完成，请查看失败原因或补派后再切换功能点。"
+                return "当前功能点测试已完成，正在等待下一功能点。按 Ctrl+N 切回采集模式。"
 
         return "代理当前处于等待状态，等待新的消息或输入。"
 
@@ -1791,7 +1809,32 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return None, None
         return None, None
 
+    @staticmethod
+    def _select_root_agent_from_live_agents(
+        live_agents: dict[str, dict[str, Any]],
+        *,
+        include_budget_paused: bool = False,
+    ) -> tuple[str | None, str | None]:
+        """Select a root from the UI's last synchronized graph snapshot."""
+        allowed_statuses = {"running", "waiting"}
+        if include_budget_paused:
+            allowed_statuses.add("budget_paused")
+        for agent_id, data in live_agents.items():
+            if str(data.get("parent_id") or "").strip():
+                continue
+            status = str(data.get("status") or "").strip()
+            if status in allowed_statuses:
+                return agent_id, status
+            return None, None
+        return None, None
+
     def _root_agent_for_proxy_resume(self) -> tuple[str | None, str | None]:
+        live_agents = getattr(getattr(self, "live_view", None), "agents", None)
+        if isinstance(live_agents, dict) and live_agents:
+            selected = StrixTUIApp._select_root_agent_from_live_agents(live_agents)
+            if selected[0] is not None:
+                return selected
+
         loop = self._scan_loop
         if loop is None or loop.is_closed():
             return None, None
@@ -1799,6 +1842,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         try:
             future = asyncio.run_coroutine_threadsafe(self.coordinator.graph_snapshot(), loop)
             snapshot = future.result(timeout=2)
+        except TimeoutError:
+            logger.debug("Agent graph snapshot was not ready for proxy monitor")
+            return None, None
         except Exception:
             logger.debug("Unable to read agent graph for proxy monitor", exc_info=True)
             return None, None
@@ -1809,12 +1855,24 @@ class StrixTUIApp(App):  # type: ignore[misc]
         return self._select_root_agent_for_proxy_resume(parent_of, statuses)
 
     def _root_agent_for_feature_workflow(self) -> tuple[str | None, str | None]:
+        live_agents = getattr(getattr(self, "live_view", None), "agents", None)
+        if isinstance(live_agents, dict) and live_agents:
+            selected = StrixTUIApp._select_root_agent_from_live_agents(
+                live_agents,
+                include_budget_paused=True,
+            )
+            if selected[0] is not None:
+                return selected
+
         loop = self._scan_loop
         if loop is None or loop.is_closed():
             return None, None
         try:
             future = asyncio.run_coroutine_threadsafe(self.coordinator.graph_snapshot(), loop)
             snapshot = future.result(timeout=2)
+        except TimeoutError:
+            logger.debug("Agent graph snapshot was not ready for feature workflow")
+            return None, None
         except Exception:
             logger.debug("Unable to read agent graph for feature workflow", exc_info=True)
             return None, None
@@ -1948,6 +2006,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 " 请读取映射专家的完整接口、参数和漏洞类别清单，"
                 " 立即批量复用或创建所有适用且不重叠的测试专家，"
                 " 不得只创建一个专家后等待，也不得把 create_todo / update_todo 当成本轮唯一动作。"
+                " 如果已有测试专家以 failed、crashed 或 stopped 结束，不得把该方向视为已覆盖，"
+                " 请先处理失败原因，再补派一个不重叠的替代专家或明确记录该方向无法验证。"
                 " 每个确认漏洞必须调用 create_vulnerability_report 后再 agent_finish。"
                 " 只有全部接口和适用类别都有负责人、且所有子专家完成后，才能 wait_for_message。"
                 f" 当前作用域最近可见请求数：{recent_count}{count_suffix}。"
@@ -2031,6 +2091,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if mapping_statuses & {"running", "waiting", "budget_paused"}:
                 return None
             return "mapping-retry"
+
+        if any(
+            agent_id not in mapping_agent_ids
+            and str(data.get("status") or "").strip() in {"failed", "crashed", "stopped"}
+            for agent_id, data in children
+        ):
+            return "dispatch"
 
         has_specialist = any(agent_id not in mapping_agent_ids for agent_id, _data in children)
         if not has_specialist:

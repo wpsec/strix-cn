@@ -161,6 +161,126 @@ _REQUIRED_FIELDS = {
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 
 
+def _finding_validation_kind(title: str, cwe: str | None) -> str | None:
+    subject = f"{title} {cwe or ''}".lower()
+    if re.search(r"\bcwe[-\s]?79\b|\bxss\b|跨站脚本", subject):
+        return "xss"
+    if re.search(r"\bcwe[-\s]?89\b|sql\s*注入|sql\s*injection", subject):
+        return "sqli"
+    return None
+
+
+def _validate_runtime_evidence(
+    *,
+    title: str,
+    cwe: str | None,
+    validation_evidence: str | None,
+) -> list[str]:
+    """Reject dynamic findings whose proof stops at reflection or an error."""
+    kind = _finding_validation_kind(title, cwe)
+    if kind is None:
+        return []
+
+    evidence = str(validation_evidence or "").strip()
+    if not evidence:
+        if kind == "xss":
+            return [
+                "XSS 必须提供运行时验证证据：浏览器/DOM/回调确认脚本实际执行；仅响应回显不能提交报告"
+            ]
+        return [
+            "SQL 注入必须提供可控 oracle 的运行时验证证据；仅特殊字符导致 4xx/5xx 不能提交报告"
+        ]
+
+    lowered = evidence.lower()
+    if kind == "xss":
+        execution_context = (
+            "browser",
+            "playwright",
+            "puppeteer",
+            "selenium",
+            "chromium",
+            "execute_js",
+            "page.evaluate",
+            "浏览器",
+            "dom",
+            "页面上下文",
+        )
+        normalized = re.sub(r"\s+", " ", lowered)
+        negative_outcome = (
+            r"\bno\s+(?:dialog|alert|popup|callback|beacon|marker|console)\b",
+            r"(?:dialog|alert|popup|callback|beacon|marker|console).{0,40}"
+            r"\b(?:did not|didn't|never|not)\b",
+            r"\b(?:did not|didn't|never|not)\b.{0,40}"
+            r"(?:execute|trigger|appear|show|run|fire)\b",
+            "未执行",
+            "没有执行",
+            "未触发",
+            "没有触发",
+            "未出现",
+            "没有出现",
+            "未弹窗",
+            "没有弹窗",
+            "未弹出",
+            "没有弹出",
+        )
+        if any(re.search(pattern, normalized) for pattern in negative_outcome):
+            return ["XSS 运行时证据明确表示脚本未执行，不能提交为已确认漏洞"]
+        runtime_proof = (
+            r"(?:dialog|alert|popup|弹窗|对话框).{0,80}"
+            r"(?:appeared|shown|displayed|observed|triggered|marker|confirmed|"
+            r"出现|显示|弹出|触发|标记|确认)",
+            r"(?:appeared|shown|displayed|observed|triggered|marker|confirmed|"
+            r"出现|显示|弹出|触发|标记|确认).{0,80}"
+            r"(?:dialog|alert|popup|弹窗|对话框)",
+            r"console.{0,80}(?:message|output|log|marker|observed|confirmed|"
+            r"消息|输出|日志|标记|观察到|确认)",
+            r"(?:callback|beacon|oast|request).{0,80}"
+            r"(?:received|hit|observed|confirmed|arrived|triggered|"
+            r"收到|命中|观察到|确认|触发)",
+            r"(?:window\.__[a-z0-9_]+|document\.title|dom marker|dom 标记).{0,80}"
+            r"(?:set|changed|observed|matched|confirmed|设置|改变|观察到|命中|确认)",
+            r"(?:set|changed|observed|matched|confirmed|设置|改变|观察到|命中|确认).{0,80}"
+            r"(?:window\.__[a-z0-9_]+|document\.title|dom marker|dom 标记)",
+        )
+        if not any(marker in normalized for marker in execution_context) or not any(
+            re.search(pattern, normalized) for pattern in runtime_proof
+        ):
+            return [
+                "XSS 运行时证据必须同时包含执行上下文和实际结果（如浏览器 dialog、DOM marker 或回调）；响应回显不算执行"
+            ]
+        return []
+
+    oracle_markers = (
+        "boolean",
+        "true/false",
+        "true false",
+        "time-based",
+        "time based",
+        "sleep(",
+        "pg_sleep",
+        "waitfor",
+        "union",
+        "sqlstate",
+        "database()",
+        "current_user",
+        "current_database",
+        "information_schema",
+        "metadata",
+        "oast",
+        "callback",
+        "数据库版本",
+        "数据库名",
+        "查询结果",
+        "布尔差异",
+        "时间差异",
+    )
+    if not any(marker in lowered for marker in oracle_markers):
+        return [
+            "SQL 注入运行时证据必须包含可控布尔/时间 oracle、数据库错误或元数据、UNION 结果或 OAST 回调；泛化 500 不算确认"
+        ]
+    return []
+
+
 async def _do_create(  # noqa: PLR0912
     *,
     title: str,
@@ -173,6 +293,7 @@ async def _do_create(  # noqa: PLR0912
     remediation_steps: str,
     evidence: str,
     assumptions: str,
+    validation_evidence: str | None = None,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
     endpoint: str | None,
@@ -229,6 +350,14 @@ async def _do_create(  # noqa: PLR0912
         cwe_err = _validate_cwe(cwe)
         if cwe_err:
             errors.append(cwe_err)
+
+    errors.extend(
+        _validate_runtime_evidence(
+            title=title,
+            cwe=cwe,
+            validation_evidence=validation_evidence,
+        )
+    )
 
     if errors:
         return {"success": False, "error": "校验失败", "errors": errors}
@@ -291,6 +420,7 @@ async def _do_create(  # noqa: PLR0912
             poc_script_code=poc_script_code,
             remediation_steps=remediation_steps,
             evidence=evidence,
+            validation_evidence=validation_evidence,
             assumptions=assumptions,
             fix_effort=fix_effort,
             cvss=cvss_score,
@@ -358,6 +488,7 @@ async def create_vulnerability_report(
     method: str | None = None,
     cve: str | None = None,
     cwe: str | None = None,
+    validation_evidence: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
     fix_pr_body: str | None = None,
 ) -> str:
@@ -376,6 +507,15 @@ async def create_vulnerability_report(
       dynamically PoC'd — a vulnerable dependency version pinned in a
       lockfile/manifest that matches a published advisory. File those
       with ``create_dependency_report`` instead, never with this tool.
+
+    **动态验证门槛**：
+
+    - **CWE-79/XSS** 必须通过 ``validation_evidence`` 提供浏览器或 DOM
+      的实际执行结果，例如 dialog、console、DOM marker 或回调。JSON
+      原样回显、宽松 CSP 或未确认的 HTML sink 都不能作为 XSS 证据。
+    - **CWE-89/SQL 注入** 必须通过 ``validation_evidence`` 提供可控的布尔、
+      时间、数据库错误/元数据、UNION 或 OAST oracle。仅特殊字符导致的
+      通用 4xx/5xx 不能作为 SQL 注入证据。
 
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
@@ -516,6 +656,10 @@ async def create_vulnerability_report(
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
             Use fenced code blocks; no internal identifiers/paths.
+        validation_evidence: Required for XSS and SQL injection. Describe the
+            independent runtime proof: browser execution/DOM marker/callback
+            for XSS, or a controlled SQL oracle/metadata/OAST result for SQLi.
+            Reflection and generic error responses are insufficient.
         assumptions: Short note on the assumptions/prerequisites that
             make this finding impactful or exploitable (e.g. "assumes an
             authenticated low-privilege user").
@@ -649,6 +793,7 @@ async def create_vulnerability_report(
         method=method,
         cve=cve,
         cwe=cwe,
+        validation_evidence=validation_evidence,
         code_locations=code_locations,
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,

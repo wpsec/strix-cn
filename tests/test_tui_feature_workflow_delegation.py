@@ -224,6 +224,24 @@ def test_no_dispatch_nudge_when_mapping_and_specialist_exist() -> None:
     )
 
 
+def test_failed_specialist_requires_dispatch_repair() -> None:
+    live_agents = {
+        "root": {"parent_id": None, "status": "waiting"},
+        "mapper": {
+            "parent_id": "root",
+            "status": "completed",
+            "name": "当前功能点攻击面分析专家",
+        },
+        "logic": {
+            "parent_id": "root",
+            "status": "failed",
+            "name": "业务逻辑专家",
+        },
+    }
+
+    assert StrixTUIApp._feature_workflow_delegation_phase("root", live_agents) == "dispatch"
+
+
 def test_should_not_nudge_same_feature_batch_again_within_cooldown() -> None:
     app = SimpleNamespace(
         _manual_burp_workflow=True,

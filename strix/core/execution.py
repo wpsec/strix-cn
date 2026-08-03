@@ -677,19 +677,37 @@ async def _append_noninteractive_tool_required_message(
 _TERMINAL_NOTICE = {
     "crashed": (
         "[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
-        "Stop waiting on this child unless you want to message it again."
+        "Reason: {detail} Stop waiting on this child unless you want to "
+        "message it again."
     ),
     "failed": (
         "[Agent failed] {name} ({agent_id}) stopped with an error and will not "
-        "send a completion report. Stop waiting on this child unless you want to "
-        "message it again."
+        "send a completion report. Reason: {detail} Do not count this subtask as "
+        "covered; reassess it or dispatch a replacement when the provider is ready."
     ),
     "stopped": (
         "[Agent capped] {name} ({agent_id}) hit its turn limit and was stopped "
-        "before finishing. It will not send a completion report, so stop waiting "
-        "on this child; account for its capped subtask and continue."
+        "before finishing. Reason: {detail} It will not send a completion report, "
+        "so account for its capped subtask and continue."
     ),
 }
+
+
+def _terminal_error_detail(error: str | None) -> str:
+    """Turn provider failures into a safe, actionable parent-agent hint."""
+    detail = str(error or "unknown error").strip()
+    lowered = detail.lower()
+    if "insufficient_quota" in lowered or "allocated quota" in lowered:
+        return "模型服务配额不足（HTTP 429）；提高配额、降低并发或切换模型。"
+    if "rate limit" in lowered or "429" in lowered:
+        return "模型服务触发限流（HTTP 429）；稍后重试或降低并发。"
+    if "guardrail" in lowered:
+        return "模型内容安全策略阻止了该任务；切换允许该安全审计场景的模型。"
+    if "maxturn" in lowered or "max turns" in lowered or "turn limit" in lowered:
+        return "子 agent 达到 turn 上限；缩小任务范围后再补派。"
+    if "timeout" in lowered or "connection" in lowered or "transport" in lowered:
+        return "模型或工具连接超时；检查网络后再补派。"
+    return "子 agent 运行失败；请查看代理图中的错误详情。"
 
 
 async def _notify_parent_on_terminal(
@@ -703,6 +721,7 @@ async def _notify_parent_on_terminal(
     async with coordinator._lock:
         parent = coordinator.parent_of.get(agent_id)
         name = coordinator.names.get(agent_id, agent_id)
+        error = coordinator.errors.get(agent_id)
     if parent is None:
         return
     await coordinator.send(
@@ -711,7 +730,11 @@ async def _notify_parent_on_terminal(
             "from": agent_id,
             "type": status,
             "priority": "high",
-            "content": template.format(name=name, agent_id=agent_id),
+            "content": template.format(
+                name=name,
+                agent_id=agent_id,
+                detail=_terminal_error_detail(error),
+            ),
         },
         interrupt=False,
     )

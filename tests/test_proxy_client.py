@@ -442,6 +442,28 @@ async def test_list_requests_defaults_to_context_scope_id(
     assert captured["scope_id"] == "scope-1"
 
 
+async def test_list_requests_classifies_invalid_httpql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+
+    async def _invalid_filter(*_args: Any, **_kwargs: Any) -> Any:
+        raise ValueError("Invalid HTTPQL query")
+
+    monkeypatch.setattr(caido_api, "list_requests_with_client", _invalid_filter)
+
+    payload = await tools.list_requests.on_invoke_tool(
+        cast("Any", _Ctx({"caido_client": client})),
+        json.dumps({"httpql_filter": "req.path.cont:\"/api\""}),
+    )
+
+    result = json.loads(payload)
+    assert result["success"] is False
+    assert result["error_type"] == "invalid_httpql"
+    assert result["retryable"] is False
+    assert "修正 HTTPQL" in result["hint"]
+
+
 async def test_repeat_request_blocks_out_of_scope_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

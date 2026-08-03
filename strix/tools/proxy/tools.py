@@ -123,9 +123,22 @@ def _no_client() -> str:
 
 
 def _err(name: str, exc: Exception) -> str:
-    logger.exception("%s failed", name)
+    metadata = caido_api.classify_proxy_error(exc)
+    if metadata["error_type"] == "caido_error":
+        logger.exception("%s failed", name)
+    else:
+        logger.warning(
+            "%s failed (%s): %s",
+            name,
+            metadata["error_type"],
+            str(exc),
+        )
     return json.dumps(
-        {"success": False, "error": f"{name} failed: {exc}"},
+        {
+            "success": False,
+            "error": f"{name} failed: {exc}",
+            **metadata,
+        },
         ensure_ascii=False,
         default=str,
     )

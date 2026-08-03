@@ -197,6 +197,21 @@ def test_root_agent_helpers_accept_four_value_graph_snapshot(monkeypatch) -> Non
     assert StrixTUIApp._root_agent_for_feature_workflow(app) == ("root", "waiting")  # type: ignore[arg-type]
 
 
+def test_root_agent_helpers_prefer_synchronized_live_graph() -> None:
+    app = SimpleNamespace(
+        live_view=SimpleNamespace(
+            agents={
+                "root": {"parent_id": None, "status": "waiting"},
+                "child": {"parent_id": "root", "status": "running"},
+            }
+        ),
+        _scan_loop=SimpleNamespace(is_closed=lambda: False),
+    )
+
+    assert StrixTUIApp._root_agent_for_proxy_resume(app) == ("root", "waiting")  # type: ignore[arg-type]
+    assert StrixTUIApp._root_agent_for_feature_workflow(app) == ("root", "waiting")  # type: ignore[arg-type]
+
+
 def test_root_agent_for_feature_workflow_ignores_stopped_root(monkeypatch) -> None:
     snapshot = (
         {"root": None},
@@ -214,6 +229,25 @@ def test_root_agent_for_feature_workflow_ignores_stopped_root(monkeypatch) -> No
     )
 
     assert StrixTUIApp._root_agent_for_feature_workflow(app) == (None, None)  # type: ignore[arg-type]
+
+
+def test_waiting_placeholder_distinguishes_completed_feature_from_active_children() -> None:
+    app = SimpleNamespace(
+        scan_config={"burp_port": 8081},
+        _burp_workflow_phase="testing",
+        live_view=SimpleNamespace(
+            agents={
+                "root": {"status": "waiting"},
+                "child": {"parent_id": "root", "status": "completed"},
+            }
+        ),
+    )
+    message = StrixTUIApp._waiting_placeholder_message(app, "root")  # type: ignore[arg-type]
+    assert "等待下一功能点" in message
+
+    app.live_view.agents["child"]["status"] = "running"
+    message = StrixTUIApp._waiting_placeholder_message(app, "root")  # type: ignore[arg-type]
+    assert "等待运行中的子 agent" in message
 
 
 def test_should_dispatch_proxy_resume_immediately_for_waiting_root() -> None:

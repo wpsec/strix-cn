@@ -280,6 +280,7 @@ class ReportState:
         poc_script_code: str | None = None,
         remediation_steps: str | None = None,
         evidence: str | None = None,
+        validation_evidence: str | None = None,
         assumptions: str | None = None,
         fix_effort: str | None = None,
         cvss: float | None = None,
@@ -320,6 +321,8 @@ class ReportState:
             report["remediation_steps"] = remediation_steps.strip()
         if evidence:
             report["evidence"] = evidence.strip()
+        if validation_evidence:
+            report["validation_evidence"] = validation_evidence.strip()
         if assumptions:
             report["assumptions"] = assumptions.strip()
         if fix_effort:
@@ -553,7 +556,12 @@ class ReportState:
             run_dir.mkdir(parents=True, exist_ok=True)
 
             if self.final_scan_result:
-                write_executive_report(run_dir, self.final_scan_result)
+                write_executive_report(
+                    run_dir,
+                    self.final_scan_result,
+                    run_record=self.run_record,
+                    vulnerability_reports=self.vulnerability_reports,
+                )
 
             if self.vulnerability_reports:
                 write_vulnerabilities(run_dir, self.vulnerability_reports, self._saved_vuln_ids)

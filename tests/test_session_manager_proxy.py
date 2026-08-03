@@ -127,6 +127,111 @@ async def test_create_or_reuse_rejects_occupied_burp_port_before_backend(
 
 
 @pytest.mark.asyncio
+async def test_cleanup_reclaims_persisted_labeled_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scan_id = "scan-persisted"
+    captured: dict[str, object] = {}
+
+    class _Container:
+        short_id = "container-1"
+
+        def remove(self, *, force: bool) -> None:
+            captured["force"] = force
+
+    class _Containers:
+        def list(self, *, all: bool, filters: dict[str, object]) -> list[_Container]:
+            captured["all"] = all
+            captured["filters"] = filters
+            return [_Container()]
+
+    class _DockerClient:
+        containers = _Containers()
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(
+        session_manager,
+        "load_settings",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(backend="docker")),
+    )
+    monkeypatch.setattr(
+        session_manager,
+        "_docker_client_for_cleanup",
+        lambda: _DockerClient(),
+    )
+    session_manager._SESSION_CACHE.pop(scan_id, None)
+
+    await session_manager.cleanup(scan_id)
+
+    assert captured["all"] is True
+    assert captured["force"] is True
+    assert captured["closed"] is True
+    assert captured["filters"] == {
+        "label": [
+            "com.strix.managed=true",
+            "com.strix.scan_id=scan-persisted",
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_or_reuse_deletes_session_when_endpoint_resolution_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scan_id = "scan-endpoint-failure"
+
+    class _FakeSession:
+        async def resolve_exposed_port(self, port: int) -> object:
+            if port == 48080:
+                return SimpleNamespace(host="127.0.0.1", port=52123, tls=False)
+            raise RuntimeError("proxy endpoint unavailable")
+
+    class _FakeDockerClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.deleted = False
+            self.docker_client = _FakeDockerClient()
+
+        async def delete(self, _session: object) -> None:
+            self.deleted = True
+
+    client = _FakeClient()
+    session = _FakeSession()
+
+    async def _backend(**_kwargs: object) -> tuple[_FakeClient, _FakeSession]:
+        return client, session
+
+    monkeypatch.setattr(
+        session_manager,
+        "load_settings",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(backend="docker")),
+    )
+    monkeypatch.setattr(session_manager, "get_backend", lambda _name: _backend)
+    monkeypatch.setattr(session_manager, "_assert_burp_port_available", lambda **_kwargs: None)
+    session_manager._SESSION_CACHE.pop(scan_id, None)
+
+    with pytest.raises(RuntimeError, match="proxy endpoint unavailable"):
+        await session_manager.create_or_reuse(
+            scan_id,
+            image="ghcr.io/usestrix/strix-sandbox:1.0.0",
+            local_sources=[],
+            burp_port=8081,
+        )
+
+    assert client.deleted is True
+    assert client.docker_client.closed is True
+    assert scan_id not in session_manager._SESSION_CACHE
+
+
+@pytest.mark.asyncio
 async def test_create_or_reuse_bootstraps_caido_with_host_bridge_proxy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

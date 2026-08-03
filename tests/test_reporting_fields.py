@@ -16,6 +16,7 @@ from strix.tools.finish.tool import finish_scan
 from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
+    _validate_runtime_evidence,
     create_dependency_report,
     create_vulnerability_report,
 )
@@ -56,6 +57,9 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         poc_script_code="GET /search?q=<script>alert(1)</script>",
         remediation_steps="Context-encode output.",
         evidence="Response echoes the payload verbatim.",
+        validation_evidence=(
+            "Playwright browser execution confirmed a dialog marker in the page context."
+        ),
         assumptions="Assumes a victim opens a crafted link.",
         fix_effort="LOW",
         cvss_breakdown=_CVSS,
@@ -69,6 +73,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
     assert report["evidence"] == "Response echoes the payload verbatim."
+    assert "dialog marker" in report["validation_evidence"]
     assert report["assumptions"] == "Assumes a victim opens a crafted link."
     assert report["fix_effort"] == "low"
     assert report["fix_pr_body"] == "## Fix\nEncode output."
@@ -101,6 +106,77 @@ async def test_create_report_requires_evidence_and_assumptions(
     joined = " ".join(result["errors"])
     assert "证据不能为空" in joined
     assert "前提假设不能为空" in joined
+    assert not report_state.vulnerability_reports
+
+
+async def test_create_report_rejects_xss_reflection_without_runtime_execution(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create(
+        title="Reflected XSS in search",
+        description="The payload is echoed.",
+        impact="Potential script execution.",
+        target="https://app.example.com",
+        technical_analysis="The response contains the payload.",
+        poc_description="Send a payload and inspect the JSON response.",
+        poc_script_code="GET /search?q=<img src=x onerror=alert(1)>",
+        remediation_steps="Encode output.",
+        evidence="The JSON response echoes the payload.",
+        validation_evidence=None,
+        assumptions="Assumes a client renders the value unsafely.",
+        fix_effort="low",
+        cvss_breakdown=_CVSS,
+        endpoint="/search",
+        method="GET",
+        cve=None,
+        cwe="CWE-79",
+        code_locations=None,
+    )
+
+    assert result["success"] is False
+    assert any("运行时验证证据" in error for error in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+def test_xss_dom_presence_is_not_script_execution() -> None:
+    errors = _validate_runtime_evidence(
+        title="Stored XSS in updateById",
+        cwe="CWE-79",
+        validation_evidence=(
+            "Playwright browser DOM showed the injected img element appeared; "
+            "no dialog, console marker, or callback was observed."
+        ),
+    )
+
+    assert any("不能提交" in error for error in errors)
+
+
+async def test_create_report_rejects_generic_sqli_server_error(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create(
+        title="SQL 注入 in chainCode",
+        description="Punctuation causes a server error.",
+        impact="Potential database access.",
+        target="https://app.example.com",
+        technical_analysis="The endpoint returns 500 for a quote.",
+        poc_description="Append a quote and compare the status code.",
+        poc_script_code="POST /api/test/value'",
+        remediation_steps="Use parameterized queries.",
+        evidence="The baseline is 200 and the quote variant is 500.",
+        validation_evidence=None,
+        assumptions="Assumes the parameter reaches SQL.",
+        fix_effort="low",
+        cvss_breakdown=_CVSS,
+        endpoint="/api/test/{value}",
+        method="POST",
+        cve=None,
+        cwe="CWE-89",
+        code_locations=None,
+    )
+
+    assert result["success"] is False
+    assert any("可控 oracle" in error for error in result["errors"])
     assert not report_state.vulnerability_reports
 
 
@@ -574,7 +650,13 @@ def test_report_state_formats_final_scan_result_with_chinese_sections() -> None:
 
 def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
-    for field in ("evidence", "assumptions", "fix_effort", "fix_pr_body"):
+    for field in (
+        "evidence",
+        "validation_evidence",
+        "assumptions",
+        "fix_effort",
+        "fix_pr_body",
+    ):
         assert field in props
 
     dep_props = create_dependency_report.params_json_schema["properties"]

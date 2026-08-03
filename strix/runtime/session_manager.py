@@ -38,6 +38,8 @@ _CONTAINER_CAIDO_PROXY_PORT = 48081
 
 
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
+_STRIX_MANAGED_LABEL = "com.strix.managed"
+_STRIX_SCAN_LABEL = "com.strix.scan_id"
 
 # Manifest root inside the container; entry keys hang off this path.
 _WORKSPACE_ROOT = "/workspace"
@@ -108,6 +110,84 @@ def _assert_burp_port_available(*, backend_name: str, burp_port: int | None) -> 
                 burp_port,
                 result,
             )
+
+
+def _docker_client_for_cleanup() -> Any:
+    import docker
+
+    return docker.from_env()
+
+
+async def _cleanup_persisted_docker_sessions(scan_id: str) -> None:
+    """Remove labeled Strix containers when the process-local cache is gone."""
+    try:
+        docker_client = _docker_client_for_cleanup()
+    except Exception:  # noqa: BLE001
+        logger.debug("cleanup(%s): Docker client unavailable", scan_id, exc_info=True)
+        return
+
+    try:
+        containers = docker_client.containers.list(
+            all=True,
+            filters={
+                "label": [
+                    f"{_STRIX_MANAGED_LABEL}=true",
+                    f"{_STRIX_SCAN_LABEL}={scan_id}",
+                ]
+            },
+        )
+        for container in containers:
+            try:
+                container.remove(force=True)
+                logger.info(
+                    "Removed persisted Strix sandbox for scan %s (container=%s)",
+                    scan_id,
+                    getattr(container, "short_id", "?"),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "cleanup(%s): persisted container removal failed",
+                    scan_id,
+                )
+    except Exception:  # noqa: BLE001
+        logger.debug("cleanup(%s): persisted container lookup failed", scan_id, exc_info=True)
+    finally:
+        with contextlib.suppress(Exception):
+            docker_client.close()
+
+
+async def _cleanup_partial_session(
+    *,
+    scan_id: str,
+    client: Any | None,
+    session: Any | None,
+    caido_client: Any | None,
+    host_bridge_proxy: Any | None,
+) -> None:
+    """Best-effort teardown for a session that never reached the cache."""
+    if caido_client is not None:
+        with contextlib.suppress(Exception):
+            await caido_client.aclose()
+
+    if host_bridge_proxy is not None:
+        with contextlib.suppress(Exception):
+            await release_shared_host_bridge_proxy(host_bridge_proxy)
+
+    if client is None or session is None:
+        return
+
+    try:
+        await client.delete(session)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "cleanup(%s): partially-created session deletion failed",
+            scan_id,
+        )
+    finally:
+        docker_client = getattr(client, "docker_client", None)
+        if docker_client is not None:
+            with contextlib.suppress(Exception):
+                docker_client.close()
 
 
 def build_session_entries(
@@ -199,43 +279,46 @@ async def create_or_reuse(
         backend_name,
         image,
     )
+    client: Any | None = None
+    session: Any | None = None
+    caido_client: Any | None = None
+    host_bridge_proxy: HostBridgeProxyServer | None = None
     try:
-        client, session = await backend(
-            image=image,
-            manifest=manifest,
-            exposed_ports=(_CONTAINER_CAIDO_UI_PORT, _CONTAINER_CAIDO_PROXY_PORT),
-            bind_mounts=bind_mounts,
-            exposed_port_bindings={
+        backend_kwargs: dict[str, Any] = {
+            "image": image,
+            "manifest": manifest,
+            "exposed_ports": (_CONTAINER_CAIDO_UI_PORT, _CONTAINER_CAIDO_PROXY_PORT),
+            "bind_mounts": bind_mounts,
+            "exposed_port_bindings": {
                 _CONTAINER_CAIDO_PROXY_PORT: burp_port,
             }
             if burp_port
             else None,
+        }
+        if backend_name == "docker":
+            backend_kwargs["scan_id"] = scan_id
+        client, session = await backend(
+            **backend_kwargs,
         )
-    finally:
-        for staged in staged_dirs:
-            shutil.rmtree(staged, ignore_errors=True)
+        caido_ui_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_UI_PORT)
+        ui_scheme = "https" if caido_ui_endpoint.tls else "http"
+        host_caido_ui_url = f"{ui_scheme}://{caido_ui_endpoint.host}:{caido_ui_endpoint.port}"
 
-    caido_ui_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_UI_PORT)
-    ui_scheme = "https" if caido_ui_endpoint.tls else "http"
-    host_caido_ui_url = f"{ui_scheme}://{caido_ui_endpoint.host}:{caido_ui_endpoint.port}"
-
-    caido_proxy_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PROXY_PORT)
-    proxy_scheme = "https" if caido_proxy_endpoint.tls else "http"
-    host_caido_proxy_url = (
-        f"{proxy_scheme}://{caido_proxy_endpoint.host}:{caido_proxy_endpoint.port}"
-    )
-    logger.debug(
-        "Caido host endpoints resolved: ui=%s proxy=%s",
-        host_caido_ui_url,
-        host_caido_proxy_url,
-    )
-    burp_upstream_url, burp_upstream_unavailable_reason = _burp_upstream_metadata(
-        backend_name=backend_name,
-        host_proxy_url=host_caido_proxy_url,
-    )
-    caido_ui_url = _caido_ui_metadata(host_ui_url=host_caido_ui_url)
-    host_bridge_proxy: HostBridgeProxyServer | None = None
-    try:
+        caido_proxy_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PROXY_PORT)
+        proxy_scheme = "https" if caido_proxy_endpoint.tls else "http"
+        host_caido_proxy_url = (
+            f"{proxy_scheme}://{caido_proxy_endpoint.host}:{caido_proxy_endpoint.port}"
+        )
+        logger.debug(
+            "Caido host endpoints resolved: ui=%s proxy=%s",
+            host_caido_ui_url,
+            host_caido_proxy_url,
+        )
+        burp_upstream_url, burp_upstream_unavailable_reason = _burp_upstream_metadata(
+            backend_name=backend_name,
+            host_proxy_url=host_caido_proxy_url,
+        )
+        caido_ui_url = _caido_ui_metadata(host_ui_url=host_caido_ui_url)
         upstream_proxy: UpstreamProxyHttpConfig | None = None
         if backend_name == "docker":
             host_bridge_proxy = await acquire_shared_host_bridge_proxy()
@@ -247,12 +330,18 @@ async def create_or_reuse(
             container_url=container_caido_ui_url,
             upstream_proxy=upstream_proxy,
         )
-    except Exception:
-        if host_bridge_proxy is not None:
-            await release_shared_host_bridge_proxy(host_bridge_proxy)
-        with contextlib.suppress(Exception):
-            await client.delete(session)
+    except BaseException:
+        await _cleanup_partial_session(
+            scan_id=scan_id,
+            client=client,
+            session=session,
+            caido_client=caido_client,
+            host_bridge_proxy=host_bridge_proxy,
+        )
         raise
+    finally:
+        for staged in staged_dirs:
+            shutil.rmtree(staged, ignore_errors=True)
 
     bundle = {
         "client": client,
@@ -276,13 +365,20 @@ async def cleanup(scan_id: str) -> None:
     """Tear down ``scan_id``'s container and drop its cache entry.
 
     Best-effort: any error during ``client.delete`` is logged and
-    swallowed. We never want a cleanup failure to prevent the next
-    scan from starting; the worst case is a stranded container that
-    Docker's normal reaping will catch on next ``docker prune``.
+    swallowed. If the process-local cache is gone, labeled Docker
+    containers are also looked up by ``scan_id`` so a later cleanup can
+    reclaim a session left behind by an interrupted process.
     """
     bundle = _SESSION_CACHE.pop(scan_id, None)
     if bundle is None:
         logger.debug("cleanup(%s): no cached session", scan_id)
+        try:
+            backend_name = load_settings().runtime.backend
+        except Exception:  # noqa: BLE001
+            logger.debug("cleanup(%s): unable to resolve runtime backend", scan_id, exc_info=True)
+            return
+        if backend_name == "docker":
+            await _cleanup_persisted_docker_sessions(scan_id)
         return
 
     caido_client = bundle.get("caido_client")

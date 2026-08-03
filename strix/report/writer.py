@@ -38,6 +38,13 @@ _FIX_EFFORT_LABELS_ZH = {
     "medium": "中",
     "high": "高",
 }
+_STATUS_LABELS_ZH = {
+    "running": "进行中",
+    "completed": "已完成",
+    "stopped": "已停止",
+    "failed": "失败",
+    "interrupted": "已中断",
+}
 
 _FENCE_RE = re.compile(r"^```([^\n`]*)\r?\n(.*?)\r?\n?```$", re.DOTALL)
 _BACKTICK_RUN = re.compile(r"`+")
@@ -126,12 +133,229 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
     )
 
 
-def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
+def _escape_inline(value: Any) -> str:
+    text = str(value or "未提供").strip()
+    return re.sub(r"([\\`*_{}\[\]()<>#+.!|\-])", r"\\\1", text)
+
+
+def _target_labels(run_record: dict[str, Any]) -> list[str]:
+    targets = run_record.get("targets_info")
+    if not isinstance(targets, list):
+        return []
+    labels: list[str] = []
+    for target in targets:
+        if isinstance(target, dict):
+            value = target.get("original") or target.get("canonical") or target.get("display")
+        else:
+            value = target
+        if value:
+            labels.append(str(value).strip())
+    return labels
+
+
+def _extract_final_section(final_scan_result: str, title: str) -> str:
+    pattern = re.compile(
+        rf"^#\s+{re.escape(title)}\s*$([\s\S]*?)(?=^#\s+|\Z)",
+        re.MULTILINE,
+    )
+    match = pattern.search(final_scan_result)
+    if not match:
+        return final_scan_result.strip() or "未提供。"
+    content = match.group(1).strip()
+    return content or "未提供。"
+
+
+def _relevel_markdown_headings(markdown: str, level_delta: int = 2) -> str:
+    lines: list[str] = []
+    in_fence = False
+    for line in markdown.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+        if not in_fence:
+            match = re.match(r"^(\s*)(#{1,6})(\s+.*)$", line)
+            if match:
+                heading_level = min(6, len(match.group(2)) + level_delta)
+                line = f"{match.group(1)}{'#' * heading_level}{match.group(3)}"
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def render_complete_report(
+    final_scan_result: str,
+    *,
+    run_record: dict[str, Any] | None = None,
+    vulnerability_reports: list[dict[str, Any]] | None = None,
+) -> str:
+    """Render one delivery-ready report with cover, TOC, summary, and findings."""
+    record = run_record or {}
+    reports = list(vulnerability_reports or [])
+    targets = _target_labels(record)
+    run_name = record.get("run_name") or record.get("scan_id") or "未命名运行"
+    status = _STATUS_LABELS_ZH.get(str(record.get("status") or "").lower(), "未提供")
+    generated_at = record.get("end_time") or record.get("start_time") or "未提供"
+    scan_mode = record.get("scan_mode") or "未提供"
+    severity_counts = {severity: 0 for severity in ("critical", "high", "medium", "low", "info")}
+    for report in reports:
+        severity = str(report.get("severity") or "info").strip().lower()
+        severity_counts[severity if severity in severity_counts else "info"] += 1
+
+    summary = _extract_final_section(final_scan_result, "执行摘要")
+    methodology = _extract_final_section(final_scan_result, "测试方法")
+    technical_analysis = _extract_final_section(final_scan_result, "技术分析")
+    recommendations = _extract_final_section(final_scan_result, "修复建议")
+
+    sorted_reports = sorted(
+        reports,
+        key=lambda report: (
+            _SEVERITY_ORDER.get(str(report.get("severity") or "").lower(), 5),
+            str(report.get("id") or ""),
+        ),
+    )
+    lines = [
+        "<div align=\"center\">",
+        "",
+        "<h1>安全渗透测试报告</h1>",
+        "",
+        "<p><strong>交付版 · 机密</strong></p>",
+        "",
+        "仅限授权人员阅览",
+        "",
+        "</div>",
+        "",
+        "---",
+        "",
+        "## 报告信息",
+        "",
+        "| 项目 | 内容 |",
+        "| --- | --- |",
+        f"| 报告名称 | {_escape_inline(run_name)} |",
+        f"| 测试目标 | {_escape_inline('、'.join(targets) if targets else '未提供')} |",
+        f"| 测试模式 | {_escape_inline(scan_mode)} |",
+        f"| 报告状态 | {status} |",
+        f"| 生成时间 | {_escape_inline(generated_at)} |",
+        "",
+        "---",
+        "",
+        "## 目录",
+        "",
+        "1. [执行摘要](#executive-summary)",
+        "2. [测试范围与方法](#scope-and-methodology)",
+        "3. [风险概览](#risk-overview)",
+        "4. [漏洞详情](#finding-details)",
+        "5. [修复建议](#remediation)",
+        "6. [附录：交付物说明](#appendix-deliverables)",
+        "",
+    ]
+    if sorted_reports:
+        lines.extend(["**漏洞索引：**", ""])
+        for report in sorted_reports:
+            report_id = str(report.get("id") or "unknown")
+            report_title = _escape_inline(report.get("title") or "未命名漏洞")
+            anchor = re.sub(r"[^a-z0-9-]", "", report_id.lower())
+            lines.append(f"- [{report_id} · {report_title}](#{anchor})")
+        lines.append("")
+    lines.extend(
+        [
+            '<a id="executive-summary"></a>',
+            "## 1. 执行摘要",
+            "",
+            summary,
+            "",
+            '<a id="scope-and-methodology"></a>',
+            "## 2. 测试范围与方法",
+            "",
+            f"**测试目标：** {_escape_inline('、'.join(targets) if targets else '未提供')}",
+            "",
+            methodology,
+            "",
+            "### 技术分析",
+            "",
+            technical_analysis,
+            "",
+            '<a id="risk-overview"></a>',
+            "## 3. 风险概览",
+            "",
+            "| 严重性 | 数量 |",
+            "| --- | ---: |",
+            f"| 严重 | {severity_counts['critical']} |",
+            f"| 高危 | {severity_counts['high']} |",
+            f"| 中危 | {severity_counts['medium']} |",
+            f"| 低危 | {severity_counts['low']} |",
+            f"| 信息 | {severity_counts['info']} |",
+            f"| **合计** | **{len(reports)}** |",
+            "",
+            '<a id="finding-details"></a>',
+            "## 4. 漏洞详情",
+            "",
+        ]
+    )
+
+    if not reports:
+        lines.extend(["本次运行没有已落盘的漏洞报告。", ""])
+    else:
+        for report in sorted_reports:
+            report_id = str(report.get("id") or "unknown")
+            title = _escape_inline(report.get("title") or "未命名漏洞")
+            finding_body = render_vulnerability_md(report).splitlines()
+            if finding_body and finding_body[0].startswith("# "):
+                finding_body = finding_body[1:]
+            lines.extend(
+                [
+                    f'<a id="{re.sub(r"[^a-z0-9-]", "", report_id.lower())}"></a>',
+                    f"### {report_id} · {title}",
+                    "",
+                    _relevel_markdown_headings("\n".join(finding_body)),
+                    "",
+                ]
+            )
+
+    lines.extend(
+        [
+            '<a id="remediation"></a>',
+            "## 5. 修复建议",
+            "",
+            recommendations,
+            "",
+            '<a id="appendix-deliverables"></a>',
+            "## 6. 附录：交付物说明",
+            "",
+            "本目录同时保留以下机器可读或分项文件，供复核和系统导入使用：",
+            "",
+            "- `penetration_test_report.md`：本交付版完整报告。",
+            "- `vulnerabilities/`：按漏洞编号拆分的明细文件。",
+            "- `vulnerabilities.csv`：漏洞清单，便于表格导入。",
+            "- `vulnerabilities.json`：结构化漏洞数据。",
+            "- `findings.sarif`：SARIF 2.1.0 格式结果。",
+            "",
+            "### 报告使用说明",
+            "",
+            "本报告中的漏洞结论以对应证据和前提假设为边界。对于需要特定浏览器渲染、权限或网络条件的结论，应在交付复核阶段重新验证。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_executive_report(
+    run_dir: Path,
+    final_scan_result: str,
+    *,
+    run_record: dict[str, Any] | None = None,
+    vulnerability_reports: list[dict[str, Any]] | None = None,
+) -> None:
     path = run_dir / "penetration_test_report.md"
     with path.open("w", encoding="utf-8") as f:
-        f.write("# 安全渗透测试报告\n\n")
-        f.write(f"**生成时间：** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
-        f.write(f"{final_scan_result}\n")
+        record = dict(run_record or {})
+        record.setdefault("end_time", datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"))
+        f.write(
+            render_complete_report(
+                final_scan_result,
+                run_record=record,
+                vulnerability_reports=vulnerability_reports,
+            )
+        )
+        f.write("\n")
     logger.info("Saved final penetration test report to: %s", path)
 
 
@@ -248,6 +472,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if report.get("evidence"):
         lines.append("## 证据\n")
         lines.append(str(report["evidence"]))
+        lines.append("")
+
+    if report.get("validation_evidence"):
+        lines.append("## 运行时验证\n")
+        lines.append(str(report["validation_evidence"]))
         lines.append("")
 
     if report.get("impact"):

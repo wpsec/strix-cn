@@ -165,6 +165,41 @@ def is_replay_transport_error(exc: BaseException) -> bool:
     return False
 
 
+def is_invalid_httpql_error(exc: BaseException) -> bool:
+    """Return whether Caido rejected the request filter before execution."""
+    return any(
+        "invalid httpql" in str(current).lower()
+        for current in _iter_exception_chain(exc)
+    )
+
+
+def classify_proxy_error(exc: BaseException) -> dict[str, Any]:
+    """Describe a proxy failure so an agent can choose a safe next action."""
+    if is_invalid_httpql_error(exc):
+        return {
+            "error_type": "invalid_httpql",
+            "retryable": False,
+            "hint": "修正 HTTPQL 语法后重试；不要重复提交相同过滤条件。",
+        }
+    if is_replay_transport_error(exc):
+        return {
+            "error_type": "caido_replay_transport",
+            "retryable": True,
+            "hint": "Caido replay transport 已失效；刷新客户端后只重试一次。",
+        }
+    if isinstance(exc, TimeoutError):
+        return {
+            "error_type": "caido_timeout",
+            "retryable": True,
+            "hint": "检查目标主机、端口和 Caido 出站网络后再重试。",
+        }
+    return {
+        "error_type": "caido_error",
+        "retryable": False,
+        "hint": "检查 Caido 项目权限、客户端连接和目标网络。",
+    }
+
+
 async def refresh_client(*, expected_client: Client | None = None) -> Client:
     """Replace the cached standalone Caido client and return the fresh instance."""
     stale_client: Client | None = None
