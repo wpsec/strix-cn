@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import contextlib
 import errno
 import ipaddress
 import logging
 import os
+import shlex
 import shutil
 import socket
 from pathlib import Path
@@ -40,6 +43,8 @@ _CONTAINER_CAIDO_PROXY_PORT = 48081
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 _STRIX_MANAGED_LABEL = "com.strix.managed"
 _STRIX_SCAN_LABEL = "com.strix.scan_id"
+_CONTAINER_PROXY_COMPAT_LOG = "/tmp/strix-caido-proxy-compat.log"
+_CONTAINER_PROXY_COMPAT_PID = "/tmp/strix-caido-proxy-compat.pid"
 
 # Manifest root inside the container; entry keys hang off this path.
 _WORKSPACE_ROOT = "/workspace"
@@ -116,6 +121,149 @@ def _docker_client_for_cleanup() -> Any:
     import docker
 
     return docker.from_env()
+
+
+def _result_stream_text(stream: Any) -> str:
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", errors="replace")
+    if isinstance(stream, str):
+        return stream
+    return str(stream or "")
+
+
+async def _container_port_accepts_connections(session: Any, port: int) -> bool:
+    exec_command = getattr(session, "exec", None)
+    if not callable(exec_command):
+        return False
+
+    script = (
+        "import socket, sys\n"
+        f"sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "sock.settimeout(0.25)\n"
+        f"result = sock.connect_ex(('127.0.0.1', {port}))\n"
+        "sock.close()\n"
+        "sys.exit(0 if result == 0 else 1)\n"
+    )
+    result = await exec_command("python3", "-c", script, timeout=10)
+    return bool(result.ok())
+
+
+async def _start_container_proxy_compat_shim(
+    session: Any,
+    *,
+    listen_port: int,
+    target_port: int,
+) -> None:
+    exec_command = getattr(session, "exec", None)
+    if not callable(exec_command):
+        raise RuntimeError("当前 sandbox session 不支持 exec，无法启动 Caido 兼容代理")
+
+    shim_script = f"""
+import socket
+import threading
+
+LISTEN = ("127.0.0.1", {listen_port})
+TARGET = ("127.0.0.1", {target_port})
+
+
+def pipe(reader, writer):
+    try:
+        while True:
+            data = reader.recv(65536)
+            if not data:
+                break
+            writer.sendall(data)
+    except Exception:
+        pass
+    finally:
+        try:
+            writer.shutdown(socket.SHUT_WR)
+        except Exception:
+            pass
+        try:
+            reader.close()
+        except Exception:
+            pass
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(LISTEN)
+server.listen(128)
+
+while True:
+    client, _ = server.accept()
+    try:
+        upstream = socket.create_connection(TARGET, timeout=10)
+    except Exception:
+        client.close()
+        continue
+    threading.Thread(target=pipe, args=(client, upstream), daemon=True).start()
+    threading.Thread(target=pipe, args=(upstream, client), daemon=True).start()
+""".strip()
+    payload = base64.b64encode(shim_script.encode("utf-8")).decode("ascii")
+    python_command = (
+        "import base64; "
+        f"exec(compile(base64.b64decode({payload!r}), "
+        "'_strix_caido_proxy_compat.py', 'exec'))"
+    )
+    shell_command = (
+        f"nohup python3 -c {shlex.quote(python_command)} "
+        f">{shlex.quote(_CONTAINER_PROXY_COMPAT_LOG)} 2>&1 < /dev/null & "
+        f"echo $! > {shlex.quote(_CONTAINER_PROXY_COMPAT_PID)}"
+    )
+    result = await exec_command("sh", "-lc", shell_command, timeout=15)
+    if result.ok():
+        return
+
+    stderr = _result_stream_text(getattr(result, "stderr", "")).strip()
+    stdout = _result_stream_text(getattr(result, "stdout", "")).strip()
+    detail = stderr or stdout or f"exit={result.exit_code}"
+    raise RuntimeError(f"启动 Caido 旧镜像兼容代理失败：{detail}")
+
+
+async def _ensure_container_proxy_listener(
+    session: Any,
+    *,
+    proxy_port: int = _CONTAINER_CAIDO_PROXY_PORT,
+    ui_port: int = _CONTAINER_CAIDO_UI_PORT,
+) -> None:
+    if await _container_port_accepts_connections(session, proxy_port):
+        return
+
+    if not await _container_port_accepts_connections(session, ui_port):
+        raise RuntimeError(
+            "Caido 代理监听未就绪：容器内既没有独立代理端口，也没有可回退的单端口监听"
+        )
+
+    logger.warning(
+        "Caido sandbox image is using legacy single-port mode; enabling proxy compatibility shim %s -> %s",
+        proxy_port,
+        ui_port,
+    )
+    await _start_container_proxy_compat_shim(
+        session,
+        listen_port=proxy_port,
+        target_port=ui_port,
+    )
+
+    for _attempt in range(10):
+        if await _container_port_accepts_connections(session, proxy_port):
+            logger.info(
+                "Enabled Caido proxy compatibility shim inside sandbox: %s -> %s",
+                proxy_port,
+                ui_port,
+            )
+            return
+        await asyncio.sleep(0.2)
+
+    raise RuntimeError(
+        "Caido 旧镜像兼容代理启动后仍未监听独立代理端口，请更新 sandbox image 后重试"
+    )
 
 
 async def _cleanup_persisted_docker_sessions(scan_id: str) -> None:
@@ -330,6 +478,8 @@ async def create_or_reuse(
             container_url=container_caido_ui_url,
             upstream_proxy=upstream_proxy,
         )
+        if backend_name == "docker" and callable(getattr(session, "exec", None)):
+            await _ensure_container_proxy_listener(session)
     except BaseException:
         await _cleanup_partial_session(
             scan_id=scan_id,

@@ -153,6 +153,43 @@ async def test_fetch_proxy_capture_snapshot_selects_strix_project_before_query(
 
 
 @pytest.mark.asyncio
+async def test_proxy_capture_poller_reuses_connected_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _FakeConnection(edges=[], page_info=SimpleNamespace(has_next_page=False))
+    builder = _FakeRequestBuilder(connection)
+    project_sdk = _FakeProjectSDK([_project(id="proj_existing", name="sandbox")])
+    created_clients: list[_FakeClient] = []
+
+    def _make_client(*_args: Any, **_kwargs: Any) -> _FakeClient:
+        client = _FakeClient(project_sdk, _FakeRequestSDK(builder))
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr(proxy_capture, "_login_as_guest", lambda _host_url: "token")
+    monkeypatch.setattr(proxy_capture, "Client", _make_client)
+
+    async def _count_requests(*_args: Any, **_kwargs: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(proxy_capture, "_count_requests", _count_requests)
+
+    poller = proxy_capture.ProxyCapturePoller("http://127.0.0.1:52124")
+    try:
+        first = await poller.fetch_snapshot(scope_id="scope-1")
+        second = await poller.fetch_snapshot(scope_id="scope-1")
+    finally:
+        await poller.aclose()
+
+    assert first.total_request_count == 0
+    assert second.total_request_count == 0
+    assert len(created_clients) == 1
+    assert created_clients[0].connected is True
+    assert created_clients[0].closed is True
+    assert project_sdk.selected_ids == ["proj_existing"]
+
+
+@pytest.mark.asyncio
 async def test_fetch_proxy_capture_snapshot_fails_when_strix_project_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

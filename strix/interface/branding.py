@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
@@ -13,10 +14,11 @@ STRIX_WEBSITE = "strix.ai"
 DEFAULT_PROJECT_REPOSITORY = "github.com/usestrix/strix"
 
 
+@lru_cache(maxsize=1)
 def get_package_version() -> str:
     try:
         return pkg_version("strix-agent")
-    except PackageNotFoundError:
+    except (OSError, PackageNotFoundError):
         return "dev"
 
 

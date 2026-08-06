@@ -208,7 +208,12 @@ async def refresh_client(*, expected_client: Client | None = None) -> Client:
         if expected_client is not None and current is not None and current is not expected_client:
             return current
         stale_client = _CLIENT_CACHE.pop("default", None)
-        new_client = await _new_client()
+        try:
+            new_client = await _new_client()
+        except BaseException:
+            if stale_client is not None:
+                _CLIENT_CACHE["default"] = stale_client
+            raise
         _CLIENT_CACHE["default"] = new_client
     if stale_client is not None and stale_client is not new_client:
         with contextlib.suppress(Exception):

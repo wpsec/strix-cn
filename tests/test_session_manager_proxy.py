@@ -65,6 +65,69 @@ def test_burp_upstream_metadata_rejects_non_docker_backend(
     assert reason == "当前 runtime backend 未提供可供 Burp 直连的本地代理端口"
 
 
+@pytest.mark.asyncio
+async def test_ensure_container_proxy_listener_keeps_dedicated_proxy_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _accepts(_session: object, port: int) -> bool:
+        return port == 48081
+
+    started = False
+
+    async def _start(_session: object, *, listen_port: int, target_port: int) -> None:  # noqa: ARG001
+        nonlocal started
+        started = True
+
+    monkeypatch.setattr(session_manager, "_container_port_accepts_connections", _accepts)
+    monkeypatch.setattr(session_manager, "_start_container_proxy_compat_shim", _start)
+
+    await session_manager._ensure_container_proxy_listener(object())
+
+    assert started is False
+
+
+@pytest.mark.asyncio
+async def test_ensure_container_proxy_listener_starts_compat_shim_for_legacy_single_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proxy_checks = [False, True]
+    started: dict[str, int] = {}
+
+    async def _accepts(_session: object, port: int) -> bool:
+        if port == 48081:
+            return proxy_checks.pop(0)
+        if port == 48080:
+            return True
+        raise AssertionError(f"unexpected port {port}")
+
+    async def _start(_session: object, *, listen_port: int, target_port: int) -> None:
+        started["listen_port"] = listen_port
+        started["target_port"] = target_port
+
+    monkeypatch.setattr(session_manager, "_container_port_accepts_connections", _accepts)
+    monkeypatch.setattr(session_manager, "_start_container_proxy_compat_shim", _start)
+
+    await session_manager._ensure_container_proxy_listener(object())
+
+    assert started == {
+        "listen_port": 48081,
+        "target_port": 48080,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ensure_container_proxy_listener_fails_without_proxy_or_ui_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _accepts(_session: object, _port: int) -> bool:
+        return False
+
+    monkeypatch.setattr(session_manager, "_container_port_accepts_connections", _accepts)
+
+    with pytest.raises(RuntimeError, match="既没有独立代理端口，也没有可回退的单端口监听"):
+        await session_manager._ensure_container_proxy_listener(object())
+
+
 def test_assert_burp_port_available_rejects_occupied_loopback_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

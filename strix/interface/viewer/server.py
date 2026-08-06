@@ -7,23 +7,28 @@ Design notes:
 - The browser polls the JSON endpoints (~1s) rather than using SSE: a finished
   run stops polling, and short-lived polls survive sleep/network blips without
   server-side connection state, which suits a stdlib ThreadingHTTPServer.
-- All reads happen per-request straight from disk, so the same server serves a
+- Run data is read per-request straight from disk so the same server serves a
   live in-progress run and a finished one identically; the SPA distinguishes
-  them via the ``finished`` flag on /api/run.
+  them via the ``finished`` flag on /api/run. The immutable SPA bundle is
+  preloaded once so the page can still boot when the scan process is near its
+  FD limit.
 """
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import json
 import logging
 import mimetypes
+import os
 import secrets
 import threading
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from strix.core.paths import run_record_path
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 def bundle_dir() -> Path:
@@ -114,6 +120,55 @@ def resolve_run_dir(base_dir: Path, run_param: str | None, default_run_dir: Path
 SESSION_COOKIE_PREFIX = "strix_viewer_session"
 
 
+class _FdReserve:
+    """Keep one spare FD so EMFILE can be recovered for a single disk access."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._reserve: int | None = None
+        with self._lock:
+            self._open_locked()
+
+    def call(self, operation: Callable[[], T]) -> T:
+        try:
+            return operation()
+        except OSError as exc:
+            if exc.errno != errno.EMFILE:
+                raise
+        with self._lock:
+            # Another request may already have recovered while we waited.
+            try:
+                return operation()
+            except OSError as exc:
+                if exc.errno != errno.EMFILE:
+                    raise
+                retry_error = exc
+            reserve = self._reserve
+            self._reserve = None
+            if reserve is None:
+                raise retry_error
+            os.close(reserve)
+            try:
+                return operation()
+            finally:
+                self._open_locked()
+
+    def close(self) -> None:
+        with self._lock:
+            reserve = self._reserve
+            self._reserve = None
+        if reserve is not None:
+            with contextlib.suppress(OSError):
+                os.close(reserve)
+
+    def _open_locked(self) -> None:
+        try:
+            self._reserve = os.open(os.devnull, os.O_RDONLY)
+        except OSError:
+            self._reserve = None
+            logger.debug("viewer could not reserve an emergency file descriptor", exc_info=True)
+
+
 class _ViewerState:
     def __init__(
         self,
@@ -123,6 +178,8 @@ class _ViewerState:
     ) -> None:
         self.run_dir = run_dir
         self.assets_dir = assets_dir
+        self.fd_reserve = _FdReserve()
+        self.static_bundle = self._load_static_bundle()
         # The strix_runs directory that holds the launched run; used to
         # enumerate and resolve other runs for the history list.
         self.base_dir = run_dir.parent
@@ -141,6 +198,40 @@ class _ViewerState:
         # Finalized in ``serve()`` once the port is known (the server binds
         # after this state is constructed); see SESSION_COOKIE_PREFIX.
         self.cookie_name = SESSION_COOKIE_PREFIX
+
+    def call_with_fd_reserve(self, operation: Callable[[], T]) -> T:
+        return self.fd_reserve.call(operation)
+
+    def close(self) -> None:
+        self.fd_reserve.close()
+
+    def _load_static_bundle(self) -> dict[Path, tuple[bytes, str]]:
+        cache: dict[Path, tuple[bytes, str]] = {}
+        for asset in self.assets_dir.rglob("*"):
+            if not asset.is_file():
+                continue
+            content = self.fd_reserve.call(asset.read_bytes)
+            content_type, _ = mimetypes.guess_type(str(asset))
+            cache[asset.resolve()] = (content, content_type or "application/octet-stream")
+        return cache
+
+
+class _ViewerHTTPServer(ThreadingHTTPServer):
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler: type[BaseHTTPRequestHandler],
+        *,
+        viewer_state: _ViewerState,
+    ) -> None:
+        self._viewer_state = viewer_state
+        super().__init__(server_address, handler)
+
+    def server_close(self) -> None:
+        try:
+            self._viewer_state.close()
+        finally:
+            super().server_close()
 
 
 def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
@@ -241,7 +332,9 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             # run list (the payload still advertises the count as a teaser).
             if path == "/api/runs":
                 unlocked = self._has_session() and auth.is_verified()
-                payload = build_runs_payload(state.base_dir, verified=unlocked)
+                payload = self._with_fd_reserve(
+                    lambda: build_runs_payload(state.base_dir, verified=unlocked)
+                )
                 self._send_json(HTTPStatus.OK, payload)
                 return
             if path == "/api/capabilities":
@@ -274,13 +367,25 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     return
 
             if path == "/api/run":
-                self._send_json(HTTPStatus.OK, read_run_summary(run_dir))
+                self._send_json(
+                    HTTPStatus.OK,
+                    self._with_fd_reserve(lambda: read_run_summary(run_dir)),
+                )
             elif path == "/api/vulnerabilities":
-                self._send_json(HTTPStatus.OK, read_vulnerabilities(run_dir))
+                self._send_json(
+                    HTTPStatus.OK,
+                    self._with_fd_reserve(lambda: read_vulnerabilities(run_dir)),
+                )
             elif path == "/api/report":
-                self._send_json(HTTPStatus.OK, {"markdown": read_report_markdown(run_dir)})
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"markdown": self._with_fd_reserve(lambda: read_report_markdown(run_dir))},
+                )
             elif path == "/api/transcript":
-                self._send_json(HTTPStatus.OK, build_run_state(run_dir))
+                self._send_json(
+                    HTTPStatus.OK,
+                    self._with_fd_reserve(lambda: build_run_state(run_dir)),
+                )
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
 
@@ -294,7 +399,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             if not self._has_session():
                 self._send_json(HTTPStatus.OK, {"verified": False, "email": None})
                 return
-            record = auth.read_auth()
+            record = self._with_fd_reserve(auth.read_auth)
             self._send_json(
                 HTTPStatus.OK,
                 {
@@ -365,7 +470,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown run"})
                 return
 
-            summary = read_run_summary(run_dir)
+            summary = self._with_fd_reserve(lambda: read_run_summary(run_dir))
             # Emailing only makes sense for a completed run; a live scan would
             # send a partial report. The UI hides the entry point, but fail
             # closed here too so the endpoint can't be driven mid-scan.
@@ -375,7 +480,9 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
 
             from strix.interface.viewer.report_pdf import build_encrypted_report
 
-            pdf_bytes, password, filename = build_encrypted_report(run_dir)
+            pdf_bytes, password, filename = self._with_fd_reserve(
+                lambda: build_encrypted_report(run_dir)
+            )
             run_name = str(summary.get("run_name") or run_dir.name)
             target = primary_target(summary) or "unknown target"
             try:
@@ -502,13 +609,18 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 # client-side deep links work.
                 target = state.assets_dir / "index.html"
             is_index = target.name == "index.html"
-            if not target.is_file():
+            cached = state.static_bundle.get(target.resolve())
+            if cached is None and not target.is_file():
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
-            content = target.read_bytes()
-            content_type, _ = mimetypes.guess_type(str(target))
+            if cached is None:
+                content = self._with_fd_reserve(target.read_bytes)
+                content_type, _ = mimetypes.guess_type(str(target))
+                content_type = content_type or "application/octet-stream"
+            else:
+                content, content_type = cached
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", content_type or "application/octet-stream")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(content)))
             if is_index and self._token_presented(query):
                 # Exchange the bootstrap token for the per-process session
@@ -522,6 +634,9 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 )
             self.end_headers()
             self.wfile.write(content)
+
+        def _with_fd_reserve(self, operation: Callable[[], T]) -> T:
+            return state.call_with_fd_reserve(operation)
 
         def _resolve_asset(self, path: str) -> Path | None:
             rel = unquote(path).lstrip("/")
@@ -583,12 +698,12 @@ def serve(
     handler = _make_handler(state)
 
     try:
-        httpd = ThreadingHTTPServer((host, port), handler)
+        httpd = _ViewerHTTPServer((host, port), handler, viewer_state=state)
     except OSError:
         if port == 0:
             raise
         logger.info("viewer port %s unavailable, falling back to an ephemeral port", port)
-        httpd = ThreadingHTTPServer((host, 0), handler)
+        httpd = _ViewerHTTPServer((host, 0), handler, viewer_state=state)
 
     httpd.daemon_threads = True
     bound_port = int(httpd.server_address[1])

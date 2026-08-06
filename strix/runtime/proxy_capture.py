@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import urllib.request
 from dataclasses import dataclass
@@ -30,6 +31,63 @@ class ProxyCaptureSnapshot:
     total_request_count: int = 0
 
 
+class ProxyCapturePoller:
+    """Persistent Caido poller for the TUI proxy monitor thread."""
+
+    def __init__(self, host_url: str) -> None:
+        self.host_url = host_url
+        self._client: Client | None = None
+        self._project_selected = False
+
+    async def fetch_snapshot(
+        self,
+        *,
+        scope_id: str | None = None,
+        recent_limit: int = 10,
+        total_page_size: int = 200,
+    ) -> ProxyCaptureSnapshot:
+        client = await self._ensure_client()
+        try:
+            return await _fetch_proxy_capture_snapshot_with_client(
+                client,
+                scope_id=scope_id,
+                recent_limit=recent_limit,
+                total_page_size=total_page_size,
+            )
+        except Exception:
+            await self._reset_client()
+            raise
+
+    async def aclose(self) -> None:
+        await self._reset_client()
+
+    async def _ensure_client(self) -> Client:
+        client = self._client
+        if client is None:
+            token = await asyncio.to_thread(_login_as_guest, self.host_url)
+            client = Client(self.host_url, auth=TokenAuthOptions(token=token))
+            try:
+                await client.connect()
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await client.aclose()
+                raise
+            self._client = client
+        if not self._project_selected:
+            await select_strix_project(client)
+            self._project_selected = True
+        return client
+
+    async def _reset_client(self) -> None:
+        client = self._client
+        self._client = None
+        self._project_selected = False
+        if client is None:
+            return
+        with contextlib.suppress(Exception):
+            await client.aclose()
+
+
 def _login_as_guest(host_url: str) -> str:
     request = urllib.request.Request(  # noqa: S310
         f"{host_url.rstrip('/')}/graphql",
@@ -49,23 +107,33 @@ async def fetch_proxy_capture_snapshot(
     recent_limit: int = 10,
     total_page_size: int = 200,
 ) -> ProxyCaptureSnapshot:
-    token = await asyncio.to_thread(_login_as_guest, host_url)
-    client = Client(host_url, auth=TokenAuthOptions(token=token))
-    await client.connect()
-
+    poller = ProxyCapturePoller(host_url)
     try:
-        await select_strix_project(client)
-        builder = client.request.list().first(max(1, recent_limit)).descending("req", "created_at")
-        if scope_id:
-            builder = builder.scope(scope_id)
-        connection = await builder.execute()
-        total_request_count = await _count_requests(
-            client,
+        return await poller.fetch_snapshot(
             scope_id=scope_id,
-            page_size=max(1, total_page_size),
+            recent_limit=recent_limit,
+            total_page_size=total_page_size,
         )
     finally:
-        await client.aclose()
+        await poller.aclose()
+
+
+async def _fetch_proxy_capture_snapshot_with_client(
+    client: Client,
+    *,
+    scope_id: str | None,
+    recent_limit: int,
+    total_page_size: int,
+) -> ProxyCaptureSnapshot:
+    builder = client.request.list().first(max(1, recent_limit)).descending("req", "created_at")
+    if scope_id:
+        builder = builder.scope(scope_id)
+    connection = await builder.execute()
+    total_request_count = await _count_requests(
+        client,
+        scope_id=scope_id,
+        page_size=max(1, total_page_size),
+    )
 
     edges = list(getattr(connection, "edges", []) or [])
     latest = edges[0] if edges else None

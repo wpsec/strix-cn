@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sqlite3
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+import strix.interface.viewer.server as viewer_server
 from strix.core.paths import latest_run_dir, runs_base_dir
 from strix.interface.viewer.server import serve
 from strix.interface.viewer.transcript import (
@@ -22,7 +25,6 @@ from strix.interface.viewer.transcript import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     import pytest
 
@@ -191,6 +193,72 @@ def test_server_serves_api_and_static(tmp_path: Path, monkeypatch: pytest.Monkey
         status, ctype, body = _get(f"{url}/agents/root")
         assert status == 200
         assert b"<div id=root>" in body
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_server_serves_preloaded_static_assets_when_disk_reads_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(
+        tmp_path,
+        "served-cache",
+        status="completed",
+        end_time="2026-01-01T00:00:00Z",
+    )
+
+    assets = tmp_path / "bundle"
+    (assets / "assets").mkdir(parents=True)
+    expected = b"console.log(1)"
+    (assets / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+    (assets / "assets" / "app.js").write_bytes(expected)
+    monkeypatch.setattr("strix.interface.viewer.server.bundle_dir", lambda: assets)
+
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    try:
+        def _boom(_self: Path) -> bytes:
+            raise OSError(errno.EMFILE, "Too many open files")
+
+        monkeypatch.setattr(Path, "read_bytes", _boom)
+        status, ctype, body = _get(f"{url}/assets/app.js")
+        assert status == 200
+        assert "javascript" in ctype
+        assert body == expected
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_server_retries_api_disk_reads_after_emfile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(
+        tmp_path,
+        "served-retry",
+        status="completed",
+        end_time="2026-01-01T00:00:00Z",
+    )
+    _bundle(tmp_path, monkeypatch)
+
+    calls = {"count": 0}
+    original = viewer_server.read_run_summary
+
+    def _flaky_summary(path: Path) -> dict[str, object]:
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise OSError(errno.EMFILE, "Too many open files")
+        return original(path)
+
+    monkeypatch.setattr("strix.interface.viewer.server.read_run_summary", _flaky_summary)
+
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    try:
+        status, ctype, body = _get(f"{url}/api/run")
+        assert status == 200
+        assert "application/json" in ctype
+        assert json.loads(body)["run_name"] == "served-retry"
+        assert calls["count"] == 3
     finally:
         httpd.shutdown()
         httpd.server_close()

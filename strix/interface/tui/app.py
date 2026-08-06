@@ -58,7 +58,7 @@ from strix.report.writer import (
 )
 from strix.report.state import ProxyCaptureState, ReportState, set_global_report_state
 from strix.runtime import session_manager
-from strix.runtime.proxy_capture import ProxyCaptureSnapshot, fetch_proxy_capture_snapshot
+from strix.runtime.proxy_capture import ProxyCapturePoller, ProxyCaptureSnapshot
 
 
 logger = logging.getLogger(__name__)
@@ -820,6 +820,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         super().__init__()
         self.args = args
         self.scan_config = self._build_scan_config(args)
+        self._version = get_package_version()
 
         self.report_state = ReportState(self.scan_config["run_name"])
         self.report_state.hydrate_from_run_dir()
@@ -1512,8 +1513,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if stats_text:
             stats_content.append(stats_text)
 
-        version = get_package_version()
-        stats_content.append(f"\nv{version}", style="white")
+        stats_content.append(f"\nv{getattr(self, '_version', 'dev')}", style="white")
 
         self._safe_widget_operation(stats_display.update, stats_content)
 
@@ -1730,61 +1730,73 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._proxy_monitor_stop_event.clear()
 
         def monitor_target() -> None:
-            last_error: str | None = None
-
-            while not self._proxy_monitor_stop_event.wait(2.0):
-                if self._scan_completed.is_set():
-                    return
-
-                caido_ui_url = self.report_state.caido_ui_url
-                if not isinstance(caido_ui_url, str) or not caido_ui_url:
-                    continue
-
-                scope_id = self.report_state.proxy_scope_id
+            async def monitor_loop() -> None:
+                last_error: str | None = None
+                poller: ProxyCapturePoller | None = None
+                poller_url: str | None = None
                 try:
-                    snapshot = asyncio.run(
-                        fetch_proxy_capture_snapshot(caido_ui_url, scope_id=scope_id),
-                    )
-                except Exception as exc:
-                    error = str(exc).strip() or exc.__class__.__name__
-                    if error != last_error:
-                        logger.warning("Proxy capture monitor failed: %s", error)
+                    while True:
+                        if self._proxy_monitor_stop_event.is_set() or self._scan_completed.is_set():
+                            return
+
+                        caido_ui_url = self.report_state.caido_ui_url
+                        if not isinstance(caido_ui_url, str) or not caido_ui_url:
+                            await asyncio.sleep(2.0)
+                            continue
+
+                        if poller is None or poller_url != caido_ui_url:
+                            if poller is not None:
+                                await poller.aclose()
+                            poller = ProxyCapturePoller(caido_ui_url)
+                            poller_url = caido_ui_url
+
+                        scope_id = self.report_state.proxy_scope_id
+                        try:
+                            snapshot = await poller.fetch_snapshot(scope_id=scope_id)
+                        except Exception as exc:
+                            error = str(exc).strip() or exc.__class__.__name__
+                            if error != last_error:
+                                logger.warning("Proxy capture monitor failed: %s", error)
+                                self.report_state.update_proxy_capture_state(
+                                    self.report_state.proxy_capture_state,
+                                    error=error,
+                                )
+                                last_error = error
+                            await asyncio.sleep(2.0)
+                            continue
+
+                        last_error = None
                         self.report_state.update_proxy_capture_state(
-                            self.report_state.proxy_capture_state,
-                            error=error,
+                            ProxyCaptureState(
+                                recent_request_count=snapshot.recent_request_count,
+                                recent_request_has_more=snapshot.recent_request_has_more,
+                                latest_request_id=snapshot.latest_request_id,
+                                latest_method=snapshot.latest_method,
+                                latest_host=snapshot.latest_host,
+                                latest_path=snapshot.latest_path,
+                                latest_status_code=snapshot.latest_status_code,
+                                total_request_count=snapshot.total_request_count,
+                            ),
                         )
-                        last_error = error
-                    continue
+                        self._sync_feature_capture_count(snapshot.total_request_count)
 
-                last_error = None
-                self.report_state.update_proxy_capture_state(
-                    ProxyCaptureState(
-                        recent_request_count=snapshot.recent_request_count,
-                        recent_request_has_more=snapshot.recent_request_has_more,
-                        latest_request_id=snapshot.latest_request_id,
-                        latest_method=snapshot.latest_method,
-                        latest_host=snapshot.latest_host,
-                        latest_path=snapshot.latest_path,
-                        latest_status_code=snapshot.latest_status_code,
-                        total_request_count=snapshot.total_request_count,
-                    ),
-                )
-                self._sync_feature_capture_count(snapshot.total_request_count)
+                        if scope_id is not None and self._should_auto_resume_from_proxy(snapshot):
+                            root_agent_id, root_status = self._root_agent_for_proxy_resume()
+                            if (
+                                root_agent_id is not None
+                                and root_status is not None
+                                and self._should_dispatch_proxy_resume(snapshot, root_status)
+                                and self._notify_root_agent_from_proxy(root_agent_id, snapshot)
+                            ):
+                                self._last_proxy_notified_request_id = snapshot.latest_request_id
+                                self._last_proxy_resume_dispatched_at = time.monotonic()
 
-                if scope_id is None:
-                    continue
-                if not self._should_auto_resume_from_proxy(snapshot):
-                    continue
+                        await asyncio.sleep(2.0)
+                finally:
+                    if poller is not None:
+                        await poller.aclose()
 
-                root_agent_id, root_status = self._root_agent_for_proxy_resume()
-                if root_agent_id is None or root_status is None:
-                    continue
-                if not self._should_dispatch_proxy_resume(snapshot, root_status):
-                    continue
-
-                if self._notify_root_agent_from_proxy(root_agent_id, snapshot):
-                    self._last_proxy_notified_request_id = snapshot.latest_request_id
-                    self._last_proxy_resume_dispatched_at = time.monotonic()
+            asyncio.run(monitor_loop())
 
         self._proxy_monitor_thread = threading.Thread(target=monitor_target, daemon=True)
         self._proxy_monitor_thread.start()
