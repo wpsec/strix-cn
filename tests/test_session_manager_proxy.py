@@ -115,6 +115,16 @@ async def test_ensure_container_proxy_listener_starts_compat_shim_for_legacy_sin
     }
 
 
+def test_container_proxy_compat_shim_binds_all_interfaces_for_published_port() -> None:
+    script = session_manager._container_proxy_compat_shim_script(
+        listen_port=48081,
+        target_port=48080,
+    )
+
+    assert 'LISTEN = ("0.0.0.0", 48081)' in script
+    assert 'TARGET = ("127.0.0.1", 48080)' in script
+
+
 @pytest.mark.asyncio
 async def test_ensure_container_proxy_listener_fails_without_proxy_or_ui_listener(
     monkeypatch: pytest.MonkeyPatch,

@@ -160,11 +160,44 @@ async def _start_container_proxy_compat_shim(
     if not callable(exec_command):
         raise RuntimeError("当前 sandbox session 不支持 exec，无法启动 Caido 兼容代理")
 
-    shim_script = f"""
+    shim_script = _container_proxy_compat_shim_script(
+        listen_port=listen_port,
+        target_port=target_port,
+    )
+    payload = base64.b64encode(shim_script.encode("utf-8")).decode("ascii")
+    python_command = (
+        "import base64; "
+        f"exec(compile(base64.b64decode({payload!r}), "
+        "'_strix_caido_proxy_compat.py', 'exec'))"
+    )
+    shell_command = (
+        f"nohup python3 -c {shlex.quote(python_command)} "
+        f">{shlex.quote(_CONTAINER_PROXY_COMPAT_LOG)} 2>&1 < /dev/null & "
+        f"echo $! > {shlex.quote(_CONTAINER_PROXY_COMPAT_PID)}"
+    )
+    result = await exec_command("sh", "-lc", shell_command, timeout=15)
+    if result.ok():
+        return
+
+    stderr = _result_stream_text(getattr(result, "stderr", "")).strip()
+    stdout = _result_stream_text(getattr(result, "stdout", "")).strip()
+    detail = stderr or stdout or f"exit={result.exit_code}"
+    raise RuntimeError(f"启动 Caido 旧镜像兼容代理失败：{detail}")
+
+
+def _container_proxy_compat_shim_script(
+    *,
+    listen_port: int,
+    target_port: int,
+) -> str:
+    # Bind on 0.0.0.0 so Docker's published host port can reach the shim.
+    # The upstream Caido mixed-mode listener stays on loopback inside the
+    # container, so only the compatibility layer is exposed externally.
+    return f"""
 import socket
 import threading
 
-LISTEN = ("127.0.0.1", {listen_port})
+LISTEN = ("0.0.0.0", {listen_port})
 TARGET = ("127.0.0.1", {target_port})
 
 
@@ -207,25 +240,6 @@ while True:
     threading.Thread(target=pipe, args=(client, upstream), daemon=True).start()
     threading.Thread(target=pipe, args=(upstream, client), daemon=True).start()
 """.strip()
-    payload = base64.b64encode(shim_script.encode("utf-8")).decode("ascii")
-    python_command = (
-        "import base64; "
-        f"exec(compile(base64.b64decode({payload!r}), "
-        "'_strix_caido_proxy_compat.py', 'exec'))"
-    )
-    shell_command = (
-        f"nohup python3 -c {shlex.quote(python_command)} "
-        f">{shlex.quote(_CONTAINER_PROXY_COMPAT_LOG)} 2>&1 < /dev/null & "
-        f"echo $! > {shlex.quote(_CONTAINER_PROXY_COMPAT_PID)}"
-    )
-    result = await exec_command("sh", "-lc", shell_command, timeout=15)
-    if result.ok():
-        return
-
-    stderr = _result_stream_text(getattr(result, "stderr", "")).strip()
-    stdout = _result_stream_text(getattr(result, "stdout", "")).strip()
-    detail = stderr or stdout or f"exit={result.exit_code}"
-    raise RuntimeError(f"启动 Caido 旧镜像兼容代理失败：{detail}")
 
 
 async def _ensure_container_proxy_listener(
