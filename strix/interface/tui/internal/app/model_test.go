@@ -1419,6 +1419,29 @@ func TestLongErrorDoesNotBreakTheFrame(t *testing.T) {
 	}
 }
 
+func TestSidebarWidthIsCappedOnWideTerminal(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 220, 30
+	model.snapshot = protocol.Snapshot{
+		Agents: []protocol.Agent{{ID: "root", Name: "Root Agent", Status: "waiting"}},
+	}
+
+	showSidebar, sidebarWidth, chatWidth, chatHeight := model.layout()
+
+	if !showSidebar {
+		t.Fatal("wide terminal should keep the sidebar visible")
+	}
+	if sidebarWidth != 32 {
+		t.Fatalf("sidebar width should be capped at 32, got %d", sidebarWidth)
+	}
+	if chatWidth != model.width-sidebarWidth-1 {
+		t.Fatalf("chat width mismatch: got %d", chatWidth)
+	}
+	if chatHeight < 4 {
+		t.Fatalf("chat height should stay usable, got %d", chatHeight)
+	}
+}
+
 func TestStatusMessageFlattensAndKeepsItsHint(t *testing.T) {
 	row := ansi.Strip(statusMessage("boom\nsecond line\twith tabs", red, " · Send message to resume", 60))
 
