@@ -46,6 +46,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SOURCE_BUILD_HANDSHAKE_TIMEOUT = 180.0
+
 
 class GoTuiPreActivationError(RuntimeError):
     """A sidecar failure raised before the Go TUI activates."""
@@ -356,7 +358,10 @@ class GoTuiRuntime:
                     flush=True,
                 )
             process, backend_socket = await launch_tui_process(command, env, cwd)
-            await self.server.start(backend_socket)
+            await self.server.start(
+                backend_socket,
+                handshake_timeout=_SOURCE_BUILD_HANDSHAKE_TIMEOUT if cwd is not None else None,
+            )
             if not self.controller.setup_mode:
                 self.controller.begin_preparation()
                 prepare_task = asyncio.create_task(self.prepare_and_start())

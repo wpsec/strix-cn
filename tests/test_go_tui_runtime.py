@@ -265,6 +265,42 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
 
 
 @pytest.mark.asyncio
+async def test_source_build_runtime_uses_extended_handshake_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_args = args()
+    runtime_args.needs_setup = True
+    runtime = GoTuiRuntime(runtime_args)
+    runtime.controller.setup_mode = True
+    backend, child = socket.socketpair()
+    captured: dict[str, Any] = {}
+
+    async def launch(
+        _command: list[str], _env: dict[str, str], _cwd: str | None
+    ) -> tuple[SimpleNamespace, socket.socket]:
+        return SimpleNamespace(returncode=0), backend
+
+    async def start(connection: socket.socket, *, handshake_timeout: float | None = None) -> None:
+        captured["connection"] = connection
+        captured["handshake_timeout"] = handshake_timeout
+        runtime.server.activated = True
+
+    monkeypatch.setattr(runtime, "binary_command", lambda: ["go", "run", "./cmd/strix-tui"])
+    monkeypatch.setattr(go_tui, "launch_tui_process", launch)
+    monkeypatch.setattr(go_tui, "wait_process", lambda _process: asyncio.sleep(0, result=0))
+    monkeypatch.setattr(runtime.server, "start", start)
+    monkeypatch.setattr(runtime, "sync_state", lambda: asyncio.sleep(0))
+
+    try:
+        await runtime.run()
+    finally:
+        child.close()
+
+    assert captured["connection"] is backend
+    assert captured["handshake_timeout"] == go_tui._SOURCE_BUILD_HANDSHAKE_TIMEOUT
+
+
+@pytest.mark.asyncio
 async def test_pre_activation_failure_propagates_to_dispatcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
