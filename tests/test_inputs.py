@@ -290,6 +290,7 @@ def test_build_scope_context_burp_passive_mode() -> None:
     assert scope["container_image_targets"] == []
     assert scope["proxy_passive_mode"] is True
     assert scope["proxy_scope_enforced"] is True
+    assert scope["proxy_scope_allowlist"] == ["*"]
     assert "*.caido.io" in scope["proxy_scope_denylist"]
 
 
