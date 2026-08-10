@@ -369,6 +369,51 @@ func TestPassiveProxyWaitingRestoresCaptureGuidance(t *testing.T) {
 	}
 }
 
+func TestPassiveProxyWaitingWithoutTrafficShowsZeroCaptureState(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 34
+	model.showSplash = false
+
+	runningState := protocol.Snapshot{
+		SetupMode:         false,
+		ScanStarted:       true,
+		ScanState:         "running",
+		PassiveProxyMode:  true,
+		PassiveProxyPhase: "capture",
+		CaidoURL:          "http://127.0.0.1:61270",
+	}
+	model.handleEnvelope(stateEnvelope(t, 1, runningState))
+	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1,
+		protocol.Agent{ID: "root", Name: "Root Agent", Status: "waiting"},
+	))
+
+	view := ansi.Strip(model.View())
+	if !strings.Contains(view, "Burp 流量已自动接入，正在等待当前功能点流量进入。") {
+		t.Fatalf("zero-traffic waiting guidance is missing: %s", view)
+	}
+	if !strings.Contains(view, "右侧出现最近流量后发送“开始测试”") {
+		t.Fatalf("zero-traffic waiting hint is missing: %s", view)
+	}
+
+	content := ansi.Strip(model.chatContent())
+	if !strings.Contains(content, "Burp 流量已自动接入，正在等待当前功能点流量进入。") {
+		t.Fatalf("zero-traffic chat placeholder is missing: %s", content)
+	}
+
+	stats := ansi.Strip(model.statsView())
+	for _, want := range []string{
+		"Caido: http://127.0.0.1:61270",
+		"代理捕获: 暂无流量",
+		"阶段: 当前功能点采集中",
+		"说明: 等待 Burp 请求进入当前功能点",
+		"操作: 完成操作后发送“开始测试”",
+	} {
+		if !strings.Contains(stats, want) {
+			t.Fatalf("zero-traffic stats missing %q: %s", want, stats)
+		}
+	}
+}
+
 func TestPassiveProxyPhaseSwitchesToTestingWhileChildAgentRuns(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 130, 34

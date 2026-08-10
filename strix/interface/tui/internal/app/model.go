@@ -337,6 +337,19 @@ func (m Model) isPassiveProxyWaiting() bool {
 	return agent.ParentID == nil && agent.Status == "waiting"
 }
 
+func (m Model) hasPassiveProxyCaptureTraffic() bool {
+	if m.snapshot.ProxyTotalRequestCount > 0 || m.snapshot.ProxyRecentRequestCount > 0 {
+		return true
+	}
+	if strings.TrimSpace(m.snapshot.ProxyLatestMethod) != "" {
+		return true
+	}
+	if strings.TrimSpace(m.snapshot.ProxyLatestHost) != "" {
+		return true
+	}
+	return strings.TrimSpace(m.snapshot.ProxyLatestPath) != ""
+}
+
 func (m *Model) syncLiveInputPlaceholder() {
 	if m.isPassiveProxyWaiting() {
 		m.input.Placeholder = passiveProxyPlaceholder

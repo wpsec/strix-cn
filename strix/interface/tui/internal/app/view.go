@@ -122,6 +122,9 @@ func (m *Model) chatContent() string {
 			if agent.Status == "waiting" {
 				if m.isPassiveProxyWaiting() {
 					message := "Burp 流量已自动接入，正在采集当前功能点。\n\n请先在目标上完成本轮操作；采集完成后发送“开始测试”，也可补充关注点。"
+					if !m.hasPassiveProxyCaptureTraffic() {
+						message = "Burp 流量已自动接入，正在等待当前功能点流量进入。\n\n请先在目标上完成本轮操作；右侧出现最近流量后发送“开始测试”，也可补充关注点。"
+					}
 					if msg := strings.TrimSpace(agent.ErrorMessage); msg != "" {
 						message = msg + "\n\n采集完成后发送“开始测试”，也可补充关注点。"
 					}
@@ -456,6 +459,27 @@ func splashPassiveProxySummary() string {
 	return title + "\n" + detail + "\n" + next
 }
 
+func (m Model) passiveProxyCaptureStatusSummary() string {
+	if m.hasPassiveProxyCaptureTraffic() {
+		if m.snapshot.ProxyTotalRequestCount > 0 {
+			return fmt.Sprintf("累计 %d 条", m.snapshot.ProxyTotalRequestCount)
+		}
+		suffix := ""
+		if m.snapshot.ProxyRecentRequestHasMore {
+			suffix = "+"
+		}
+		return fmt.Sprintf("最近 %d%s 条", m.snapshot.ProxyRecentRequestCount, suffix)
+	}
+	return "暂无流量"
+}
+
+func (m Model) passiveProxyCaptureStageDescription() string {
+	if m.hasPassiveProxyCaptureTraffic() {
+		return "Burp 流量已自动接入 Strix"
+	}
+	return "等待 Burp 请求进入当前功能点"
+}
+
 // splashModelWarning ports SplashScreen._build_model_warning_text.
 func splashModelWarning(model string) string {
 	yellow := lipgloss.Color("#eab308")
@@ -667,23 +691,11 @@ func (m Model) statsView() string {
 			b.WriteString(label.Render("代理捕获: ") + w.Render("读取失败"))
 			b.WriteString("\n")
 			b.WriteString(label.Render("说明: ") + w.Render(m.snapshot.ProxyCaptureError))
-		} else if m.snapshot.ProxyTotalRequestCount > 0 || m.snapshot.ProxyRecentRequestCount > 0 {
+		} else {
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			totalCount := m.snapshot.ProxyTotalRequestCount
-			if totalCount > 0 {
-				b.WriteString(label.Render("代理捕获: ") + w.Render(fmt.Sprintf("累计 %d 条", totalCount)))
-			} else {
-				suffix := ""
-				if m.snapshot.ProxyRecentRequestHasMore {
-					suffix = "+"
-				}
-				b.WriteString(
-					label.Render("代理捕获: ") +
-						w.Render(fmt.Sprintf("最近 %d%s 条", m.snapshot.ProxyRecentRequestCount, suffix)),
-				)
-			}
+			b.WriteString(label.Render("代理捕获: ") + w.Render(m.passiveProxyCaptureStatusSummary()))
 			if m.snapshot.ProxyRecentRequestCount > 0 {
 				suffix := ""
 				if m.snapshot.ProxyRecentRequestHasMore {
@@ -724,7 +736,7 @@ func (m Model) statsView() string {
 			b.WriteString("\n")
 			b.WriteString(label.Render("阶段: ") + w.Render("当前功能点采集中"))
 			b.WriteString("\n")
-			b.WriteString(label.Render("说明: ") + w.Render("Burp 流量已自动接入 Strix"))
+			b.WriteString(label.Render("说明: ") + w.Render(m.passiveProxyCaptureStageDescription()))
 			b.WriteString("\n")
 			b.WriteString(label.Render("操作: ") + w.Render("完成操作后发送“开始测试”"))
 		case "testing":
@@ -803,6 +815,9 @@ func (m Model) statusView(width int) string {
 		case "waiting":
 			if m.isPassiveProxyWaiting() {
 				left = lipgloss.NewStyle().Foreground(dim).Render("Burp 流量已自动接入。先完成当前功能点操作；采集完成后发送“开始测试”，也可补充关注点。")
+				if !m.hasPassiveProxyCaptureTraffic() {
+					left = lipgloss.NewStyle().Foreground(dim).Render("Burp 流量已自动接入，正在等待当前功能点流量进入。右侧出现最近流量后发送“开始测试”，也可补充关注点。")
+				}
 				if msg := agent.ErrorMessage; msg != "" {
 					left = statusMessage(msg, red, " · 采集完成后发送“开始测试”继续", width)
 				}
