@@ -1,9 +1,9 @@
 ---
-name: firebase-firestore
-description: Firebase/Firestore security testing covering security rules, Cloud Functions, and client-side trust issues
+name: firebase
+description: Firebase security testing covering Firestore, Storage rules, Realtime Database, Auth, Functions, and client-side trust issues
 ---
 
-# Firebase / Firestore
+# Firebase
 
 Security testing for Firebase applications. Focus on Firestore/Realtime Database rules, Cloud Storage exposure, callable/onRequest Functions trusting client input, and incorrect ID token validation.
 
@@ -30,7 +30,17 @@ Security testing for Firebase applications. Focus on Firestore/Realtime Database
 **Endpoints**
 - Firestore REST: `https://firestore.googleapis.com/v1/projects/<project>/databases/(default)/documents/<path>`
 - Realtime DB: `https://<project>.firebaseio.com/.json`
-- Storage REST: `https://storage.googleapis.com/storage/v1/b/<bucket>`
+- GCS JSON API: `https://storage.googleapis.com/storage/v1/b/<bucket>`
+- Firebase Storage rules API: `https://firebasestorage.googleapis.com/v0/b/<bucket>/o`
+
+Cloud Storage has two front doors with different authorization engines:
+
+| Front door | Authorization engine |
+| --- | --- |
+| `storage.googleapis.com/<bucket>/<object>` and `/storage/v1/b/<bucket>` | GCS IAM and per-object ACLs |
+| `firebasestorage.googleapis.com/v0/b/<bucket>/o` | Firebase Storage Security Rules |
+
+A `403` from a GCS URL does not prove that Firebase Storage rules deny access. Always test both doors.
 
 **Auth**
 - Google-signed ID tokens (iss: `accounts.google.com` or `securetoken.google.com/<project>`)
@@ -117,9 +127,43 @@ exists(/databases/(default)/documents/orgs/$(org)/members/$(request.auth.uid))
 - Public reads on sensitive buckets/paths
 - Signed URLs with long TTL, no content-disposition controls, replayable across tenants
 - List operations exposed: `/o?prefix=` enumerates object keys
+- Firebase Storage rules allowing unauthenticated or overly broad reads and writes
+
+**Firebase Storage rules checks**
+
+Probe the rules door separately from GCS IAM and ACLs:
+
+1. Unauthenticated list: `GET https://firebasestorage.googleapis.com/v0/b/<bucket>/o?prefix=<known-prefix>`
+2. Unauthenticated read of a known object path
+3. Unauthenticated write/upload to a uniquely named test object
+4. Repeat list, read, and write as an anonymous-auth principal when anonymous sign-in is enabled
+5. Repeat the same matrix as a low-privilege authenticated user
+
+Write access is as important as read access and is routinely missed. Record status, response body, and object existence after each attempt; clean up only test objects that the test principal created.
+
+Review rules source when present and flag:
+
+- `allow read, write: if request.time < timestamp.date(...)` — the common console test-mode time gate
+- `{allPaths=**}` catch-alls
+- `request.auth != null` as the sole authorization gate
+- Claim-presence checks such as `request.auth.token.roles.size() > 0` without role or tenant validation
+
+Storage rules use OR-across-matches semantics: a later permissive match can reopen a path that an earlier match denied. Review every matching path, not only the most specific-looking deny.
+
+**Bucket discovery**
+
+- Extract `storageBucket` from `firebase.apps[0].options` and `NEXT_PUBLIC_FIREBASE_*` values in JavaScript bundles and source.
+- Check `<project>.appspot.com` and `<project>.firebasestorage.app` bucket conventions.
+
+**ACL and IAM checks are separate**
+
+- Sweep object ACLs for `allUsers` and `allAuthenticatedUsers`, including objects made public by Admin SDK `makePublic()` or writers using `public: true`. Per-object public ACLs persist after Firebase rules are tightened and can remain on older prefixes.
+- Check bucket IAM for `allUsers` and `allAuthenticatedUsers`.
+- Check whether Uniform Bucket-Level Access is disabled; legacy object ACLs matter when it is off.
+- Account for CDN caching of previously public objects; cache-bust when verifying a revocation.
 
 **Tests**
-- GET gs:// paths via HTTPS without auth; verify Content-Type and `Content-Disposition: attachment`
+- GET GCS object paths via HTTPS without auth; verify Content-Type and `Content-Disposition: attachment`
 - Generate and reuse signed URLs across accounts and paths; try case/URL-encoding variants
 - Upload HTML/SVG and verify `X-Content-Type-Options: nosniff`; check for script execution
 
@@ -189,12 +233,19 @@ Apps often implement multi-tenant data models (`orgs/<orgId>/...`). Bind tenant 
 
 ## Testing Methodology
 
-1. **Extract config** - Get project config from client bundle
-2. **Obtain principals** - Collect tokens for unauth, anonymous, user A/B, admin
+1. **Extract config** - Get project and storage bucket config from client bundles and source
+2. **Obtain principals** - Collect tokens for unauth, anonymous, user A/B, and admin where authorized
 3. **Build matrix** - Resource × Action × Principal across Firestore/Realtime/Storage/Functions
-4. **SDK vs REST** - Exercise every action via both to detect parity gaps
-5. **Seed IDs** - Start from list/query paths to gather document IDs
-6. **Cross-principal** - Swap document paths, tenants, and user IDs across principals
+4. **Exercise both Storage doors** - Test Firebase Storage rules endpoints separately from GCS IAM/ACL URLs
+5. **SDK vs REST** - Exercise every action via both to detect parity gaps
+6. **Seed IDs** - Start from list/query paths to gather document and object paths
+7. **Cross-principal** - Swap document paths, tenants, and user IDs across principals
+
+## Whitebox Rules Review
+
+- Inspect `firebase.json`, `.firebaserc`, deployment scripts, CI configuration, and infrastructure code for `storage.rules` / `firestore.rules` declarations.
+- If `firebase.json` has no `storage` or `firestore` block, or the referenced rules file is absent from the tree, treat the live rules as unmanaged and force the live probe matrix. Absence of rules IaC is itself a finding; never conclude that there is nothing to review.
+- Correlate configured rule files with deployed project and bucket identifiers. A source rule file for a different project does not establish live protection.
 
 ## Tooling
 
@@ -206,6 +257,7 @@ Apps often implement multi-tenant data models (`orgs/<orgId>/...`). Bind tenant 
 ## Validation Requirements
 
 - Owner vs non-owner Firestore queries showing unauthorized access or metadata leak
-- Cloud Storage read/write beyond intended scope (public object, signed URL reuse, list exposure)
+- Firebase Storage unauthenticated, anonymous, or low-privilege read/list/write beyond intended scope, with minimal reproducible requests and observed deltas
+- GCS object ACL or bucket IAM access beyond intended scope, including public object persistence after rules changes
 - Function accepting forged/foreign identity (wrong `aud`/`iss`) or trusting client `uid`/`orgId`
 - Minimal reproducible requests with roles/tokens used and observed deltas

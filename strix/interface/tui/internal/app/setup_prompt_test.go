@@ -247,13 +247,10 @@ func TestMountConfirmationAnswers(t *testing.T) {
 		if payload.Approved != tc.approved {
 			t.Fatalf("%s: approved=%v, want %v", tc.name, payload.Approved, tc.approved)
 		}
-		// Declining returns to the start screen, so the prompt comes back.
-		want := ""
-		if !tc.approved {
-			want = "find auth bugs in the login flow"
-		}
-		if got := model.input.Value(); got != want {
-			t.Fatalf("%s: composer = %q, want %q", tc.name, got, want)
+		// Either answer launches, so the prompt stays with the run rather than
+		// coming back to the composer.
+		if got := model.input.Value(); got != "" {
+			t.Fatalf("%s: composer = %q, want it cleared", tc.name, got)
 		}
 		if model.pendingPrompt != "" {
 			t.Fatalf("%s: held prompt was not cleared: %q", tc.name, model.pendingPrompt)
@@ -288,5 +285,103 @@ func TestSetupPromptWithTargetLaunches(t *testing.T) {
 	}
 	if instr := lastIndex(types, "setup.set_instruction"); start < instr {
 		t.Fatalf("setup.start (%d) must come after setup.set_instruction (%d): %v", start, instr, types)
+	}
+}
+
+// The prompt's buttons are buttons: clicking Cancel has to answer the backend,
+// which it could not do while the mouse handler had no case for this modal.
+func TestMountPromptButtonsAreClickable(t *testing.T) {
+	for _, testCase := range []struct {
+		label    string
+		approved bool
+	}{
+		{mountConfirmLabel, true},
+		{mountCancelLabel, false},
+	} {
+		connection := &recordingConn{}
+		model := New(&Client{conn: connection})
+		model.width, model.height = 130, 40
+		model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+		updated, _ := model.submit("find auth bugs in the login flow")
+		model = updated.(Model)
+		connection.Reset()
+		model.snapshot = protocol.Snapshot{
+			ScanStarted: true, ScanState: "preparing", PendingMount: "/Users/me/code/api",
+		}
+		model.syncMountPrompt()
+
+		left, top, panel := model.mountPromptBounds()
+		clicked := false
+		for row, line := range strings.Split(panel, "\n") {
+			plain := ansi.Strip(line)
+			index := strings.Index(plain, testCase.label)
+			if index < 0 {
+				continue
+			}
+			updated, cmd := model.updateModalMouse(tea.MouseMsg{
+				X: left + ansi.StringWidth(plain[:index]) + 1, Y: top + row,
+				Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+			})
+			model = updated.(Model)
+			envelopes := drainCommands(t, cmd, connection)
+			if len(envelopes) != 1 || envelopes[0].Type != "setup.confirm_mount" {
+				t.Fatalf("clicking %s sent %v", testCase.label, commandTypes(envelopes))
+			}
+			var payload struct {
+				Approved bool `json:"approved"`
+			}
+			if err := json.Unmarshal(envelopes[0].Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Approved != testCase.approved {
+				t.Fatalf("clicking %s answered approved=%v", testCase.label, payload.Approved)
+			}
+			clicked = true
+			break
+		}
+		if !clicked {
+			t.Fatalf("%s was not found in the prompt", testCase.label)
+		}
+	}
+}
+
+// Skipping the mount runs the scan without a directory. It must not throw the
+// session back to the start screen, and it must not hand the prompt back: the
+// run has it.
+func TestSkippingTheMountKeepsTheScanRunning(t *testing.T) {
+	connection := &recordingConn{}
+	model := New(&Client{conn: connection})
+	model.width, model.height = 130, 40
+	model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+	updated, _ := model.submit("find auth bugs in the login flow")
+	model = updated.(Model)
+	model.snapshot = protocol.Snapshot{
+		ScanStarted: true, ScanState: "preparing", PendingMount: "/Users/me/code/api",
+	}
+	model.syncMountPrompt()
+	if model.modal != modalConfirmMount {
+		t.Fatal("the prompt did not open")
+	}
+
+	model.modalChoice = 1
+	updated, _ = model.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+
+	// The backend answers by starting the scan with no mount.
+	model.handleEnvelope(stateEnvelope(t, 2, protocol.Snapshot{
+		ScanStarted: true, ScanState: "running",
+	}))
+
+	if model.modal != modalNone {
+		t.Fatalf("the prompt is still open: %v", model.modal)
+	}
+	if model.snapshot.SetupMode {
+		t.Fatal("skipping the mount fell back to the start screen")
+	}
+	if got := model.input.Value(); got != "" {
+		t.Fatalf("the prompt came back to the composer: %q", got)
+	}
+	if model.pendingPrompt != "" {
+		t.Fatalf("the held prompt was not released: %q", model.pendingPrompt)
 	}
 }

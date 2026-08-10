@@ -10,10 +10,10 @@ Install the agent skills for step-by-step workflows:
 npx skills add usestrix/strix
 ```
 
-- `strix-pentest` — run a headless pentest against code, URLs, domains, or IPs and read results (covers both run modes below)
-- `strix-cloud-api` — drive the managed app.strix.ai platform via REST (no local Docker/LLM needed)
-- `strix-fix-findings` — remediate findings and re-run Strix to verify
-- `strix-ci-setup` — add PR scanning to CI/CD (self-hosted CLI or managed app)
+- `penetration-testing-with-strix` — run a headless pentest against code, URLs, domains, or IPs and read results (covers both run modes below)
+- `managed-pentesting-with-strix` — drive the managed app.strix.ai platform via REST (no local Docker/LLM needed)
+- `fix-security-vulnerabilities-with-strix` — remediate findings and re-run Strix to verify
+- `ci-security-scanning-with-strix` — add PR scanning to CI/CD (self-hosted CLI or managed app)
 
 **Two ways to run, same engine — pick per situation:**
 

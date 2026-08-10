@@ -64,3 +64,31 @@ async def test_a_message_that_already_arrived_is_taken_instead_of_parking() -> N
     assert result["wait_outcome"] == "message_arrived"
     assert result["pending_messages"] == 1
     assert coordinator.statuses["root"] == "running"
+
+
+async def _call_without_message(context: dict[str, Any]) -> dict[str, Any]:
+    ctx = ToolContext(
+        context=context,
+        tool_name="respond_to_user",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+    raw = await respond_to_user.on_invoke_tool(ctx, "{}")
+    return json.loads(raw)  # type: ignore[no-any-return]
+
+
+@pytest.mark.asyncio
+async def test_parks_without_a_message() -> None:
+    """An agent that has already said its piece as plain text can just wait.
+
+    The nudge is what leaves it here, and while a message was required the only
+    way to stop was to send the same answer a second time.
+    """
+    context = await _context(interactive=True)
+
+    result = await _call_without_message(context)
+
+    assert result["success"] is True
+    assert result["wait_outcome"] == "waiting"
+    assert result["message"] == ""
+    assert context["coordinator"].statuses["root"] == "waiting"

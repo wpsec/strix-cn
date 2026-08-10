@@ -337,10 +337,18 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
 
     args.targets_info = state.get("targets_info") or []
+    # A target-less run has no targets_info at all. It is driven by its
+    # instruction, over a mounted working directory or over nothing when the
+    # mount was declined, so either of those is enough to resume it.
     workspace_mount = state.get("workspace_mount") or None
     persisted_burp_port = state.get("burp_port")
-    if not args.targets_info and not workspace_mount and persisted_burp_port is None:
-        parser.error(f"--resume {args.resume}：run.json 中缺少 targets_info")
+    if (
+        not args.targets_info
+        and not workspace_mount
+        and persisted_burp_port is None
+        and not state.get("user_instruction")
+    ):
+        parser.error(f"--resume {args.resume}：run.json 中缺少可恢复的目标或指令信息")
 
     for target in args.targets_info:
         if not isinstance(target, dict):

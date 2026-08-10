@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import json
@@ -523,7 +524,6 @@ async def run_strix_scan(
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
         if root_id is not None:
-            await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
         return None
@@ -536,19 +536,28 @@ async def run_strix_scan(
             scan_id,
         )
         if root_id is not None:
-            await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
         return None
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        logger.info("Scan %s interrupted by the user", scan_id)
+        if root_id is not None:
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "running")
+        raise
     except BaseException:
         logger.exception("Strix scan %s failed", scan_id)
         if root_id is not None:
-            await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
         configure_spill_writer(None)
+        # Settle descendants before closing sessions: on a clean finish a child
+        # can still be mid-turn, and closing its session underneath it crashes it.
+        if root_id is not None:
+            with contextlib.suppress(Exception):
+                await coordinator.cancel_descendants(root_id)
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()

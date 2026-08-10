@@ -1,13 +1,13 @@
 # Strix CN
 
-Strix 开源 AI 渗透测试工具的中文维护分支。当前分支基于上游 `v1.5.0`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
+Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.5.2`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
 
 - 上游项目：https://github.com/usestrix/strix
 - 当前分支：https://github.com/wpsec/strix-cn
 
 ## 分支目标
 
-- 完整吸收上游 `v1.5.0` 的功能、修复和新架构
+- 完整吸收上游当前发布版的功能、修复和新架构
 - 保留 `strix-cn` 既有的中文文档、中文提示和中文报告输出
 - 保留 Burp / Caido 被动扫描工作流与本地模型、兼容网关适配
 - 保留本地开发者熟悉的 CLI 入口、常用参数和恢复路径
@@ -213,7 +213,7 @@ Viewer 默认只绑定到本机回环地址，读取本地 `strix_runs/` 目录�
 
 ## ChatGPT 订阅登录
 
-如果你不想直接使用按量 API Key，也可以使用上游 `v1.5.0` 提供的 ChatGPT 订阅登录能力：
+如果你不想直接使用按量 API Key，也可以使用当前版本内置的 ChatGPT 订阅登录能力：
 
 ```bash
 strix auth login chatgpt
@@ -233,7 +233,13 @@ Strix 已支持通过 skills 接入常见编码代理：
 npx skills add usestrix/strix
 ```
 
-会安装以下技能：
+这会安装 4 个技能，分别覆盖无头扫描与结果读取、云端托管渗透测试 API 驱动、修复后复扫验证，以及 CI 场景下的 PR 安全扫描。编码代理既可以直接驱动本地开源 CLI，也可以在没有本地 Docker 或 LLM Key 时走托管云端能力。
+
+相关参考：
+
+- [`AGENTS.md`](AGENTS.md)：本地快速说明
+- [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt)：CLI 文档
+- [docs.app.strix.ai](https://docs.app.strix.ai)：云端 API 文档
 
 - `strix-pentest`：无头扫描与结果读取
 - `strix-cloud-api`：通过云端平台 REST API 驱动扫描

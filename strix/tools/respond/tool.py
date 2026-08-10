@@ -15,7 +15,7 @@ def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
 
 
 @function_tool
-async def respond_to_user(ctx: RunContextWrapper, message: str) -> str:
+async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
     """Answer the user and hand control back to them.
 
     This is the ONLY way to yield to the user. Delivering the message and
@@ -45,6 +45,10 @@ async def respond_to_user(ctx: RunContextWrapper, message: str) -> str:
             have followed the tool calls that led here. Lead with the
             answer or the decision you need, and if you are blocked, say
             exactly what you need from them.
+
+            Omit it when you have just said your piece as plain text and
+            only need to wait: that text has already reached them, and
+            repeating it makes them read the same answer twice.
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)

@@ -527,7 +527,8 @@ func TestVulnerabilityCopySupportsKeyboardAndMouse(t *testing.T) {
 	}
 
 	model := newModel()
-	updated, _ := model.updateModal(tea.KeyMsg{Type: tea.KeyLeft})
+	// Tab moves between the buttons; the arrows step between reports.
+	updated, _ := model.updateModal(tea.KeyMsg{Type: tea.KeyTab})
 	model = updated.(Model)
 	updated, cmd := model.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
@@ -560,8 +561,8 @@ func TestVulnerabilityCopySupportsKeyboardAndMouse(t *testing.T) {
 		X: copyX, Y: copyY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	model = updated.(Model)
-	if cmd == nil || model.modalChoice != 0 {
-		t.Fatalf("mouse Copy was not activated: choice=%d cmd=%v", model.modalChoice, cmd)
+	if cmd == nil || model.reportFocus != reportCopy {
+		t.Fatalf("mouse Copy was not activated: focus=%q cmd=%v", model.reportFocus, cmd)
 	}
 	cmd()
 	if len(copied) != 2 {
@@ -820,8 +821,8 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 }
 
 func TestVerticalScrollbarThumbTracksScrollOffset(t *testing.T) {
-	top := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 0, thumbAgents)), "\n")
-	bottom := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 18, thumbAgents)), "\n")
+	top := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 0, thumbResting)), "\n")
+	bottom := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 18, thumbResting)), "\n")
 
 	// The track is blank, so only the thumb is drawn.
 	if top[0] != "█" || top[5] != " " {
@@ -830,10 +831,10 @@ func TestVerticalScrollbarThumbTracksScrollOffset(t *testing.T) {
 	if bottom[0] != " " || bottom[5] != "█" {
 		t.Fatalf("bottom scrollbar is incorrect: %#v", bottom)
 	}
-	if full := verticalScrollbar(4, 4, 4, 0, thumbAgents); full != "" {
+	if full := verticalScrollbar(4, 4, 4, 0, thumbResting); full != "" {
 		t.Fatalf("non-overflowing scrollbar should be hidden: %q", full)
 	}
-	withoutBar := ansi.Strip(withVerticalScrollbar("content", 12, 2, 2, 2, 0, thumbAgents))
+	withoutBar := ansi.Strip(withVerticalScrollbar("content", 12, 2, 2, 2, 0, thumbResting))
 	if strings.ContainsAny(withoutBar, "█") {
 		t.Fatalf("non-overflowing panel rendered a scrollbar: %q", withoutBar)
 	}
@@ -841,7 +842,7 @@ func TestVerticalScrollbarThumbTracksScrollOffset(t *testing.T) {
 
 // The bar takes exactly one column, so a scrolling panel keeps the rest.
 func TestVerticalScrollbarOccupiesOneColumn(t *testing.T) {
-	rows := strings.Split(withVerticalScrollbar("content", 12, 2, 24, 2, 0, thumbTrace), "\n")
+	rows := strings.Split(withVerticalScrollbar("content", 12, 2, 24, 2, 0, thumbResting), "\n")
 	for _, row := range rows {
 		if width := ansi.StringWidth(row); width != 12 {
 			t.Fatalf("scrolling panel row width = %d, want 12", width)

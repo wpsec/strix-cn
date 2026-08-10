@@ -110,6 +110,7 @@ type Model struct {
 	agentOffset            int
 	vulnOffset             int
 	modalChoice            int
+	reportFocus            string
 	ready                  bool
 	quitting               bool
 	showSplash             bool
@@ -157,12 +158,16 @@ const (
 	treeCursorBg = lipgloss.Color("#0178d4")
 )
 
-// Scrollbar thumbs. Each panel keeps its own, and the track stays blank so a
-// scrollable panel does not gain a visible rule down its edge.
+// Scrollbar thumbs. The track stays blank so a scrollable panel does not gain a
+// visible rule down its edge, and the thumb brightens while it is dragged, which
+// is the feedback Textual gave through scrollbar-color-active.
+//
+// One resting color for every panel, rather than the three the stylesheet named.
+// The chat pane's was #1a1a1a on black, which is invisible - the bar could not be
+// found, let alone grabbed (#1005).
 const (
-	thumbTrace    = lipgloss.Color("#1a1a1a")
-	thumbAgents   = lipgloss.Color("#404040")
-	thumbFindings = lipgloss.Color("#333333")
+	thumbResting = lipgloss.Color("#3f3f46")
+	thumbActive  = lipgloss.Color("#9ca3af")
 )
 
 // Composer placeholders. The launch screen falls back to the short prompt when

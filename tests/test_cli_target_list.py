@@ -195,4 +195,4 @@ def test_resume_still_requires_targets_or_a_workspace(
     with pytest.raises(SystemExit):
         cli_args.parse_arguments()
 
-    assert "run.json 中缺少 targets_info" in capsys.readouterr().err
+    assert "run.json 中缺少可恢复的目标或指令信息" in capsys.readouterr().err

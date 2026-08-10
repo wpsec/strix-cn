@@ -1,6 +1,6 @@
 ---
-name: strix-fix-findings
-description: Triage and remediate vulnerabilities found by a Strix pentest (open-source CLI or app.strix.ai cloud), then re-run Strix to verify each fix. Use after a Strix scan reports findings, or when the user asks to fix security issues from a strix_runs report, vulnerabilities.json, findings.sarif, or a cloud scan's vulnerabilities.
+name: fix-security-vulnerabilities-with-strix
+description: Fix security vulnerabilities found by a Strix pentest (open-source CLI or app.strix.ai cloud) — triage by severity, patch the root cause rather than the symptom, and re-run Strix to prove each fix actually closes the exploit. Handles injection, XSS, SSRF, broken access control, IDOR, and other validated findings. Use after a Strix scan reports findings, or when the user asks to remediate, patch, or fix security issues from a strix_runs report, vulnerabilities.json, findings.sarif, or a cloud scan.
 license: Apache-2.0
 metadata:
   author: usestrix
@@ -18,7 +18,7 @@ Get the findings from wherever the scan ran:
 - **OSS CLI** — artifacts in `strix_runs/<run-name>/`:
   - `vulnerabilities/*.md` — one finding per file: description, severity, PoC steps or script, affected code locations, remediation guidance.
   - `vulnerabilities.json` — the same findings as JSON (ids, severity, CWE/CVE, `code_locations` with `fix_before`/`fix_after` suggestions when available).
-- **Cloud (app.strix.ai)** — fetch the scan's `vulnerabilities[]` via `GET /api/v1/scans/{scanId}` (or `GET /api/v1/vulnerabilities` org-wide). Each carries `severity, cwe, endpoint, method, impact, technical_analysis, poc_description, poc_script_code` and, for code findings, `code_file`/`code_diff`/`code_before`/`code_after`. See the **strix-cloud-api** skill for auth.
+- **Cloud (app.strix.ai)** — fetch the scan's `vulnerabilities[]` via `GET /api/v1/scans/{scanId}` (or `GET /api/v1/vulnerabilities` org-wide). Each carries `severity, cwe, endpoint, method, impact, technical_analysis, poc_description, poc_script_code` and, for code findings, `code_file`/`code_diff`/`code_before`/`code_after`. See the **managed-pentesting-with-strix** skill for auth.
 
 Order work by severity: critical → high → medium → low. Every Strix finding was validated with a working proof-of-concept, so do not dismiss findings as false positives without re-testing the PoC yourself.
 
