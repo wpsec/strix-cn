@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 IMAGE="strix-sandbox"
 TAG="${1:-dev}"
-BASE_IMAGE="${STRIX_SANDBOX_BASE_IMAGE:-ghcr.io/usestrix/strix-sandbox:1.1.0}"
+BASE_IMAGE="${STRIX_SANDBOX_BASE_IMAGE:-ghcr.io/usestrix/strix-sandbox:1.3.0}"
 
 echo "Building overlay $IMAGE:$TAG from $BASE_IMAGE ..."
 docker build \

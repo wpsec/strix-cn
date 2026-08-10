@@ -28,7 +28,7 @@ fi
 if [ -z "$BASE_IMAGE_OVERRIDE" ]; then
   echo "Full build will resolve docker.io/kalilinux/kali-rolling:latest first."
   echo "If your network cannot reach docker.io metadata reliably, configure Docker Desktop proxy/registry access first,"
-  echo "or pull ghcr.io/usestrix/strix-sandbox:1.1.0 and run ./scripts/docker-overlay.sh ${TAG} instead."
+  echo "or pull ghcr.io/usestrix/strix-sandbox:1.3.0 and run ./scripts/docker-overlay.sh ${TAG} instead."
 fi
 
 if [ -n "$BASE_IMAGE_OVERRIDE" ]; then

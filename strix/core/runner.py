@@ -23,6 +23,7 @@ from strix.config.models import (
     configure_sdk_model_defaults,
     uses_chat_completions_tool_schema,
 )
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     respawn_subagents,
@@ -33,7 +34,6 @@ from strix.core.execution import (
 )
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
-    DEFAULT_MAX_TURNS,
     build_root_task,
     build_scope_context,
     make_model_settings,
@@ -53,6 +53,8 @@ from strix.tools.output_store import (
 if TYPE_CHECKING:
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
+
+    from strix.runtime.status import StatusSink
 
 
 logger = logging.getLogger(__name__)
@@ -135,6 +137,7 @@ async def run_strix_scan(
     event_sink: StreamEventSink | None = None,
     root_instructions_override: str | None = None,
     extra_system_prompt_context: dict[str, Any] | None = None,
+    status_sink: StatusSink | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -144,6 +147,11 @@ async def run_strix_scan(
     context before prompt rendering. Child agents keep the standard scan prompt
     and context.
     """
+
+    def report(phase: str) -> None:
+        if status_sink is not None:
+            status_sink(phase)
+
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
@@ -236,6 +244,7 @@ async def run_strix_scan(
             image=image,
             local_sources=local_sources or [],
             burp_port=scan_config.get("burp_port"),
+            status_sink=status_sink,
         )
     except BaseException:
         # The normal scan finally starts after the bundle is returned. Cover
@@ -244,6 +253,7 @@ async def run_strix_scan(
         with contextlib.suppress(Exception):
             await session_manager.cleanup(scan_id)
         raise
+    report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
 
     report_state = get_global_report_state()
@@ -275,12 +285,14 @@ async def run_strix_scan(
         is_whitebox = any(t.get("type") == "local_code" for t in targets)
         skills = list(scan_config.get("skills") or [])
         root_task = build_root_task(scan_config)
+        llm_settings = settings.llm
         model_settings = make_model_settings(
-            settings.llm.reasoning_effort,
+            llm_settings.reasoning_effort,
             model_name=resolved_model,
-            force_required_tool_choice=settings.llm.force_required_tool_choice,
-            request_timeout=settings.llm.timeout,
-            prompt_cache=getattr(settings.llm, "prompt_cache", True),
+            force_required_tool_choice=llm_settings.force_required_tool_choice,
+            request_timeout=llm_settings.timeout,
+            prompt_cache=getattr(llm_settings, "prompt_cache", True),
+            extra_headers=getattr(llm_settings, "extra_headers", None),
         )
         run_config = RunConfig(
             model=resolved_model,
@@ -289,6 +301,11 @@ async def run_strix_scan(
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
+        # Older SDK builds do not expose ``tool_not_found_behavior`` in the
+        # constructor, but the runtime still honors the attribute when present.
+        # Set it after construction so we keep the upstream recovery behavior
+        # without forcing an immediate SDK upgrade in ``strix-cn``.
+        setattr(run_config, "tool_not_found_behavior", "return_error_to_model")
         hooks = ReportUsageHooks(
             model=resolved_model,
             max_budget_usd=max_budget_usd,
@@ -329,7 +346,7 @@ async def run_strix_scan(
         )
 
         root_agent = build_strix_agent(
-            name="Strix",
+            name="Root Agent",
             skills=skills,
             is_root=True,
             scan_mode=scan_mode,
@@ -343,7 +360,7 @@ async def run_strix_scan(
         if not is_resume:
             await coordinator.register(
                 root_id,
-                "Strix",
+                "Root Agent",
                 parent_id=None,
                 task=root_task,
                 skills=skills,
@@ -465,7 +482,7 @@ async def run_strix_scan(
                     }
                 ]
             )
-            await coordinator.park_waiting(root_id)
+            await coordinator.park_waiting(root_id, wait_kind="user")
             initial_input = []
 
         result = await run_agent_loop(

@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
+from agents import ModelSettings
 from openai import RateLimitError
 
 import strix.tools.notes.tools as notes_tools
@@ -48,6 +49,7 @@ def _patch_engine_scaffold(
             force_required_tool_choice=False,
             timeout=300,
             prompt_cache=True,
+            extra_headers=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
     )
@@ -73,7 +75,7 @@ def _patch_engine_scaffold(
 
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
     monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: scope_context)
-    monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: ModelSettings())
 
     captured: dict[str, Any] = {}
 
@@ -95,8 +97,9 @@ def _patch_engine_scaffold(
     captured["root_session"] = fake_session
     monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: fake_session)
 
-    async def _raise_rate_limit(*_args: Any, **_kwargs: Any) -> None:
-        captured["run_agent_loop_kwargs"] = _kwargs
+    async def _raise_rate_limit(*_args: Any, **kwargs: Any) -> None:
+        captured["run_config"] = kwargs.get("run_config")
+        captured["run_agent_loop_kwargs"] = kwargs
         raise _make_rate_limit_error()
 
     monkeypatch.setattr(runner, "run_agent_loop", _raise_rate_limit)
@@ -301,3 +304,20 @@ async def test_resume_recoverable_waiting_root_does_not_restart_parked(
     assert run_agent_loop_kwargs["start_parked"] is False
     assert run_agent_loop_kwargs["initial_input"] == []
     assert captured["root_session"].items == []
+
+
+async def test_unknown_tool_calls_are_returned_to_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """A hallucinated tool name must not end the scan."""
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, {})
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-unknown-tool",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+    assert captured["run_config"].tool_not_found_behavior == "return_error_to_model"
