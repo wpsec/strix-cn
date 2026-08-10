@@ -19,6 +19,7 @@ from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
 from strix.interface.tui.runtime import GoTuiRuntime
+from strix.report.state import ProxyCaptureState
 
 
 def args() -> argparse.Namespace:
@@ -33,6 +34,7 @@ def args() -> argparse.Namespace:
         diff_base=None,
         local_sources=[],
         diff_scope={"active": False},
+        burp_port=None,
         user_explicit_instruction=None,
         run_name="test-run",
     )
@@ -817,6 +819,104 @@ async def test_scan_passes_max_turns_and_budget(monkeypatch: pytest.MonkeyPatch)
     assert captured["max_turns"] == 37
     assert captured["max_budget_usd"] == 4.25
     assert runtime.controller.scan_state == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_init_run_state_preserves_burp_port_in_scan_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeReportState:
+        def __init__(self, run_name: str) -> None:
+            self.run_name = run_name
+            self.run_record = {"status": "running"}
+            self.vulnerability_reports: list[dict[str, str]] = []
+            self.saved_scan_config: dict[str, Any] | None = None
+
+        def hydrate_from_run_dir(self) -> None:
+            return
+
+        def set_scan_config(self, scan_config: dict[str, Any]) -> None:
+            self.saved_scan_config = scan_config
+
+        def save_run_data(self) -> None:
+            return
+
+        def get_run_dir(self) -> Path:
+            return Path(".")
+
+    captured_global: dict[str, Any] = {}
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+    runtime = GoTuiRuntime(runtime_args)
+
+    monkeypatch.setattr(go_tui, "ReportState", _FakeReportState)
+    monkeypatch.setattr(go_tui, "set_global_report_state", lambda state: captured_global.setdefault("state", state))
+
+    runtime.init_run_state()
+
+    assert runtime.scan_config["burp_port"] == 8081
+    assert runtime.report_state is not None
+    assert runtime.report_state.saved_scan_config is runtime.scan_config
+    assert runtime.report_state.saved_scan_config["burp_port"] == 8081
+    assert captured_global["state"] is runtime.report_state
+
+
+@pytest.mark.asyncio
+async def test_sync_proxy_capture_state_updates_report_state_from_caido_ui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeReportState:
+        def __init__(self) -> None:
+            self.caido_ui_url = "http://127.0.0.1:52124"
+            self.proxy_scope_id = "scope-1"
+            self.proxy_capture_state = ProxyCaptureState()
+            self.proxy_capture_error = None
+
+        def update_proxy_capture_state(
+            self,
+            capture_state: ProxyCaptureState,
+            *,
+            error: str | None = None,
+            persist: bool = False,
+        ) -> None:
+            assert persist is False
+            self.proxy_capture_state = capture_state
+            self.proxy_capture_error = error
+
+    class _FakePoller:
+        def __init__(self, host_url: str) -> None:
+            self.host_url = host_url
+
+        async def fetch_snapshot(self, *, scope_id: str | None = None) -> ProxyCaptureState:
+            assert scope_id == "scope-1"
+            return ProxyCaptureState(
+                recent_request_count=5,
+                recent_request_has_more=True,
+                latest_request_id="req-5",
+                latest_method="POST",
+                latest_host="app.example.com",
+                latest_path="/api/orders",
+                latest_status_code=200,
+                total_request_count=19,
+            )
+
+        async def aclose(self) -> None:
+            return
+
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+    runtime = GoTuiRuntime(runtime_args)
+    runtime.report_state = _FakeReportState()
+
+    monkeypatch.setattr(go_tui, "ProxyCapturePoller", _FakePoller)
+
+    changed = await runtime._sync_proxy_capture_state()
+
+    assert changed is True
+    assert runtime._proxy_capture_poller_host == "http://127.0.0.1:52124"
+    assert runtime.report_state.proxy_capture_state.recent_request_count == 5
+    assert runtime.report_state.proxy_capture_state.latest_host == "app.example.com"
+    assert runtime.report_state.proxy_capture_state.total_request_count == 19
 
 
 @pytest.mark.asyncio

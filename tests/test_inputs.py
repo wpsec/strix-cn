@@ -264,12 +264,30 @@ def test_build_root_task_burp_passive_mode() -> None:
     assert "Do not invent, broaden, or probe unrelated hosts" in task
 
 
+def test_build_root_task_container_image_target() -> None:
+    task = build_root_task(
+        {
+            "targets": [
+                {
+                    "type": "container_image",
+                    "details": {"target_image": "xingdingss/saltfish_test:dev-5ae6b8f"},
+                }
+            ]
+        }
+    )
+
+    assert "Container Images:" in task
+    assert "xingdingss/saltfish_test:dev-5ae6b8f" in task
+    assert "/workspace may be empty" in task
+
+
 def test_build_scope_context_burp_passive_mode() -> None:
     scope = build_scope_context({"burp_port": 8081})
 
     assert scope["scope_source"] == "burp_upstream_proxy"
     assert scope["authorization_source"] == "operator_routed_proxy_traffic"
     assert scope["authorized_targets"] == []
+    assert scope["container_image_targets"] == []
     assert scope["proxy_passive_mode"] is True
     assert scope["proxy_scope_enforced"] is True
     assert "*.caido.io" in scope["proxy_scope_denylist"]
@@ -290,6 +308,28 @@ def test_build_scope_context_burp_mode_with_explicit_target_allowlist() -> None:
 
     assert scope["proxy_scope_allowlist"] == ["app.example.com"]
     assert "*.example.com" not in scope["proxy_scope_allowlist"]
+
+
+def test_build_scope_context_container_image_aliases() -> None:
+    scope = build_scope_context(
+        {
+            "targets": [
+                {
+                    "type": "docker_image",
+                    "details": {"image_name": "repo/example:1.2.3"},
+                }
+            ]
+        }
+    )
+
+    assert scope["authorized_targets"] == [
+        {
+            "type": "docker_image",
+            "value": "repo/example:1.2.3",
+            "workspace_path": "",
+        }
+    ]
+    assert scope["container_image_targets"] == ["repo/example:1.2.3"]
 
 
 @pytest.mark.parametrize("model_name", ["openai/o3", "gpt-4o"])

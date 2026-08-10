@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 
 _STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
+_PASSIVE_PROXY_ACTIVE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
+_PASSIVE_PROXY_PHASE_CAPTURE = "capture"
+_PASSIVE_PROXY_PHASE_TESTING = "testing"
 
 ChangeCallback = Callable[[], None]
 StartCallback = Callable[[bool], Awaitable[None]]
@@ -106,6 +109,11 @@ class TuiController:
         self.viewer_status = "idle"
         self.viewer_url: str | None = None
         self._viewer_httpd: Any = None
+        self._passive_proxy_phase_name = (
+            _PASSIVE_PROXY_PHASE_CAPTURE if self._is_passive_proxy_mode() else ""
+        )
+        self._passive_proxy_capture_baseline_request_id: str | None = None
+        self._passive_proxy_capture_baseline_total_count: int | None = None
         self._on_start = on_start
         self._on_quit = on_quit
         self._on_change = on_change
@@ -164,6 +172,11 @@ class TuiController:
         subscription = False
         with contextlib.suppress(Exception):
             subscription = is_subscription_run(self.report_state)
+        proxy_capture_state = getattr(self.report_state, "proxy_capture_state", None)
+        latest_status_code = getattr(proxy_capture_state, "latest_status_code", None)
+        if not isinstance(latest_status_code, int):
+            latest_status_code = None
+        passive_proxy_mode = self._is_passive_proxy_mode()
         model_warning = ""
         if model and not is_recommended_or_frontier_model(model):
             model_warning = (
@@ -187,6 +200,30 @@ class TuiController:
             "diff_base": terminal_projection(self.diff_base, max_string=256),
             "model": terminal_projection(model, max_string=256),
             "model_warning": terminal_projection(model_warning, max_string=512),
+            "passive_proxy_mode": passive_proxy_mode,
+            "passive_proxy_phase": self._passive_proxy_phase(),
+            "proxy_recent_request_count": int(
+                getattr(proxy_capture_state, "recent_request_count", 0) or 0
+            ),
+            "proxy_recent_request_has_more": bool(
+                getattr(proxy_capture_state, "recent_request_has_more", False)
+            ),
+            "proxy_latest_method": terminal_projection(
+                getattr(proxy_capture_state, "latest_method", None), max_string=32
+            ),
+            "proxy_latest_host": terminal_projection(
+                getattr(proxy_capture_state, "latest_host", None), max_string=256
+            ),
+            "proxy_latest_path": terminal_projection(
+                getattr(proxy_capture_state, "latest_path", None), max_string=256
+            ),
+            "proxy_latest_status_code": latest_status_code,
+            "proxy_total_request_count": int(
+                getattr(proxy_capture_state, "total_request_count", 0) or 0
+            ),
+            "proxy_capture_error": terminal_projection(
+                getattr(self.report_state, "proxy_capture_error", None), max_string=256
+            ),
             "caido_url": terminal_projection(
                 getattr(self.report_state, "caido_url", None), max_string=1024
             ),
@@ -359,28 +396,235 @@ class TuiController:
     async def _send_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         agent_id = self._required_string(payload, "agent_id")
         message = self._required_string(payload, "message")
+        passive_result = await self._handle_passive_proxy_control_message(agent_id, message)
+        if passive_result is not None:
+            return passive_result
+        if self._should_ignore_passive_proxy_waiting_message(agent_id, message):
+            self.add_message(
+                "已忽略等待态下的单字符输入。完成当前功能点采集后，请发送明确指令再继续。",
+                level="info",
+            )
+            return {"sent": False, "ignored": True}
+        delivered = await self._deliver_user_message(agent_id, message)
+        if not delivered:
+            raise RuntimeError("Message could not be delivered")
+        return {"sent": True}
+
+    async def _deliver_user_message(
+        self,
+        agent_id: str,
+        transcript_message: str,
+        *,
+        delivered_message: str | None = None,
+    ) -> bool:
         if self.coordinator is None:
             raise RuntimeError("Agent coordinator is unavailable")
         if self.scan_loop is None or self.scan_loop.is_closed():
             raise RuntimeError("Scan loop is not ready")
-        self.live_view.record_user_message(agent_id, message)
+        payload_message = delivered_message or transcript_message
+        self.live_view.record_user_message(agent_id, transcript_message)
         if self.scan_loop is asyncio.get_running_loop():
             delivered = await self.coordinator.send(
                 agent_id,
-                {"from": "user", "content": message, "type": "instruction"},
+                {"from": "user", "content": payload_message, "type": "instruction"},
             )
         else:
             future = asyncio.run_coroutine_threadsafe(
                 self.coordinator.send(
                     agent_id,
-                    {"from": "user", "content": message, "type": "instruction"},
+                    {"from": "user", "content": payload_message, "type": "instruction"},
                 ),
                 self.scan_loop,
             )
             delivered = await asyncio.wrap_future(future)
-        if not delivered:
-            raise RuntimeError("Message could not be delivered")
-        return {"sent": True}
+        return bool(delivered)
+
+    async def _handle_passive_proxy_control_message(
+        self,
+        agent_id: str,
+        message: str,
+    ) -> dict[str, Any] | None:
+        if not self._is_passive_proxy_mode():
+            return None
+        command, note = self._classify_passive_proxy_message(message)
+        if command is None:
+            return None
+        root_id = self._root_agent_id() or agent_id
+        if command == "start_test":
+            if self._passive_proxy_phase() == _PASSIVE_PROXY_PHASE_TESTING:
+                self.add_message(
+                    "当前仍处于本功能点测试阶段。若要切到下一轮，请先发送“下一功能点”。",
+                    level="info",
+                )
+                return {"sent": False, "handled": True, "ignored": True}
+            if not self._has_any_proxy_capture():
+                self.add_message(
+                    "当前还没有捕获到任何 Burp 流量。请先完成当前功能点操作，确认右侧已出现最近流量后，再发送“开始测试”。",
+                    level="info",
+                )
+                return {"sent": False, "handled": True, "ignored": True}
+            if self._requires_new_proxy_capture_before_test() and not self._has_new_proxy_capture():
+                self.add_message(
+                    "当前还没有捕获到下一功能点的新流量。请先在 Burp/浏览器中完成新一轮操作，确认右侧最近流量已更新后，再发送“开始测试”。",
+                    level="info",
+                )
+                return {"sent": False, "handled": True, "ignored": True}
+            injected = self._build_passive_proxy_start_test_instruction(note)
+            delivered = await self._deliver_user_message(
+                root_id,
+                message,
+                delivered_message=injected,
+            )
+            if not delivered:
+                raise RuntimeError("Message could not be delivered")
+            self._passive_proxy_phase_name = _PASSIVE_PROXY_PHASE_TESTING
+            self._clear_passive_proxy_capture_baseline()
+            self.add_message(
+                "已开始当前功能点测试。Root 会先创建“当前功能点攻击面分析专家”，完成映射后再分派漏洞测试子 agent。",
+                level="info",
+            )
+            return {"sent": True, "handled": True, "agent_id": root_id}
+        if command == "next_feature":
+            if self._passive_proxy_phase() != _PASSIVE_PROXY_PHASE_TESTING:
+                self.add_message(
+                    "当前已经在功能点采集阶段。请先在 Burp 中完成操作，再发送“开始测试”。",
+                    level="info",
+                )
+                return {"sent": False, "handled": True, "ignored": True}
+            if not self._can_advance_to_next_feature():
+                self.add_message(
+                    "当前功能点仍在测试中。请等待本轮结束后再发送“下一功能点”。",
+                    level="info",
+                )
+                return {"sent": False, "handled": True, "ignored": True}
+            self._passive_proxy_phase_name = _PASSIVE_PROXY_PHASE_CAPTURE
+            self._remember_passive_proxy_capture_baseline()
+            self.add_message(
+                "已切换到下一功能点采集阶段。请先在 Burp/浏览器中完成新一轮操作，完成后发送“开始测试”。",
+                level="info",
+            )
+            return {"sent": False, "handled": True, "ignored": True}
+        return None
+
+    def _should_ignore_passive_proxy_waiting_message(self, agent_id: str, message: str) -> bool:
+        if not self._is_passive_proxy_mode():
+            return False
+        if self._passive_proxy_phase() != _PASSIVE_PROXY_PHASE_CAPTURE:
+            return False
+        agent = self.live_view.agents.get(agent_id) or {}
+        if str(agent.get("status") or "") != "waiting":
+            return False
+        return len(message) == 1
+
+    def _is_passive_proxy_mode(self) -> bool:
+        return getattr(self.args, "burp_port", None) is not None and not self.targets
+
+    def _passive_proxy_phase(self) -> str:
+        if not self._is_passive_proxy_mode():
+            return ""
+        return self._passive_proxy_phase_name or _PASSIVE_PROXY_PHASE_CAPTURE
+
+    def _proxy_capture_state(self) -> Any:
+        return getattr(self.report_state, "proxy_capture_state", None)
+
+    def _proxy_total_request_count(self) -> int:
+        return int(getattr(self._proxy_capture_state(), "total_request_count", 0) or 0)
+
+    def _proxy_latest_request_id(self) -> str | None:
+        request_id = getattr(self._proxy_capture_state(), "latest_request_id", None)
+        if not isinstance(request_id, str):
+            return None
+        text = request_id.strip()
+        return text or None
+
+    def _has_any_proxy_capture(self) -> bool:
+        capture_state = self._proxy_capture_state()
+        if capture_state is None:
+            return False
+        if self._proxy_total_request_count() > 0:
+            return True
+        if int(getattr(capture_state, "recent_request_count", 0) or 0) > 0:
+            return True
+        return self._proxy_latest_request_id() is not None
+
+    def _requires_new_proxy_capture_before_test(self) -> bool:
+        return self._passive_proxy_capture_baseline_total_count is not None
+
+    def _has_new_proxy_capture(self) -> bool:
+        baseline_total = self._passive_proxy_capture_baseline_total_count
+        if baseline_total is None:
+            return self._has_any_proxy_capture()
+        current_total = self._proxy_total_request_count()
+        if current_total > baseline_total:
+            return True
+        baseline_request_id = self._passive_proxy_capture_baseline_request_id
+        current_request_id = self._proxy_latest_request_id()
+        if baseline_request_id is None:
+            return current_request_id is not None and current_total > 0
+        return current_request_id is not None and current_request_id != baseline_request_id
+
+    def _remember_passive_proxy_capture_baseline(self) -> None:
+        self._passive_proxy_capture_baseline_request_id = self._proxy_latest_request_id()
+        self._passive_proxy_capture_baseline_total_count = self._proxy_total_request_count()
+
+    def _clear_passive_proxy_capture_baseline(self) -> None:
+        self._passive_proxy_capture_baseline_request_id = None
+        self._passive_proxy_capture_baseline_total_count = None
+
+    def _root_agent_id(self) -> str | None:
+        for current_agent_id, agent in self.live_view.agents.items():
+            if agent.get("parent_id") is None:
+                return current_agent_id
+        return None
+
+    def _root_has_active_children(self) -> bool:
+        root_id = self._root_agent_id()
+        if root_id is None:
+            return False
+        for agent in self.live_view.agents.values():
+            if agent.get("parent_id") != root_id:
+                continue
+            if str(agent.get("status") or "") in _PASSIVE_PROXY_ACTIVE_AGENT_STATUSES:
+                return True
+        return False
+
+    def _can_advance_to_next_feature(self) -> bool:
+        root_id = self._root_agent_id()
+        if root_id is None:
+            return True
+        root = self.live_view.agents.get(root_id) or {}
+        if str(root.get("status") or "") in {"running", "budget_paused"}:
+            return False
+        return not self._root_has_active_children()
+
+    def _classify_passive_proxy_message(self, message: str) -> tuple[str | None, str]:
+        normalized = " ".join(str(message).strip().split())
+        compact = normalized.replace(" ", "")
+        for prefix in ("下一功能点", "下一个功能点", "开始下一功能点", "切到下一功能点"):
+            if normalized.startswith(prefix) or compact.startswith(prefix):
+                note = normalized[len(prefix) :].lstrip("，,。:：;； ")
+                return "next_feature", note
+        for prefix in ("开始测试", "开始分析"):
+            if normalized.startswith(prefix) or compact.startswith(prefix):
+                note = normalized[len(prefix) :].lstrip("，,。:：;； ")
+                return "start_test", note
+        if "采集完成" in compact and ("继续分析" in compact or "继续测试" in compact):
+            return "start_test", normalized
+        return None, ""
+
+    def _build_passive_proxy_start_test_instruction(self, note: str) -> str:
+        lines = [
+            "当前功能点的手工操作与 Burp 流量采集已完成，现在开始测试。",
+            "你必须先创建或复用一个名为“当前功能点攻击面分析专家”的子 agent。",
+            "该专家必须检查本轮完整 Burp 请求、站点地图、认证态、方法、路径、参数、表单与响应特征，输出当前功能点的接口清单、参数面与适用漏洞类别。",
+            "映射完成前不要只创建一个窄漏洞专家；映射完成后再按 endpoint 和漏洞类别创建不重叠的测试子 agent，覆盖当前功能点全部相关请求。",
+            "确认漏洞后必须创建正式漏洞报告，不要只在 agent_finish 中口头描述。",
+            "本轮仅基于当前功能点已采集的流量与站点地图开展测试，不要把之后新进入 Burp 的其他功能点流量自动并入本轮。",
+            "本轮结束后请停回等待态，等待操作者发送“下一功能点”。",
+        ]
+        if note:
+            lines.append(f"操作者补充关注点：{note}")
+        return "\n".join(lines)
 
     async def _stop_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
         agent_id = self._required_string(payload, "agent_id")

@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
 
 
+_CONTAINER_IMAGE_TARGET_TYPES = frozenset({"container_image", "docker_image", "image"})
+
+
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
     name = (model_name or "").strip().lower()
     for prefix in ("litellm/", "any-llm/"):
@@ -78,6 +81,18 @@ def _render_api_spec(details: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _container_image_target_value(target: dict[str, Any]) -> str:
+    details = target.get("details") or {}
+    for key in ("target_image", "image", "image_name", "image_ref", "target_ref"):
+        value = details.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    original = target.get("original", "")
+    if isinstance(original, str):
+        return original.strip()
+    return ""
+
+
 def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
     burp_port = scan_config.get("burp_port")
@@ -86,6 +101,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     proxy_scope = build_proxy_scope_constraints(scan_config)
 
     sections: dict[str, list[str]] = {
+        "Container Images": [],
         "Repositories": [],
         "Local Codebases": [],
         "URLs": [],
@@ -99,7 +115,12 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else "/workspace"
 
-        if ttype == "repository":
+        if ttype in _CONTAINER_IMAGE_TARGET_TYPES:
+            image = _container_image_target_value(target)
+            sections["Container Images"].append(
+                f"- {image or 'unknown image'} (container image target; /workspace may be empty unless a separate code target is also provided)"
+            )
+        elif ttype == "repository":
             url = details.get("target_repo", "")
             cloned = details.get("cloned_repo_path")
             sections["Repositories"].append(
@@ -194,13 +215,18 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
             "scope_source": "burp_upstream_proxy",
             "authorization_source": "operator_routed_proxy_traffic",
             "authorized_targets": [],
+            "container_image_targets": [],
             "proxy_passive_mode": True,
             **proxy_scope,
             "user_instructions_do_not_expand_scope": True,
         }
 
     authorized: list[dict[str, str]] = []
+    container_images: list[str] = []
     value_keys = {
+        "container_image": "target_image",
+        "docker_image": "target_image",
+        "image": "target_image",
         "repository": "target_repo",
         "local_code": "target_path",
         "web_application": "target_url",
@@ -210,14 +236,19 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     for target in targets:
         ttype = target.get("type", "unknown")
         details = target.get("details") or {}
-        key = value_keys.get(ttype)
-        value = details.get(key, "") if key is not None else target.get("original", "")
+        if ttype in _CONTAINER_IMAGE_TARGET_TYPES:
+            value = _container_image_target_value(target)
+        else:
+            key = value_keys.get(ttype)
+            value = details.get(key, "") if key is not None else target.get("original", "")
 
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else ""
         authorized.append(
             {"type": ttype, "value": value, "workspace_path": workspace_path},
         )
+        if ttype in _CONTAINER_IMAGE_TARGET_TYPES and value:
+            container_images.append(value)
 
         # An API spec authorizes the hosts it declares as in-scope web targets
         # so the agent can exercise every endpoint without expanding scope.
@@ -231,6 +262,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "scope_source": "system_scan_config",
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": authorized,
+        "container_image_targets": container_images,
         **proxy_scope,
         "user_instructions_do_not_expand_scope": True,
     }

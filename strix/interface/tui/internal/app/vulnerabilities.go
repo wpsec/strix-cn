@@ -191,10 +191,10 @@ func (m *Model) keepVulnerabilitySelectionInWindow() {
 func (m Model) modalView() string {
 	switch m.modal {
 	case modalHelp:
-		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(34).Align(lipgloss.Center).Render("Strix Help")
-		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text\nClick     Expand/collapse tool")
+		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(52).Align(lipgloss.Center).Render("Strix Help")
+		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text\nClick     Expand/collapse tool\n\nBurp 被动模式\n  先在目标中完成当前功能点操作\n  完成后发送“开始测试”启动分析\n  本轮结束后发送“下一功能点”进入下一轮")
 		content := title + "\n\n" + body
-		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
+		return lipgloss.NewStyle().Width(56).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
 	case modalQuit:
 		// #quit_dialog: width 24, border round #333333, title #d4d4d4.
 		return m.confirmView("Quit Strix?", 24, dark, textColor)

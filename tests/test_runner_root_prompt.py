@@ -222,10 +222,49 @@ async def test_root_prompt_includes_burp_passive_mode_constraints(
     assert "individually scoped" in instructions_override
     assert "app.example.com" in instructions_override
     assert "*.caido.io" in instructions_override
+    assert "disabling shell-based probing here" in instructions_override
+    assert "list_requests" in instructions_override
     assert "PASSIVE PROXY FEATURE-BATCH COORDINATION" in instructions_override
     assert "attack-surface mapping specialist" in instructions_override
     assert "create_vulnerability_report" in instructions_override
     assert "PASSIVE BURP MODE" in instructions_override
+
+
+@pytest.mark.asyncio
+async def test_root_prompt_includes_container_image_constraints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    scope_context = {
+        "scope_source": "system_scan_config",
+        "authorization_source": "strix_platform_verified_targets",
+        "authorized_targets": [
+            {
+                "type": "container_image",
+                "value": "xingdingss/saltfish_test:dev-5ae6b8f",
+                "workspace_path": "",
+            },
+        ],
+        "container_image_targets": ["xingdingss/saltfish_test:dev-5ae6b8f"],
+        "user_instructions_do_not_expand_scope": True,
+    }
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-container-image",
+        image="img",
+        coordinator=AgentCoordinator(),
+        root_instructions_override="CONTAINER IMAGE MODE",
+    )
+
+    instructions_override = captured["kwargs"]["instructions_override"]
+    assert "SYSTEM-VERIFIED CONTAINER IMAGE CONTEXT" in instructions_override
+    assert "do not begin by probing `/workspace`" in instructions_override
+    assert "trivy image" in instructions_override
+    assert "xingdingss/saltfish_test:dev-5ae6b8f" in instructions_override
+    assert "CONTAINER IMAGE TESTING" in instructions_override
+    assert "CONTAINER IMAGE MODE" in instructions_override
 
 
 @pytest.mark.asyncio

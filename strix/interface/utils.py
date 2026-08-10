@@ -372,6 +372,8 @@ def build_target_summary_text(
         target_text.append("Burp 被动模式", style="bold white")
         target_text.append("\n        ")
         target_text.append("仅基于 Burp 转发流量建立作用域", style="white")
+        target_text.append("\n        ")
+        target_text.append("先在 Burp/浏览器中完成操作，再发送“开始测试”", style="white")
         return target_text
 
     if len(targets) == 1:
@@ -481,10 +483,10 @@ def _append_burp_workflow_status(stats_text: Text, report_state: Any) -> None:
     stats_text.append(label, style="white")
     stats_text.append("\n")
     stats_text.append("操作: ", style="bold white")
-    stats_text.append("Ctrl+T 开始测试", style="white")
-    stats_text.append("\n")
-    stats_text.append("      ", style="bold white")
-    stats_text.append("Ctrl+N 下一功能点", style="white")
+    if phase == "testing":
+        stats_text.append("发送“下一功能点”进入下一轮", style="white")
+    else:
+        stats_text.append("发送“开始测试”启动当前功能点分析", style="white")
 
 
 def build_final_stats_text(report_state: Any) -> Text:

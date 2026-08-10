@@ -9,7 +9,9 @@ from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
     is_recommended_or_frontier_model,
     request_timeout_extra_args,
+    validate_provider_route_config,
 )
+from strix.config.settings import LlmSettings, Settings
 
 
 @pytest.mark.parametrize("model_name", RECOMMENDED_MODEL_NAMES)
@@ -90,3 +92,51 @@ def test_frontier_model_families_are_accepted(model_name: str) -> None:
 )
 def test_non_frontier_models_are_rejected(model_name: str) -> None:
     assert not is_recommended_or_frontier_model(model_name)
+
+
+def _settings(*, api_key: str | None, api_base: str | None) -> Settings:
+    return Settings(
+        llm=LlmSettings(
+            model="deepseek/deepseek-v4-pro",
+            api_key=api_key,
+            api_base=api_base,
+        )
+    )
+
+
+def test_aliyun_plan_key_rejects_workspace_endpoint() -> None:
+    settings = _settings(
+        api_key="sk-sp-demo",
+        api_base="https://ws-r7decpdut5x0sanx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    )
+
+    with pytest.raises(ValueError, match="sk-sp-"):
+        validate_provider_route_config(settings)
+
+
+def test_aliyun_workspace_key_rejects_token_plan_endpoint() -> None:
+    settings = _settings(
+        api_key="sk-ws-demo",
+        api_base="https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    )
+
+    with pytest.raises(ValueError, match="Token Plan"):
+        validate_provider_route_config(settings)
+
+
+def test_aliyun_plan_key_accepts_token_plan_endpoint() -> None:
+    settings = _settings(
+        api_key="sk-sp-demo",
+        api_base="https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    )
+
+    validate_provider_route_config(settings)
+
+
+def test_aliyun_workspace_key_accepts_workspace_endpoint() -> None:
+    settings = _settings(
+        api_key="sk-ws-demo",
+        api_base="https://ws-r7decpdut5x0sanx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    )
+
+    validate_provider_route_config(settings)

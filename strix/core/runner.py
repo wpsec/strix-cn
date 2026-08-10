@@ -413,6 +413,8 @@ async def run_strix_scan(
             "caido_scope_id": scope_context.get("proxy_scope_id"),
             "caido_scope_allowlist": scope_context.get("proxy_scope_allowlist") or [],
             "caido_scope_denylist": scope_context.get("proxy_scope_denylist") or [],
+            "proxy_passive_mode": bool(scope_context.get("proxy_passive_mode")),
+            "allow_shell_in_proxy_passive_mode": False,
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,

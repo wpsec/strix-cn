@@ -173,9 +173,11 @@ const (
 // Composer placeholders. The launch screen falls back to the short prompt when
 // the column is too narrow to show the full one without clipping it.
 const (
-	setupPlaceholder      = "Describe what to test, or name a target"
-	setupPlaceholderShort = "What should Strix test?"
-	chatPlaceholder       = "Send a message"
+	setupPlaceholder        = "Describe what to test, or name a target"
+	setupPlaceholderShort   = "What should Strix test?"
+	chatPlaceholder         = "Send a message"
+	passiveProxyPlaceholder = "先在 Burp 中完成当前功能点操作；采集完成后发送“开始测试”，也可补充关注点。"
+	nextFeaturePlaceholder  = "当前功能点测试已结束；发送“下一功能点”后，在 Burp 中操作新功能点，再发送“开始测试”。"
 )
 
 // The composer opens at minInputLines rows for breathing room and grows with
@@ -244,6 +246,109 @@ func (m Model) composerBounds() (floor, ceiling int) {
 func (m *Model) syncInputHeight() {
 	floor, ceiling := m.composerBounds()
 	m.input.SetHeight(max(floor, min(composerHeight(m.input), ceiling)))
+}
+
+func (m Model) selectedAgentValue() (protocol.Agent, bool) {
+	if m.selectedAgent < 0 || m.selectedAgent >= len(m.snapshot.Agents) {
+		return protocol.Agent{}, false
+	}
+	return m.snapshot.Agents[m.selectedAgent], true
+}
+
+func (m Model) rootAgentValue() (protocol.Agent, bool) {
+	for _, agent := range m.snapshot.Agents {
+		if agent.ParentID == nil {
+			return agent, true
+		}
+	}
+	return protocol.Agent{}, false
+}
+
+func (m Model) rootHasActiveChildren(rootID string) bool {
+	for _, agent := range m.snapshot.Agents {
+		if agent.ParentID == nil || *agent.ParentID != rootID {
+			continue
+		}
+		switch agent.Status {
+		case "running", "waiting", "budget_paused":
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) passiveProxyPhase() string {
+	if m.snapshot.SetupMode || !m.snapshot.PassiveProxyMode {
+		return ""
+	}
+	if phase := strings.TrimSpace(m.snapshot.PassiveProxyPhase); phase != "" {
+		return phase
+	}
+	root, ok := m.rootAgentValue()
+	if !ok {
+		return ""
+	}
+	if m.rootHasActiveChildren(root.ID) {
+		return "testing"
+	}
+	switch root.Status {
+	case "running", "budget_paused":
+		return "testing"
+	case "waiting":
+		return "capture"
+	default:
+		return ""
+	}
+}
+
+func (m Model) isPassiveProxyTestingActive() bool {
+	if m.passiveProxyPhase() != "testing" {
+		return false
+	}
+	root, ok := m.rootAgentValue()
+	if !ok {
+		return false
+	}
+	if m.rootHasActiveChildren(root.ID) {
+		return true
+	}
+	return root.Status == "running" || root.Status == "budget_paused"
+}
+
+func (m Model) isPassiveProxyAwaitingNextFeature() bool {
+	if m.passiveProxyPhase() != "testing" {
+		return false
+	}
+	root, ok := m.rootAgentValue()
+	if !ok {
+		return false
+	}
+	return root.Status == "waiting" && !m.rootHasActiveChildren(root.ID)
+}
+
+func (m Model) isPassiveProxyWaiting() bool {
+	if m.passiveProxyPhase() != "capture" {
+		return false
+	}
+	agent, ok := m.selectedAgentValue()
+	if !ok {
+		return false
+	}
+	return agent.ParentID == nil && agent.Status == "waiting"
+}
+
+func (m *Model) syncLiveInputPlaceholder() {
+	if m.isPassiveProxyWaiting() {
+		m.input.Placeholder = passiveProxyPlaceholder
+		return
+	}
+	if m.isPassiveProxyAwaitingNextFeature() {
+		if agent, ok := m.selectedAgentValue(); ok && agent.ParentID == nil {
+			m.input.Placeholder = nextFeaturePlaceholder
+			return
+		}
+	}
+	m.input.Placeholder = chatPlaceholder
 }
 
 // composerHeight is how many rows the composer needs to show all of its

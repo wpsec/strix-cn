@@ -10,6 +10,7 @@ import os
 import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 from agents import (
     set_default_openai_api,
@@ -59,6 +60,9 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+_ALIYUN_TOKEN_PLAN_OPENAI_BASE = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+_ALIYUN_CODING_PLAN_OPENAI_BASE = "https://coding-intl.dashscope.aliyuncs.com/v1"
 
 
 def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
@@ -555,6 +559,7 @@ FRONTIER_MODEL_FAMILIES = (
 def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
+    validate_provider_route_config(settings)
     set_tracing_disabled(True)
     if codex.subscription_model(llm.model):
         return
@@ -571,6 +576,92 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     else:
         set_default_openai_api("responses")
     _configure_extra_headers(llm)
+
+
+def validate_provider_route_config(settings: Settings) -> None:
+    """Fail fast on provider key/base combinations the upstream rejects."""
+    llm = settings.llm
+    api_key = (llm.api_key or "").strip()
+    api_base = (llm.api_base or "").strip()
+    if not api_key or not api_base:
+        return
+
+    endpoint_kind = _aliyun_endpoint_kind(api_base)
+    if endpoint_kind is None:
+        return
+
+    key_kind = _aliyun_key_kind(api_key)
+    if key_kind is None:
+        return
+
+    if key_kind == "plan" and endpoint_kind in {"shared", "trial", "workspace"}:
+        raise ValueError(_aliyun_plan_key_mismatch_message(api_base))
+    if key_kind == "workspace_or_payg" and endpoint_kind in {"token_plan", "coding_plan"}:
+        raise ValueError(_aliyun_workspace_key_mismatch_message(api_base))
+
+
+def _aliyun_key_kind(api_key: str) -> str | None:
+    key = api_key.strip().lower()
+    if not key.startswith("sk-"):
+        return None
+    if key.startswith("sk-sp-"):
+        return "plan"
+    if key.startswith("sk-ws") or key.startswith("sk-"):
+        return "workspace_or_payg"
+    return None
+
+
+def _aliyun_endpoint_kind(api_base: str) -> str | None:
+    parsed = urlparse(api_base.strip())
+    host = parsed.netloc.lower()
+    path = parsed.path.rstrip("/").lower()
+    if not host:
+        return None
+
+    if (
+        host.startswith("token-plan.")
+        and host.endswith(".maas.aliyuncs.com")
+        and path.startswith("/compatible-mode/v1")
+    ):
+        return "token_plan"
+    if (
+        host in {"coding-intl.dashscope.aliyuncs.com", "coding.dashscope.aliyuncs.com"}
+        and path.startswith("/v1")
+    ):
+        return "coding_plan"
+    if host.endswith(".maas.aliyuncs.com") and path.startswith("/compatible-mode/v1"):
+        if host.startswith("trial."):
+            return "trial"
+        return "workspace"
+    if host.endswith(".dashscope.aliyuncs.com") and path.startswith("/compatible-mode/v1"):
+        return "shared"
+    return None
+
+
+def _aliyun_plan_key_mismatch_message(api_base: str) -> str:
+    return (
+        "检测到阿里云 `sk-sp-` 计划专用 API Key 与当前 `LLM_API_BASE` 不匹配。\n"
+        f"当前地址：{api_base}\n\n"
+        "`sk-sp-` 不能直接调用普通 Model Studio / workspace / trial 的 OpenAI-compatible "
+        "endpoint。\n"
+        "请改用控制台展示的计划专用地址，例如：\n"
+        f"- Token Plan: `{_ALIYUN_TOKEN_PLAN_OPENAI_BASE}`\n"
+        f"- Coding Plan: `{_ALIYUN_CODING_PLAN_OPENAI_BASE}`\n\n"
+        "如果你要继续使用当前 workspace 或普通 Model Studio 地址，请把 `LLM_API_KEY` "
+        "换成同 region、同 workspace 的阿里云 Model Studio Key（通常是 `sk-...` 或 `sk-ws...`）。"
+    )
+
+
+def _aliyun_workspace_key_mismatch_message(api_base: str) -> str:
+    return (
+        "检测到阿里云普通 Model Studio / workspace API Key 与当前计划专用 `LLM_API_BASE` 不匹配。\n"
+        f"当前地址：{api_base}\n\n"
+        "`sk-...` / `sk-ws...` 不能直接调用 Token Plan 或 Coding Plan 的专用 endpoint。\n"
+        "请改用与你的 key 同类型的 OpenAI-compatible 地址，例如：\n"
+        "- 普通共享域名: `https://dashscope.aliyuncs.com/compatible-mode/v1`\n"
+        "- Workspace 专属域名: `https://<workspace-id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`\n\n"
+        "如果你就是要使用当前计划专用地址，请把 `LLM_API_KEY` 换成对应计划生成的 `sk-sp-...`。"
+    )
 
 
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:

@@ -10,6 +10,7 @@ import pytest
 from strix.config import apply_config_override, loader
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
+from strix.report.state import ProxyCaptureState
 
 
 def args() -> argparse.Namespace:
@@ -26,7 +27,39 @@ def args() -> argparse.Namespace:
         diff_scope={"active": False},
         user_explicit_instruction=None,
         run_name=None,
+        burp_port=None,
     )
+
+
+class PassiveProxyReportState:
+    def __init__(
+        self,
+        *,
+        recent_request_count: int = 1,
+        recent_request_has_more: bool = False,
+        latest_request_id: str | None = "req-1",
+        latest_method: str | None = "GET",
+        latest_host: str | None = "app.example.com",
+        latest_path: str | None = "/api/orders",
+        latest_status_code: int | None = 200,
+        total_request_count: int = 1,
+    ) -> None:
+        self.run_record = {"status": "running"}
+        self.caido_url = "http://127.0.0.1:8082"
+        self.proxy_capture_error = None
+        self.proxy_capture_state = ProxyCaptureState(
+            recent_request_count=recent_request_count,
+            recent_request_has_more=recent_request_has_more,
+            latest_request_id=latest_request_id,
+            latest_method=latest_method,
+            latest_host=latest_host,
+            latest_path=latest_path,
+            latest_status_code=latest_status_code,
+            total_request_count=total_request_count,
+        )
+
+    def get_total_llm_usage(self) -> dict[str, int]:
+        return {}
 
 
 @pytest.fixture(autouse=True)
@@ -120,6 +153,56 @@ def test_setup_restores_prepared_cli_targets() -> None:
     controller = TuiController(setup_args)
 
     assert controller.snapshot()["targets"] == ["https://example.com", "/workspace/source"]
+
+
+def test_snapshot_exposes_passive_proxy_mode_without_explicit_targets() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    controller = TuiController(runtime_args)
+
+    assert controller.snapshot()["passive_proxy_mode"] is True
+    assert controller.snapshot()["passive_proxy_phase"] == "capture"
+
+
+def test_snapshot_clears_passive_proxy_mode_when_targets_exist() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+    runtime_args.targets_info = [
+        {"type": "web", "details": {}, "original": "https://example.com"},
+    ]
+
+    controller = TuiController(runtime_args)
+
+    assert controller.snapshot()["passive_proxy_mode"] is False
+
+
+def test_snapshot_exposes_proxy_capture_summary_fields() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+    controller = TuiController(
+        runtime_args,
+        report_state=PassiveProxyReportState(
+            recent_request_count=7,
+            recent_request_has_more=True,
+            latest_request_id="req-31",
+            latest_method="POST",
+            latest_host="app.example.com",
+            latest_path="/api/login",
+            latest_status_code=403,
+            total_request_count=31,
+        ),
+    )
+
+    snapshot = controller.snapshot()
+
+    assert snapshot["proxy_recent_request_count"] == 7
+    assert snapshot["proxy_recent_request_has_more"] is True
+    assert snapshot["proxy_latest_method"] == "POST"
+    assert snapshot["proxy_latest_host"] == "app.example.com"
+    assert snapshot["proxy_latest_path"] == "/api/login"
+    assert snapshot["proxy_latest_status_code"] == 403
+    assert snapshot["proxy_total_request_count"] == 31
 
 
 @pytest.mark.asyncio
@@ -395,6 +478,316 @@ async def test_stop_handles_coordinator_rejection_after_stale_active_projection(
 
     with pytest.raises(RuntimeError, match="no longer active"):
         await controller.handle("agent.stop", {"agent_id": "agent-1"})
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_waiting_ignores_single_character_message() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    coordinator = Coordinator()
+    controller = TuiController(runtime_args, coordinator=coordinator)
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+
+    result = await controller.handle("agent.send_message", {"agent_id": "root", "message": "k"})
+
+    assert result == {"sent": False, "ignored": True}
+    assert coordinator.calls == []
+    assert controller.snapshot()["messages"][-1]["text"].startswith("已忽略等待态下的单字符输入")
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_waiting_allows_meaningful_message() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    coordinator = Coordinator()
+    controller = TuiController(
+        runtime_args,
+        coordinator=coordinator,
+        report_state=PassiveProxyReportState(),
+    )
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "当前功能点流量已采集完成，请继续分析"},
+    )
+
+    assert result == {"sent": True, "handled": True, "agent_id": "root"}
+    assert controller.snapshot()["passive_proxy_phase"] == "testing"
+    assert coordinator.calls == [
+        (
+            "root",
+            {
+                "from": "user",
+                "content": (
+                    "当前功能点的手工操作与 Burp 流量采集已完成，现在开始测试。\n"
+                    "你必须先创建或复用一个名为“当前功能点攻击面分析专家”的子 agent。\n"
+                    "该专家必须检查本轮完整 Burp 请求、站点地图、认证态、方法、路径、参数、表单与响应特征，输出当前功能点的接口清单、参数面与适用漏洞类别。\n"
+                    "映射完成前不要只创建一个窄漏洞专家；映射完成后再按 endpoint 和漏洞类别创建不重叠的测试子 agent，覆盖当前功能点全部相关请求。\n"
+                    "确认漏洞后必须创建正式漏洞报告，不要只在 agent_finish 中口头描述。\n"
+                    "本轮仅基于当前功能点已采集的流量与站点地图开展测试，不要把之后新进入 Burp 的其他功能点流量自动并入本轮。\n"
+                    "本轮结束后请停回等待态，等待操作者发送“下一功能点”。\n"
+                    "操作者补充关注点：当前功能点流量已采集完成，请继续分析"
+                ),
+                "type": "instruction",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_start_test_command_rewrites_message_and_routes_to_root() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    coordinator = Coordinator()
+    controller = TuiController(
+        runtime_args,
+        coordinator=coordinator,
+        report_state=PassiveProxyReportState(),
+    )
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+    controller.live_view.upsert_agent(
+        "child",
+        name="Mapper",
+        parent_id="root",
+        status="completed",
+    )
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "child", "message": "开始测试，重点看越权和鉴权"},
+    )
+
+    assert result == {"sent": True, "handled": True, "agent_id": "root"}
+    assert controller.snapshot()["passive_proxy_phase"] == "testing"
+    assert coordinator.calls[0][0] == "root"
+    assert "当前功能点攻击面分析专家" in coordinator.calls[0][1]["content"]
+    assert "操作者补充关注点：重点看越权和鉴权" in coordinator.calls[0][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_start_test_is_blocked_until_any_traffic_exists() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    coordinator = Coordinator()
+    controller = TuiController(
+        runtime_args,
+        coordinator=coordinator,
+        report_state=PassiveProxyReportState(
+            recent_request_count=0,
+            latest_request_id=None,
+            latest_method=None,
+            latest_host=None,
+            latest_path=None,
+            latest_status_code=None,
+            total_request_count=0,
+        ),
+    )
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+
+    assert result == {"sent": False, "handled": True, "ignored": True}
+    assert controller.snapshot()["passive_proxy_phase"] == "capture"
+    assert coordinator.calls == []
+    assert "当前还没有捕获到任何 Burp 流量" in controller.snapshot()["messages"][-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_next_feature_switches_back_to_capture_without_waking_root() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    coordinator = Coordinator()
+    controller = TuiController(
+        runtime_args,
+        coordinator=coordinator,
+        report_state=PassiveProxyReportState(
+            recent_request_count=3,
+            latest_request_id="req-3",
+            total_request_count=3,
+        ),
+    )
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+
+    await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+    coordinator.calls.clear()
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "下一功能点"},
+    )
+
+    assert result == {"sent": False, "handled": True, "ignored": True}
+    assert controller.snapshot()["passive_proxy_phase"] == "capture"
+    assert coordinator.calls == []
+    assert "已切换到下一功能点采集阶段" in controller.snapshot()["messages"][-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_start_test_requires_new_traffic_after_next_feature() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    report_state = PassiveProxyReportState(
+        recent_request_count=3,
+        latest_request_id="req-3",
+        total_request_count=3,
+    )
+    coordinator = Coordinator()
+    controller = TuiController(runtime_args, coordinator=coordinator, report_state=report_state)
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+
+    first = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+    assert first == {"sent": True, "handled": True, "agent_id": "root"}
+
+    await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "下一功能点"},
+    )
+    coordinator.calls.clear()
+
+    blocked = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+
+    assert blocked == {"sent": False, "handled": True, "ignored": True}
+    assert controller.snapshot()["passive_proxy_phase"] == "capture"
+    assert coordinator.calls == []
+    assert "当前还没有捕获到下一功能点的新流量" in controller.snapshot()["messages"][-1]["text"]
+
+    report_state.proxy_capture_state = ProxyCaptureState(
+        recent_request_count=2,
+        recent_request_has_more=False,
+        latest_request_id="req-5",
+        latest_method="POST",
+        latest_host="app.example.com",
+        latest_path="/api/orders/confirm",
+        latest_status_code=200,
+        total_request_count=5,
+    )
+
+    resumed = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+
+    assert resumed == {"sent": True, "handled": True, "agent_id": "root"}
+    assert controller.snapshot()["passive_proxy_phase"] == "testing"
+    assert coordinator.calls[0][0] == "root"
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_next_feature_is_blocked_while_children_are_active() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    coordinator = Coordinator()
+    controller = TuiController(
+        runtime_args,
+        coordinator=coordinator,
+        report_state=PassiveProxyReportState(),
+    )
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+
+    await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+    controller.live_view.upsert_agent(
+        "mapper",
+        name="当前功能点攻击面分析专家",
+        parent_id="root",
+        status="running",
+    )
+    coordinator.calls.clear()
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "下一功能点"},
+    )
+
+    assert result == {"sent": False, "handled": True, "ignored": True}
+    assert controller.snapshot()["passive_proxy_phase"] == "testing"
+    assert coordinator.calls == []
+    assert "当前功能点仍在测试中" in controller.snapshot()["messages"][-1]["text"]
 
 
 @pytest.mark.asyncio

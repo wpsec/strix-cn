@@ -34,15 +34,15 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		if m.snapshot.Error != nil {
 			m.errorText = *m.snapshot.Error
 		}
+		m.selectedAgent = selectedAgentIndex(m.snapshot.Agents, selectedAgentID)
 		if m.snapshot.SetupMode {
 			// The start screen is its own landing page; never sit on the
 			// splash before it.
 			m.showSplash = false
 			m.input.Placeholder = setupPlaceholder
 		} else {
-			m.input.Placeholder = chatPlaceholder
+			m.syncLiveInputPlaceholder()
 		}
-		m.selectedAgent = selectedAgentIndex(m.snapshot.Agents, selectedAgentID)
 		m.selectedVuln = min(m.selectedVuln, max(0, len(m.snapshot.Vulnerabilities)-1))
 		if m.modal == modalStop && !m.selectedAgentCanStop() {
 			m.closeModal()
@@ -428,6 +428,9 @@ func collectionItemID(item map[string]any) string {
 
 func (m *Model) refreshAfterCollection(name string) tea.Cmd {
 	if name == "agents" {
+		if !m.snapshot.SetupMode {
+			m.syncLiveInputPlaceholder()
+		}
 		m.ensureAgentVisible()
 		m.refreshViewport()
 		return m.notifyBudgetPause()

@@ -26,12 +26,18 @@ def _capturing_exec_tool(captured: dict[str, str]) -> FunctionTool:
     )
 
 
+def _ctx(**context: Any) -> Any:
+    return SimpleNamespace(context=context)
+
+
 @pytest.mark.asyncio
 async def test_wrap_exec_command_defaults_shell_to_bash() -> None:
     captured: dict[str, str] = {}
     wrapped = factory._wrap_exec_command(_capturing_exec_tool(captured))
 
-    result = await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "source /tmp/env"}))
+    result = await wrapped.on_invoke_tool(
+        cast("Any", None), json.dumps({"cmd": "source /tmp/env"})
+    )
 
     assert result == "ok"
     parsed = json.loads(captured["raw_input"])
@@ -78,6 +84,20 @@ async def test_wrap_exec_command_preserves_explicit_shell(shell: str) -> None:
     )
 
     assert json.loads(captured["raw_input"])["shell"] == shell
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_blocks_shell_in_passive_proxy_mode() -> None:
+    captured: dict[str, str] = {}
+    wrapped = factory._wrap_exec_command(_capturing_exec_tool(captured))
+
+    result = await wrapped.on_invoke_tool(
+        _ctx(proxy_passive_mode=True),
+        json.dumps({"cmd": "curl -I http://10.0.0.8:8000/"}),
+    )
+
+    assert "被动代理模式下默认禁用 shell 命令" in result
+    assert captured == {}
 
 
 @pytest.mark.asyncio

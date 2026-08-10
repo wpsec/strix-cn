@@ -298,6 +298,172 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 }
 
+func TestSplashShowsPassiveProxySummary(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 34
+	model.snapshot = protocol.Snapshot{PassiveProxyMode: true}
+
+	view := ansi.Strip(model.View())
+	for _, want := range []string{
+		"Welcome to Strix!",
+		"Burp 被动模式",
+		"Burp 流量会自动进入当前功能点采集",
+		"完成操作后发送“开始测试”，结束后发送“下一功能点”",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("splash is missing %q: %s", want, view)
+		}
+	}
+}
+
+func TestPassiveProxyWaitingRestoresCaptureGuidance(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 34
+	model.showSplash = false
+
+	runningState := protocol.Snapshot{
+		SetupMode:                 false,
+		ScanStarted:               true,
+		ScanState:                 "running",
+		PassiveProxyMode:          true,
+		PassiveProxyPhase:         "capture",
+		CaidoURL:                  "http://127.0.0.1:61270",
+		ProxyRecentRequestCount:   6,
+		ProxyRecentRequestHasMore: true,
+		ProxyLatestMethod:         "POST",
+		ProxyLatestHost:           "app.example.com",
+		ProxyLatestPath:           "/api/orders/submit",
+		ProxyTotalRequestCount:    18,
+	}
+	model.handleEnvelope(stateEnvelope(t, 1, runningState))
+	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1,
+		protocol.Agent{ID: "root", Name: "Root Agent", Status: "waiting"},
+	))
+
+	view := ansi.Strip(model.View())
+	if !strings.Contains(view, "Burp 流量已自动接入。先完成当前功能点操作；采集完成后发送“开始测试”，也可补充关注点。") {
+		t.Fatalf("passive proxy waiting guidance is missing: %s", view)
+	}
+	content := ansi.Strip(model.chatContent())
+	if !strings.Contains(content, "Burp 流量已自动接入，正在采集当前功能点。") || strings.Contains(content, "Starting agent...") {
+		t.Fatalf("passive proxy chat placeholder regressed: %s", content)
+	}
+	if model.input.Placeholder != passiveProxyPlaceholder {
+		t.Fatalf("passive proxy placeholder mismatch: %q", model.input.Placeholder)
+	}
+
+	stats := ansi.Strip(model.statsView())
+	for _, want := range []string{
+		"Caido: http://127.0.0.1:61270",
+		"代理捕获: 累计 18 条",
+		"最近批次: 6+ 条",
+		"最近流量: POST app.example.com/api/orders/submit",
+		"模式: Burp 被动代理",
+		"阶段: 当前功能点采集中",
+		"说明: Burp 流量已自动接入 Strix",
+		"操作: 完成操作后发送“开始测试”",
+	} {
+		if !strings.Contains(stats, want) {
+			t.Fatalf("passive proxy stats missing %q: %s", want, stats)
+		}
+	}
+}
+
+func TestPassiveProxyPhaseSwitchesToTestingWhileChildAgentRuns(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 34
+	rootID := "root"
+	model.snapshot = protocol.Snapshot{
+		SetupMode:               false,
+		PassiveProxyMode:        true,
+		PassiveProxyPhase:       "testing",
+		ProxyRecentRequestCount: 4,
+		ProxyLatestMethod:       "GET",
+		ProxyLatestHost:         "app.example.com",
+		ProxyLatestPath:         "/api/profile",
+		ProxyTotalRequestCount:  22,
+		Agents: []protocol.Agent{
+			{ID: rootID, Name: "Root", Status: "waiting"},
+			{ID: "mapper", Name: "Mapper", ParentID: &rootID, Status: "running"},
+		},
+	}
+
+	stats := ansi.Strip(model.statsView())
+	for _, want := range []string{
+		"阶段: 当前功能点测试中",
+		"代理捕获: 累计 22 条",
+		"最近批次: 4 条",
+		"最近流量: GET app.example.com/api/profile",
+		"说明: 新进入 Burp 的流量不会切换当前功能点",
+		"操作: 等待本轮结束后发送“下一功能点”",
+	} {
+		if !strings.Contains(stats, want) {
+			t.Fatalf("passive proxy testing phase missing %q: %s", want, stats)
+		}
+	}
+
+	content := ansi.Strip(model.chatContent())
+	if !strings.Contains(content, "当前功能点测试中，正在等待运行中的子 agent 完成。") {
+		t.Fatalf("passive proxy testing placeholder missing: %s", content)
+	}
+}
+
+func TestPassiveProxyTestingWaitsForNextFeatureCommandAfterCompletion(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 34
+	rootID := "root"
+	model.snapshot = protocol.Snapshot{
+		SetupMode:         false,
+		PassiveProxyMode:  true,
+		PassiveProxyPhase: "testing",
+		Agents: []protocol.Agent{
+			{ID: rootID, Name: "Root", Status: "waiting"},
+		},
+	}
+
+	model.syncLiveInputPlaceholder()
+
+	if model.input.Placeholder != nextFeaturePlaceholder {
+		t.Fatalf("next-feature placeholder mismatch: %q", model.input.Placeholder)
+	}
+
+	stats := ansi.Strip(model.statsView())
+	for _, want := range []string{
+		"阶段: 当前功能点测试中",
+		"说明: 本轮测试已结束，新流量仍不会自动切到下一功能点",
+		"操作: 发送“下一功能点”进入下一轮采集",
+	} {
+		if !strings.Contains(stats, want) {
+			t.Fatalf("passive proxy next-feature stats missing %q: %s", want, stats)
+		}
+	}
+
+	content := ansi.Strip(model.chatContent())
+	if !strings.Contains(content, "当前功能点测试已结束。") || !strings.Contains(content, "发送“下一功能点”进入新一轮采集") {
+		t.Fatalf("passive proxy next-feature placeholder missing: %s", content)
+	}
+}
+
+func TestPassiveProxyPlaceholderFallsBackForNonRootSelection(t *testing.T) {
+	model := New(nil)
+	rootID := "root"
+	model.snapshot = protocol.Snapshot{
+		SetupMode:        false,
+		PassiveProxyMode: true,
+		Agents: []protocol.Agent{
+			{ID: rootID, Name: "Root", Status: "waiting"},
+			{ID: "child", Name: "Child", ParentID: &rootID, Status: "running"},
+		},
+	}
+	model.selectedAgent = 1
+
+	model.syncLiveInputPlaceholder()
+
+	if model.input.Placeholder != chatPlaceholder {
+		t.Fatalf("child selection should use chat placeholder: %q", model.input.Placeholder)
+	}
+}
+
 func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 40, 18

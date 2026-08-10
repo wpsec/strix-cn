@@ -118,6 +118,39 @@ func (m *Model) chatContent() string {
 	}
 	m.eventSpans = spans
 	if len(blocks) == 0 {
+		if agent, ok := m.selectedAgentValue(); ok {
+			if agent.Status == "waiting" {
+				if m.isPassiveProxyWaiting() {
+					message := "Burp 流量已自动接入，正在采集当前功能点。\n\n请先在目标上完成本轮操作；采集完成后发送“开始测试”，也可补充关注点。"
+					if msg := strings.TrimSpace(agent.ErrorMessage); msg != "" {
+						message = msg + "\n\n采集完成后发送“开始测试”，也可补充关注点。"
+					}
+					return centeredPlaceholder(message, m.viewport.Width, m.viewport.Height)
+				}
+				if m.snapshot.PassiveProxyMode && m.isPassiveProxyAwaitingNextFeature() && agent.ParentID == nil {
+					message := "当前功能点测试已结束。\n\n发送“下一功能点”进入新一轮采集；完成新一轮操作后再发送“开始测试”。"
+					if msg := strings.TrimSpace(agent.ErrorMessage); msg != "" {
+						message = msg + "\n\n发送“下一功能点”进入新一轮采集。"
+					}
+					return centeredPlaceholder(message, m.viewport.Width, m.viewport.Height)
+				}
+				if m.snapshot.PassiveProxyMode && m.passiveProxyPhase() == "testing" && agent.ParentID == nil {
+					message := "当前功能点测试中，正在等待运行中的子 agent 完成。\n\n本轮结束后发送“下一功能点”开始下一轮。"
+					if msg := strings.TrimSpace(agent.ErrorMessage); msg != "" {
+						message = msg + "\n\n本轮结束后发送“下一功能点”开始下一轮。"
+					}
+					return centeredPlaceholder(message, m.viewport.Width, m.viewport.Height)
+				}
+				message := "Send message to resume"
+				if msg := strings.TrimSpace(agent.ErrorMessage); msg != "" {
+					message = msg + "\n\nSend message to resume"
+				}
+				return centeredPlaceholder(message, m.viewport.Width, m.viewport.Height)
+			}
+			if agent.Status == "running" && m.snapshot.PassiveProxyMode && m.isPassiveProxyTestingActive() {
+				return centeredPlaceholder("当前功能点测试已开始，正在生成首轮结果...", m.viewport.Width, m.viewport.Height)
+			}
+		}
 		return centeredPlaceholder("Starting agent...", m.viewport.Width, m.viewport.Height)
 	}
 	return indentLines(strings.Join(blocks, "\n\n"), " ")
@@ -402,7 +435,11 @@ func (m Model) splashView() string {
 	// The wordmark is shared with the launch screen so the two read as one moment.
 	content := wordmark() + "\n\n" +
 		welcome + "\n" + version + "\n" + tagline + "\n\n" +
-		start.String() + "\n\n" + url
+		start.String()
+	if m.snapshot.PassiveProxyMode {
+		content += "\n\n" + splashPassiveProxySummary()
+	}
+	content += "\n\n" + url
 	if warn := m.snapshot.ModelWarning; warn != "" {
 		content += "\n\n" + splashModelWarning(warn)
 	}
@@ -410,6 +447,13 @@ func (m Model) splashView() string {
 	// #splash_screen background is solid black.
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel,
 		lipgloss.WithWhitespaceBackground(black))
+}
+
+func splashPassiveProxySummary() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(white).Render("Burp 被动模式")
+	detail := lipgloss.NewStyle().Foreground(white).Faint(true).Render("Burp 流量会自动进入当前功能点采集")
+	next := lipgloss.NewStyle().Foreground(white).Faint(true).Render("完成操作后发送“开始测试”，结束后发送“下一功能点”")
+	return title + "\n" + detail + "\n" + next
 }
 
 // splashModelWarning ports SplashScreen._build_model_warning_text.
@@ -588,6 +632,7 @@ func (m Model) viewerView(width int) string {
 
 func (m Model) statsView() string {
 	w := lipgloss.NewStyle().Foreground(white)
+	label := lipgloss.NewStyle().Bold(true).Foreground(white)
 	var b strings.Builder
 	if model := m.snapshot.Model; model != "" {
 		b.WriteString(w.Render(model))
@@ -612,7 +657,90 @@ func (m Model) statsView() string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(white).Render("Caido: ") + w.Render(caido))
+		b.WriteString(label.Render("Caido: ") + w.Render(caido))
+	}
+	if m.snapshot.PassiveProxyMode {
+		if m.snapshot.ProxyCaptureError != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(label.Render("代理捕获: ") + w.Render("读取失败"))
+			b.WriteString("\n")
+			b.WriteString(label.Render("说明: ") + w.Render(m.snapshot.ProxyCaptureError))
+		} else if m.snapshot.ProxyTotalRequestCount > 0 || m.snapshot.ProxyRecentRequestCount > 0 {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			totalCount := m.snapshot.ProxyTotalRequestCount
+			if totalCount > 0 {
+				b.WriteString(label.Render("代理捕获: ") + w.Render(fmt.Sprintf("累计 %d 条", totalCount)))
+			} else {
+				suffix := ""
+				if m.snapshot.ProxyRecentRequestHasMore {
+					suffix = "+"
+				}
+				b.WriteString(
+					label.Render("代理捕获: ") +
+						w.Render(fmt.Sprintf("最近 %d%s 条", m.snapshot.ProxyRecentRequestCount, suffix)),
+				)
+			}
+			if m.snapshot.ProxyRecentRequestCount > 0 {
+				suffix := ""
+				if m.snapshot.ProxyRecentRequestHasMore {
+					suffix = "+"
+				}
+				b.WriteString("\n")
+				b.WriteString(
+					label.Render("最近批次: ") +
+						w.Render(fmt.Sprintf("%d%s 条", m.snapshot.ProxyRecentRequestCount, suffix)),
+				)
+			}
+			latestSummary := strings.TrimSpace(
+				strings.Join(
+					[]string{
+						strings.TrimSpace(m.snapshot.ProxyLatestMethod),
+						strings.TrimSpace(fmt.Sprintf("%s%s", m.snapshot.ProxyLatestHost, m.snapshot.ProxyLatestPath)),
+					},
+					" ",
+				),
+			)
+			if latestSummary != "" {
+				b.WriteString("\n")
+				line := latestSummary
+				if m.snapshot.ProxyLatestStatusCode != nil && *m.snapshot.ProxyLatestStatusCode > 0 {
+					line = fmt.Sprintf("%s [%d]", line, *m.snapshot.ProxyLatestStatusCode)
+				}
+				b.WriteString(label.Render("最近流量: ") + w.Render(line))
+			}
+		}
+	}
+	if m.snapshot.PassiveProxyMode {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(label.Render("模式: ") + w.Render("Burp 被动代理"))
+		switch m.passiveProxyPhase() {
+		case "capture":
+			b.WriteString("\n")
+			b.WriteString(label.Render("阶段: ") + w.Render("当前功能点采集中"))
+			b.WriteString("\n")
+			b.WriteString(label.Render("说明: ") + w.Render("Burp 流量已自动接入 Strix"))
+			b.WriteString("\n")
+			b.WriteString(label.Render("操作: ") + w.Render("完成操作后发送“开始测试”"))
+		case "testing":
+			b.WriteString("\n")
+			b.WriteString(label.Render("阶段: ") + w.Render("当前功能点测试中"))
+			b.WriteString("\n")
+			if m.isPassiveProxyAwaitingNextFeature() {
+				b.WriteString(label.Render("说明: ") + w.Render("本轮测试已结束，新流量仍不会自动切到下一功能点"))
+				b.WriteString("\n")
+				b.WriteString(label.Render("操作: ") + w.Render("发送“下一功能点”进入下一轮采集"))
+			} else {
+				b.WriteString(label.Render("说明: ") + w.Render("新进入 Burp 的流量不会切换当前功能点"))
+				b.WriteString("\n")
+				b.WriteString(label.Render("操作: ") + w.Render("等待本轮结束后发送“下一功能点”"))
+			}
+		}
 	}
 	if b.Len() > 0 {
 		b.WriteString("\n")
@@ -673,9 +801,26 @@ func (m Model) statusView(width int) string {
 			}
 			right = quitHint
 		case "waiting":
-			left = lipgloss.NewStyle().Foreground(dim).Render("Send message to resume")
-			if msg := agent.ErrorMessage; msg != "" {
-				left = statusMessage(msg, red, " · Send message to resume", width)
+			if m.isPassiveProxyWaiting() {
+				left = lipgloss.NewStyle().Foreground(dim).Render("Burp 流量已自动接入。先完成当前功能点操作；采集完成后发送“开始测试”，也可补充关注点。")
+				if msg := agent.ErrorMessage; msg != "" {
+					left = statusMessage(msg, red, " · 采集完成后发送“开始测试”继续", width)
+				}
+			} else if m.snapshot.PassiveProxyMode && m.isPassiveProxyAwaitingNextFeature() && agent.ParentID == nil {
+				left = lipgloss.NewStyle().Foreground(dim).Render("当前功能点测试已结束。发送“下一功能点”进入下一轮采集；完成新一轮操作后再发送“开始测试”。")
+				if msg := agent.ErrorMessage; msg != "" {
+					left = statusMessage(msg, red, " · 发送“下一功能点”进入下一轮采集", width)
+				}
+			} else if m.snapshot.PassiveProxyMode && m.passiveProxyPhase() == "testing" && agent.ParentID == nil {
+				left = lipgloss.NewStyle().Foreground(dim).Render("当前功能点测试中，等待运行中的子 agent 完成。本轮结束后发送“下一功能点”开始下一轮。")
+				if msg := agent.ErrorMessage; msg != "" {
+					left = statusMessage(msg, red, " · 完成后发送“下一功能点”开始下一轮", width)
+				}
+			} else {
+				left = lipgloss.NewStyle().Foreground(dim).Render("Send message to resume")
+				if msg := agent.ErrorMessage; msg != "" {
+					left = statusMessage(msg, red, " · Send message to resume", width)
+				}
 			}
 		case "budget_paused":
 			left = lipgloss.NewStyle().Foreground(amber).Render("Budget limit reached") +

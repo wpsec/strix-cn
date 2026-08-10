@@ -77,6 +77,16 @@ _CUSTOM_TOOL_INPUT_FIELD_BY_NAME = {
 }
 _DEFAULT_CUSTOM_TOOL_INPUT_FIELD = "input"
 
+_PASSIVE_PROXY_EXEC_DISABLED_MESSAGE = (
+    "exec_command: 被动代理模式下默认禁用 shell 命令。"
+    "请仅使用代理历史工具（list_requests、view_request、list_sitemap、"
+    "view_sitemap_entry、scope_rules）；在操作员明确启动当前功能点测试前，不要直接访问目标。"
+)
+_PASSIVE_PROXY_STDIN_DISABLED_MESSAGE = (
+    "write_stdin: 被动代理模式下没有可继续交互的 shell 会话。"
+    "请改用代理历史工具，而不是继续执行终端命令。"
+)
+
 
 def _custom_tool_input_field(tool: CustomTool) -> str:
     return _CUSTOM_TOOL_INPUT_FIELD_BY_NAME.get(tool.name, _DEFAULT_CUSTOM_TOOL_INPUT_FIELD)
@@ -355,10 +365,20 @@ def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
     )
 
 
+def _passive_proxy_shell_blocked(ctx: Any) -> bool:
+    if not hasattr(ctx, "context") or not isinstance(ctx.context, dict):
+        return False
+    if not bool(ctx.context.get("proxy_passive_mode")):
+        return False
+    return not bool(ctx.context.get("allow_shell_in_proxy_passive_mode", False))
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        if _passive_proxy_shell_blocked(ctx):
+            return _PASSIVE_PROXY_EXEC_DISABLED_MESSAGE
         try:
             parsed = json.loads(raw_input)
         except (json.JSONDecodeError, TypeError):
@@ -388,6 +408,8 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        if _passive_proxy_shell_blocked(ctx):
+            return _PASSIVE_PROXY_STDIN_DISABLED_MESSAGE
         try:
             parsed = json.loads(raw_input)
         except json.JSONDecodeError:

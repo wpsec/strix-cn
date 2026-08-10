@@ -31,6 +31,7 @@ def test_build_target_summary_text_uses_chinese_for_burp_passive_mode() -> None:
     assert "目标" in text
     assert "Burp 被动模式" in text
     assert "仅基于 Burp 转发流量建立作用域" in text
+    assert "发送“开始测试”" in text
 
 
 @pytest.mark.asyncio

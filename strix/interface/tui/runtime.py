@@ -36,6 +36,7 @@ from strix.interface.tui.sidecar import (
     wait_process,
 )
 from strix.report.state import ReportState, set_global_report_state
+from strix.runtime.proxy_capture import ProxyCapturePoller
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SOURCE_BUILD_HANDSHAKE_TIMEOUT = 180.0
+_PROXY_CAPTURE_POLL_INTERVAL_SECONDS = 1.5
 
 
 class GoTuiPreActivationError(RuntimeError):
@@ -64,6 +66,9 @@ class GoTuiRuntime:
         self.scan_error: BaseException | None = None
         self._last_sync_fingerprint = ""
         self._error_noted_agents: set[str] = set()
+        self._proxy_capture_poller: ProxyCapturePoller | None = None
+        self._proxy_capture_poller_host: str | None = None
+        self._next_proxy_capture_poll_at = 0.0
         self.controller = TuiController(
             args,
             live_view=self.live_view,
@@ -85,6 +90,7 @@ class GoTuiRuntime:
             "local_sources": self.args.local_sources or [],
             "scope_mode": self.args.scope_mode,
             "diff_base": self.args.diff_base,
+            "burp_port": getattr(self.args, "burp_port", None),
             "resume_instruction": self.args.user_explicit_instruction or "",
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
             "workspace_subdir": getattr(self.args, "workspace_subdir", None) or "",
@@ -102,6 +108,7 @@ class GoTuiRuntime:
         self.report_state.vulnerability_found_callback = lambda _report: (
             self.controller.notify_changed()
         )
+        self._next_proxy_capture_poll_at = 0.0
         self.controller.notify_changed()
 
     async def start_from_setup(self, verify: bool = True) -> None:
@@ -260,6 +267,48 @@ class GoTuiRuntime:
             changed = True
         return changed
 
+    async def _close_proxy_capture_poller(self) -> None:
+        poller = self._proxy_capture_poller
+        self._proxy_capture_poller = None
+        self._proxy_capture_poller_host = None
+        if poller is not None:
+            with contextlib.suppress(Exception):
+                await poller.aclose()
+
+    async def _sync_proxy_capture_state(self) -> bool:
+        report_state = self.report_state
+        if report_state is None or getattr(self.args, "burp_port", None) is None:
+            return False
+        host_url = report_state.caido_ui_url
+        if not isinstance(host_url, str) or not host_url.strip():
+            if self._proxy_capture_poller is not None:
+                await self._close_proxy_capture_poller()
+            return False
+        host_url = host_url.strip()
+        if self._proxy_capture_poller is None or self._proxy_capture_poller_host != host_url:
+            await self._close_proxy_capture_poller()
+            self._proxy_capture_poller = ProxyCapturePoller(host_url)
+            self._proxy_capture_poller_host = host_url
+        prior_state = report_state.proxy_capture_state
+        prior_error = report_state.proxy_capture_error
+        try:
+            snapshot = await self._proxy_capture_poller.fetch_snapshot(
+                scope_id=report_state.proxy_scope_id,
+            )
+        except Exception as exc:
+            error_text = str(exc).strip() or exc.__class__.__name__
+            if prior_error == error_text:
+                return False
+            report_state.update_proxy_capture_state(
+                prior_state,
+                error=error_text,
+            )
+            return True
+        if snapshot == prior_state and prior_error is None:
+            return False
+        report_state.update_proxy_capture_state(snapshot, error=None)
+        return True
+
     def _runtime_sync_fingerprint(self) -> str:
         usage: dict[str, Any] = {}
         vulnerabilities: list[object] = []
@@ -285,6 +334,10 @@ class GoTuiRuntime:
             if self.scan_task is not None and not self.scan_task.done():
                 try:
                     changed = await self._sync_agent_state()
+                    now = asyncio.get_running_loop().time()
+                    if now >= self._next_proxy_capture_poll_at:
+                        self._next_proxy_capture_poll_at = now + _PROXY_CAPTURE_POLL_INTERVAL_SECONDS
+                        changed = await self._sync_proxy_capture_state() or changed
                 except Exception as exc:
                     logger.exception("Go TUI agent-state sync failed")
                     self.controller.error = f"Agent-state sync failed: {exc}"
@@ -300,6 +353,7 @@ class GoTuiRuntime:
     async def quit(self) -> None:
         self.controller.close_viewer()
         self.coordinator.mark_shutting_down()
+        await self._close_proxy_capture_poller()
         scan_task = self.scan_task
         if scan_task is not None:
             if not scan_task.done():

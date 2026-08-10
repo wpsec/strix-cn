@@ -99,3 +99,6 @@ schema.graphql
 /.benchmarks/
 /references/
 /strix_runs_main/
+
+# Local Go TUI build artifact
+strix/interface/tui/strix-tui

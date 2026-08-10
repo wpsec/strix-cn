@@ -46,6 +46,7 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			row := selectedAgentRow(entries, m.selectedAgent)
 			row = max(0, min(len(entries)-1, row+delta))
 			m.selectedAgent = entries[row].index
+			m.syncLiveInputPlaceholder()
 			m.ensureAgentVisible()
 			m.refreshViewport()
 			return m, nil
@@ -280,6 +281,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		localY := y - viewerHeight
 		if row := start + localY - 2; localY >= 2 && localY < agentHeight-2 && row < len(entries) {
 			m.selectedAgent = entries[row].index
+			m.syncLiveInputPlaceholder()
 			agentID := m.snapshot.Agents[m.selectedAgent].ID
 			if hasAgentChildren(agentID, m.snapshot.Agents) {
 				m.collapsedAgents[agentID] = !m.collapsedAgents[agentID]
