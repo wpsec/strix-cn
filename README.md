@@ -1,9 +1,13 @@
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1771932705094-c88426f2-74cc-4214-8f91-e3a4c8882279.png)
+
 # Strix CN
 
 Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.5.2`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
 
-- 上游项目：https://github.com/usestrix/strix
-- 当前分支：https://github.com/wpsec/strix-cn
+- 上游项目：[https://github.com/usestrix/strix](https://github.com/usestrix/strix)
+- 当前分支：[https://github.com/wpsec/strix-cn](https://github.com/wpsec/strix-cn)
 
 ## 分支目标
 
@@ -172,6 +176,44 @@ strix --target https://example.com --burp-port 8081
 
 这种“单功能采集 -> 开始测试 -> 切换下一功能”的方式，比一次性灌入整站流量更稳定，也更符合当前 `strix-cn` 的 Burp 工作流。
 
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1786415507094-4dcef33f-036e-4d73-b6ab-a7a351c6e9b9.png)
+
+burp 将想要测试的功能点击完成后，代理到 strix， 输入开始测试
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1786416228642-a75838b5-d36c-462a-9f41-ee6aff0352e4.png)
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1786415516431-f151710b-5f19-4f10-bd9f-d6c4fa6c6a88.png)
+
+测试开始，rootagent 会梳理当前接口信息，启一个攻击面分析专家子 agent
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1786416018194-5500ce56-5614-4c7a-944d-788a76626506.png)
+
+子 agent 分析
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1786416257456-95305157-cadc-4f66-87ce-7d5403c8ca91.png)
+
+分析完后返回给 rootagent，rootagent 根据分析结果，下发对应的子 agent 专家进行测试
+
+本地报告
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1786428778765-802e1bf1-8680-4155-b533-276beb6fcbfb.png)
+
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1786428823302-3d14f367-7f6d-4aee-8aef-31ad88bd4aad.png)
+
 ### 进阶组合
 
 ```bash
@@ -237,10 +279,9 @@ npx skills add usestrix/strix
 
 相关参考：
 
-- [`AGENTS.md`](AGENTS.md)：本地快速说明
+- `[AGENTS.md](AGENTS.md)`：本地快速说明
 - [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt)：CLI 文档
 - [docs.app.strix.ai](https://docs.app.strix.ai)：云端 API 文档
-
 - `strix-pentest`：无头扫描与结果读取
 - `strix-cloud-api`：通过云端平台 REST API 驱动扫描
 - `strix-fix-findings`：修复并复扫验证
