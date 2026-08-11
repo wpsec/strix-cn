@@ -23,7 +23,7 @@ from strix.tools.agents_graph.tools import (
     send_message_to_agent,
     stop_agent,
     view_agent_graph,
-    wait_for_message,
+    wait_for_agents,
 )
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
@@ -35,6 +35,7 @@ from strix.tools.notes.tools import (
     update_note,
 )
 from strix.tools.output_store import bound_and_store, bound_text
+from strix.tools.proxy.coverage import get_endpoint_coverage, mark_endpoint_not_applicable
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -49,6 +50,7 @@ from strix.tools.reporting.tool import (
     get_report,
     list_reports,
 )
+from strix.tools.respond.tool import respond_to_user
 from strix.tools.thinking.tool import think
 from strix.tools.todo.tools import (
     create_todo,
@@ -75,6 +77,21 @@ _CUSTOM_TOOL_INPUT_FIELD_BY_NAME = {
     "apply_patch": "patch",
 }
 _DEFAULT_CUSTOM_TOOL_INPUT_FIELD = "input"
+
+_PASSIVE_PROXY_EXEC_DISABLED_MESSAGE = (
+    "exec_command: 被动代理模式下默认禁用 shell 命令。"
+    "请仅使用代理历史工具（list_requests、view_request、list_sitemap、"
+    "view_sitemap_entry、scope_rules）；在操作员明确启动当前功能点测试前，不要直接访问目标。"
+)
+_PASSIVE_PROXY_STDIN_DISABLED_MESSAGE = (
+    "write_stdin: 被动代理模式下没有可继续交互的 shell 会话。"
+    "请改用代理历史工具，而不是继续执行终端命令。"
+)
+_WORKSPACE_EDIT_DISABLED_MESSAGE = (
+    "apply_patch: 当前不是白盒源码审计场景，禁止修改 /workspace 文件。"
+    "仅当源码目录本身是授权目标时才允许编辑工作区文件；"
+    "请改用 notes、todos、reports 和 agent messages 记录分析结果。"
+)
 
 
 def _custom_tool_input_field(tool: CustomTool) -> str:
@@ -142,6 +159,85 @@ def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
+def _schema_types(spec: dict[str, Any]) -> set[str]:
+    types: set[str] = set()
+    raw = spec.get("type")
+    if isinstance(raw, str):
+        types.add(raw)
+    elif isinstance(raw, list):
+        types.update(t for t in raw if isinstance(t, str))
+    for variant in spec.get("anyOf") or ():
+        if isinstance(variant, dict):
+            types |= _schema_types(variant)
+    types.discard("null")
+    return types
+
+
+def _decode_structured(value: str, types: set[str]) -> Any:
+    stripped = value.strip()
+    if not stripped:
+        # An empty string is the model's "no value" for a list/dict param; give it
+        # the empty container so it validates instead of failing the type check.
+        return [] if "array" in types else {}
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        return value
+    wanted = list if "array" in types else dict
+    return decoded if isinstance(decoded, wanted) else value
+
+
+def _coerce_argument(value: Any, spec: dict[str, Any]) -> Any:
+    types = _schema_types(spec)
+    if not types or value is None:
+        return value
+    if isinstance(value, list | dict) and "string" in types and not types & {"array", "object"}:
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, str) and types & {"array", "object"} and "string" not in types:
+        return _decode_structured(value, types)
+    return value
+
+
+def _coerce_arguments(raw_input: str, schema: dict[str, Any]) -> str:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return raw_input
+    try:
+        payload = json.loads(raw_input) if raw_input else None
+    except json.JSONDecodeError:
+        return raw_input
+    if not isinstance(payload, dict):
+        return raw_input
+
+    changed = False
+    for key, value in payload.items():
+        spec = properties.get(key)
+        if not isinstance(spec, dict):
+            continue
+        coerced = _coerce_argument(value, spec)
+        if coerced is not value:
+            payload[key] = coerced
+            changed = True
+
+    if not changed:
+        return raw_input
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _with_coerced_arguments(tool: FunctionTool) -> FunctionTool:
+    if getattr(tool, "_strix_coerced", False):
+        return tool
+    invoke_tool = tool.on_invoke_tool
+    schema = tool.params_json_schema
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        return await invoke_tool(ctx, _coerce_arguments(raw_input, schema))
+
+    tool.on_invoke_tool = invoke
+    tool._strix_coerced = True  # type: ignore[attr-defined]
+    return tool
+
+
 def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -205,22 +301,70 @@ def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     return tool
 
 
-def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None:
+def _wrap_workspace_edit_tool(
+    tool: FunctionTool | CustomTool,
+    *,
+    allow_workspace_edits: bool,
+) -> FunctionTool | CustomTool:
+    if allow_workspace_edits or tool.name != "apply_patch":
+        return tool
+    if getattr(tool, "_strix_workspace_edit_blocked", False):
+        return tool
+
+    async def invoke(_ctx: Any, _raw_input: str) -> str:
+        return _WORKSPACE_EDIT_DISABLED_MESSAGE
+
+    tool.on_invoke_tool = invoke
+    tool._strix_workspace_edit_blocked = True  # type: ignore[attr-defined]
+    return tool
+
+
+def _configure_filesystem_tools(
+    toolset: Any,
+    *,
+    chat_completions: bool,
+    allow_workspace_edits: bool = True,
+) -> None:
     for name, tool in vars(toolset).items():
         if chat_completions:
             if isinstance(tool, CustomTool):
-                setattr(toolset, name, _custom_tool_as_function_tool(tool))
+                wrapped = _custom_tool_as_function_tool(tool)
+                wrapped = _wrap_workspace_edit_tool(
+                    wrapped,
+                    allow_workspace_edits=allow_workspace_edits,
+                )
+                setattr(toolset, name, wrapped)
             elif isinstance(tool, FunctionTool):
-                setattr(toolset, name, _function_tool_with_error_result(tool))
+                wrapped = _wrap_workspace_edit_tool(
+                    tool,
+                    allow_workspace_edits=allow_workspace_edits,
+                )
+                setattr(
+                    toolset,
+                    name,
+                    _function_tool_with_error_result(_with_coerced_arguments(wrapped)),
+                )
         elif isinstance(tool, CustomTool):
-            setattr(toolset, name, _bound_custom_tool(tool))
+            wrapped = _wrap_workspace_edit_tool(
+                tool,
+                allow_workspace_edits=allow_workspace_edits,
+            )
+            setattr(toolset, name, _bound_custom_tool(wrapped))
         elif isinstance(tool, FunctionTool):
-            setattr(toolset, name, _with_bounded_result(tool))
+            wrapped = _wrap_workspace_edit_tool(
+                tool,
+                allow_workspace_edits=allow_workspace_edits,
+            )
+            setattr(toolset, name, _with_bounded_result(_with_coerced_arguments(wrapped)))
 
 
-def _make_filesystem_configurator(*, chat_completions: bool) -> Any:
+def _make_filesystem_configurator(*, chat_completions: bool, allow_workspace_edits: bool) -> Any:
     def configure(toolset: Any) -> None:
-        _configure_filesystem_tools(toolset, chat_completions=chat_completions)
+        _configure_filesystem_tools(
+            toolset,
+            chat_completions=chat_completions,
+            allow_workspace_edits=allow_workspace_edits,
+        )
 
     return configure
 
@@ -273,10 +417,20 @@ def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
     )
 
 
+def _passive_proxy_shell_blocked(ctx: Any) -> bool:
+    if not hasattr(ctx, "context") or not isinstance(ctx.context, dict):
+        return False
+    if not bool(ctx.context.get("proxy_passive_mode")):
+        return False
+    return not bool(ctx.context.get("allow_shell_in_proxy_passive_mode", False))
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        if _passive_proxy_shell_blocked(ctx):
+            return _PASSIVE_PROXY_EXEC_DISABLED_MESSAGE
         try:
             parsed = json.loads(raw_input)
         except (json.JSONDecodeError, TypeError):
@@ -306,6 +460,8 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        if _passive_proxy_shell_blocked(ctx):
+            return _PASSIVE_PROXY_STDIN_DISABLED_MESSAGE
         try:
             parsed = json.loads(raw_input)
         except json.JSONDecodeError:
@@ -328,7 +484,7 @@ def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
     for name, tool in vars(toolset).items():
         if not isinstance(tool, FunctionTool):
             continue
-        wrapped = tool
+        wrapped = _with_coerced_arguments(tool)
         if tool.name == "exec_command":
             wrapped = _wrap_exec_command(wrapped)
         elif tool.name == "write_stdin":
@@ -343,6 +499,10 @@ def _make_shell_configurator(*, chat_completions: bool) -> Any:
         _configure_shell_tools(toolset, chat_completions=chat_completions)
 
     return configure
+
+
+# Tools that hand control away by parking the agent rather than ending the scan.
+_PARKING_TOOLS: frozenset[str] = frozenset({"respond_to_user", "wait_for_agents"})
 
 
 def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
@@ -363,7 +523,7 @@ def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
 
 
 def _wait_tool_parked(tool_name: str, output: Any) -> bool:
-    if tool_name != "wait_for_message" or not isinstance(output, str):
+    if tool_name not in _PARKING_TOOLS or not isinstance(output, str):
         return False
     try:
         parsed = json.loads(output)
@@ -423,9 +583,11 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     list_sitemap,
     view_sitemap_entry,
     scope_rules,
+    get_endpoint_coverage,
+    mark_endpoint_not_applicable,
     view_agent_graph,
     send_message_to_agent,
-    wait_for_message,
+    wait_for_agents,
     create_agent,
     stop_agent,
 )
@@ -475,7 +637,7 @@ def registered_agent_tools() -> tuple[Tool, ...]:
 
 def build_strix_agent(
     *,
-    name: str = "strix",
+    name: str = "agent",
     skills: list[str] | None = None,
     is_root: bool,
     scan_mode: str = "deep",
@@ -509,13 +671,19 @@ def build_strix_agent(
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
+    if interactive:
+        # Yielding to the user is only meaningful when one is attached.
+        agent_tools.append(respond_to_user)
     if is_root:
         tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
     else:
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_bounded_result(tool) if isinstance(tool, FunctionTool) else tool for tool in tools
+        _with_bounded_result(_with_coerced_arguments(tool))
+        if isinstance(tool, FunctionTool)
+        else tool
+        for tool in tools
     ]
 
     logger.info(
@@ -538,6 +706,7 @@ def build_strix_agent(
             Filesystem(
                 configure_tools=_make_filesystem_configurator(
                     chat_completions=chat_completions_tools,
+                    allow_workspace_edits=is_whitebox,
                 ),
             ),
             Shell(

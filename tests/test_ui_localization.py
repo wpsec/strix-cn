@@ -1,124 +1,90 @@
-"""Tests for localized user-facing TUI strings."""
+"""Tests for localized user-facing strings in the Go TUI era."""
 
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 from rich.text import Text
 
-from strix.interface.tui.app import StrixTUIApp
-from strix.interface.tui.renderers.finish_renderer import FinishScanRenderer
-from strix.interface.tui.renderers.load_skill_renderer import LoadSkillRenderer
-from strix.interface.tui.renderers.notes_renderer import CreateNoteRenderer, ListNotesRenderer
-from strix.interface.tui.renderers.reporting_renderer import (
-    CreateDependencyReportRenderer,
-    CreateVulnerabilityReportRenderer,
-)
-from strix.interface.tui.renderers.todo_renderer import CreateTodoRenderer, ListTodosRenderer
+from strix.interface import interactive
+from strix.interface.tui.runtime import GoTuiPreActivationError
+from strix.interface.utils import build_target_summary_text
+
+main_module = importlib.import_module("strix.interface.main")
 
 
-def _plain(static: object) -> str:
-    content = static.content  # type: ignore[attr-defined]
-    return content.plain if isinstance(content, Text) else str(content)
+def _flatten_printed(items: list[object]) -> str:
+    parts: list[str] = []
+    for item in items:
+        if isinstance(item, Text):
+            parts.append(item.plain)
+        else:
+            parts.append(str(item))
+    return "".join(parts)
 
 
-def test_todo_renderers_use_chinese_labels() -> None:
-    created = _plain(CreateTodoRenderer.render({"result": None}))
-    listed = _plain(ListTodosRenderer.render({"result": {"success": True, "todos": []}}))
-
-    assert "待办事项" in created
-    assert "正在创建..." in created
-    assert "待办列表" in listed
-    assert "暂无待办事项" in listed
+def test_build_target_summary_text_uses_chinese_for_burp_passive_mode() -> None:
+    text = build_target_summary_text([], burp_port=8081).plain
+    assert "目标" in text
+    assert "Burp 被动模式" in text
+    assert "仅基于 Burp 转发流量建立作用域" in text
+    assert "发送“开始测试”" in text
 
 
-def test_note_renderers_use_chinese_labels() -> None:
-    created = _plain(
-        CreateNoteRenderer.render({"args": {"title": "", "content": "", "category": "plan"}})
-    )
-    listed = _plain(ListNotesRenderer.render({"result": {"success": True, "total_count": 0}}))
+@pytest.mark.asyncio
+async def test_run_tui_wraps_pre_activation_error_in_chinese(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _raise(_args: object) -> None:
+        raise GoTuiPreActivationError("sidecar crashed before activation")
 
-    assert "笔记" in created
-    assert "正在记录..." in created
-    assert "笔记列表" in listed
-    assert "暂无笔记" in listed
+    monkeypatch.setattr("strix.interface.tui.runtime.run_go_tui", _raise)
+
+    with pytest.raises(interactive.InteractiveSetupUnavailableError) as exc:
+        await interactive.run_tui(SimpleNamespace())
+
+    assert str(exc.value) == "交互界面启动失败：sidecar crashed before activation"
 
 
-def test_reporting_renderers_use_chinese_labels() -> None:
-    vulnerability = _plain(
-        CreateVulnerabilityReportRenderer.render(
-            {
-                "args": {
-                    "title": "存在 SSRF",
-                    "description": "描述",
-                    "impact": "影响",
-                    "target": "https://example.com",
-                    "technical_analysis": "分析",
-                    "poc_description": "步骤",
-                    "poc_script_code": "print(1)",
-                    "remediation_steps": "修复",
-                },
-                "result": {"severity": "high", "cvss_score": 8.1},
-            }
-        )
-    )
-    dependency = _plain(
-        CreateDependencyReportRenderer.render(
-            {
-                "args": {
-                    "title": "CVE-2024-0001 in demo",
-                    "description": "描述",
-                    "impact": "影响",
-                    "target": "repo/package.json",
-                    "technical_analysis": "分析",
-                    "remediation_steps": "升级",
-                    "assumptions": "假设",
-                    "package_name": "demo",
-                    "package_ecosystem": "npm",
-                    "installed_version": "1.0.0",
-                    "fixed_version": "1.0.1",
-                    "advisory_cvss": 7.5,
-                    "fix_effort": "low",
-                },
-                "result": {"severity": "high"},
-            }
-        )
+def test_display_completion_message_uses_chinese_labels_and_resume_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    printed: list[object] = []
+
+    class _FakeConsole:
+        def print(self, *args: object) -> None:
+            printed.extend(args)
+
+    report_state = SimpleNamespace(
+        run_record={"status": "stopped"},
+        total_requests=0,
+        vulnerabilities=[],
+        vulnerability_reports=[],
+        completed_agents=0,
+        active_agents=0,
+        failed_agents=0,
+        total_estimated_cost=0.0,
     )
 
-    assert "漏洞报告" in vulnerability
-    assert "标题：" in vulnerability
-    assert "技术分析" in vulnerability
-    assert "依赖漏洞（SCA）报告" in dependency
-    assert "依赖包：" in dependency
-    assert "修复成本：" in dependency
+    monkeypatch.setattr(main_module, "Console", lambda: _FakeConsole())
+    monkeypatch.setattr(main_module, "Panel", lambda content, **_kwargs: content)
+    monkeypatch.setattr("strix.report.state.get_global_report_state", lambda: report_state)
 
-
-def test_finish_and_load_skill_renderers_use_chinese_labels() -> None:
-    finish = _plain(FinishScanRenderer.render({"args": {}}))
-    load_skill = _plain(LoadSkillRenderer.render({"args": {}, "result": None}))
-
-    assert "渗透测试已完成" in finish
-    assert "正在生成最终报告..." in finish
-    assert "正在加载 skill" in load_skill
-    assert "正在加载..." in load_skill
-
-
-def test_tui_bindings_include_terminal_copy_mode_toggle() -> None:
-    assert any(binding.key == "f2" for binding in StrixTUIApp.BINDINGS)
-
-
-def test_format_scan_startup_error_explains_burp_port_conflict() -> None:
-    message = StrixTUIApp._format_scan_startup_error(
-        RuntimeError("Bind for 127.0.0.1:8081 failed: port is already allocated"),
-        burp_port=8081,
+    args = SimpleNamespace(
+        targets_info=[{"original": "https://app.example.com"}],
+        run_name="pentest_demo",
+        non_interactive=True,
     )
+    main_module.display_completion_message(args, tmp_path / "results")
 
-    assert "启动失败" in message
-    assert "127.0.0.1:8081 已被占用" in message
-    assert "--burp-port" in message
-
-
-def test_format_scan_startup_error_falls_back_to_original_message() -> None:
-    message = StrixTUIApp._format_scan_startup_error(
-        RuntimeError("loginAsGuest failed after 10 attempts"),
-    )
-
-    assert message == "启动失败：loginAsGuest failed after 10 attempts"
+    plain = _flatten_printed(printed)
+    assert "本次会话已结束" in plain
+    assert "目标" in plain
+    assert "输出目录" in plain
+    assert "查看" in plain
+    assert "继续运行" in plain
+    assert "strix --resume pentest_demo" in plain

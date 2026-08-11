@@ -84,8 +84,7 @@ def test_tui_stats_show_burp_workflow_phase() -> None:
     ).plain
 
     assert "工作流: 功能点采集" in text
-    assert "操作: Ctrl+T 开始测试" in text
-    assert "Ctrl+N 下一功能点" in text
+    assert "操作: 发送“开始测试”启动当前功能点分析" in text
     assert "代理捕获: 累计 42 条" in text
     assert "当前功能: 12 条" in text
 
@@ -107,3 +106,4 @@ def test_target_summary_shows_burp_passive_mode_without_targets() -> None:
 
     assert "Burp 被动模式" in text
     assert "仅基于 Burp 转发流量建立作用域" in text
+    assert "发送“开始测试”" in text

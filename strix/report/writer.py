@@ -51,26 +51,13 @@ _BACKTICK_RUN = re.compile(r"`+")
 
 
 def safe_fence(content: str) -> str:
-    """Return a backtick fence that ``content`` cannot break out of.
-
-    Per CommonMark a fenced code block is closed only by a run of backticks at
-    least as long as the opening fence. LLM-authored, attacker-influenced values
-    (PoC scripts, code snippets) may contain their own ``` runs, so we open with
-    a fence one backtick longer than the longest run inside ``content`` (never
-    fewer than three). Everything in ``content`` then renders verbatim.
-    """
+    """Return a backtick fence that ``content`` cannot break out of."""
     longest = max((len(m.group()) for m in _BACKTICK_RUN.finditer(content)), default=0)
     return "`" * max(3, longest + 1)
 
 
 def parse_fenced_code(raw: str) -> tuple[str | None, str]:
-    """Split an optionally fenced code string into ``(language, code)``.
-
-    Agent-generated code fields (e.g. ``poc_script_code``) are stored wrapped in
-    a markdown fence carrying the language, like ``` ```python\n...\n``` ```.
-    Return the fence's language tag and the inner code, or ``(None, raw)`` when
-    the value isn't fenced.
-    """
+    """Split an optionally fenced code string into ``(language, code)``."""
     match = _FENCE_RE.match(raw.strip())
     if not match:
         return None, raw
@@ -80,12 +67,7 @@ def parse_fenced_code(raw: str) -> tuple[str | None, str]:
 
 
 def resolve_lexer(language: str | None, code: str) -> Lexer:
-    """Pick a pygments lexer for ``code``.
-
-    Prefer the explicit fence ``language`` when it names a known lexer, otherwise
-    auto-detect from the source. Fall back to Python when detection is
-    inconclusive, since legacy (unfenced) PoC scripts are Python.
-    """
+    """Pick a pygments lexer for ``code``."""
     if language:
         try:
             return get_lexer_by_name(language)
@@ -95,15 +77,13 @@ def resolve_lexer(language: str | None, code: str) -> Lexer:
         lexer = guess_lexer(code)
     except ClassNotFound:
         return cast("Lexer", PythonLexer())
-    # ``guess_lexer`` returns the plain-text lexer when it can't detect anything.
     if isinstance(lexer, TextLexer):
         return cast("Lexer", PythonLexer())
     return lexer
 
 
 def guess_language_name(code: str) -> str:
-    """Return a markdown fence tag for ``code``, defaulting to ``python`` when
-    auto-detection is inconclusive."""
+    """Return a markdown fence tag for ``code``."""
     try:
         lexer = guess_lexer(code)
     except ClassNotFound:
@@ -213,7 +193,7 @@ def render_complete_report(
         ),
     )
     lines = [
-        "<div align=\"center\">",
+        '<div align="center">',
         "",
         "<h1>安全渗透测试报告</h1>",
         "",
@@ -359,6 +339,28 @@ def write_executive_report(
     logger.info("Saved final penetration test report to: %s", path)
 
 
+def write_html_report(
+    run_dir: Path,
+    *,
+    final_scan_result: str | None,
+    run_record: dict[str, Any],
+    vulnerability_reports: list[dict[str, Any]],
+) -> None:
+    """Write the portable Viewer-style report for live and completed runs."""
+    from strix.report.html_report import render_html_report
+
+    path = run_dir / "penetration_test_report.html"
+    _atomic_write_text(
+        path,
+        render_html_report(
+            final_scan_result=final_scan_result,
+            run_record=run_record,
+            vulnerability_reports=vulnerability_reports,
+        ),
+    )
+    logger.info("Saved HTML penetration test report to: %s", path)
+
+
 def write_vulnerabilities(
     run_dir: Path,
     vulnerability_reports: list[dict[str, Any]],
@@ -446,6 +448,10 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         ("组件生态", dep_meta.get("package_ecosystem")),
         ("当前版本", dep_meta.get("installed_version")),
         ("修复版本", dep_meta.get("fixed_version")),
+        ("引入来源", dep_meta.get("introduced_by")),
+        ("依赖链", dep_meta.get("dependency_path")),
+        ("清单文件", dep_meta.get("manifest_path")),
+        ("可达性级别", dep_meta.get("reachability")),
         ("接口", report.get("endpoint")),
         ("请求方法", report.get("method")),
         ("CVE", report.get("cve")),
@@ -472,6 +478,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if report.get("evidence"):
         lines.append("## 证据\n")
         lines.append(str(report["evidence"]))
+        lines.append("")
+
+    if dep_meta.get("reachability_evidence"):
+        lines.append("## Reachability 证据\n")
+        lines.append(str(dep_meta["reachability_evidence"]))
         lines.append("")
 
     if report.get("validation_evidence"):

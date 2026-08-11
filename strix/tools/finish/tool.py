@@ -10,6 +10,7 @@ from typing import Any
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import coordinator_from_context
+from strix.runtime.proxy_coverage import unresolved_proxy_endpoints
 
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ async def finish_scan(
     execution stops. There is no draft mode and no second chance: never
     submit placeholder, provisional, or "checking if done" text in any
     field, and never call ``finish_scan`` to poll whether subagents are
-    done (use ``view_agent_graph`` / ``wait_for_message`` for that).
+    done (use ``view_agent_graph`` / ``wait_for_agents`` for that).
     Call it exactly ONCE, only when every field holds genuine, finished
     assessment prose.
 
@@ -111,7 +112,7 @@ async def finish_scan(
        summary. If ANY agent is in ``running`` / ``waiting`` state,
        you MUST NOT call ``finish_scan`` yet —
        wrap them up first via ``send_message_to_agent`` (ask them to
-       finish), ``wait_for_message`` (block until their report
+       finish), ``wait_for_agents`` (block until their report
        arrives), or ``stop_agent`` (graceful cancel). Only ``completed``
        / ``crashed`` / ``stopped`` agents are safe to leave behind.
        Calling ``finish_scan`` while children are alive orphans their
@@ -279,6 +280,30 @@ async def finish_scan(
             ensure_ascii=False,
             default=str,
         )
+
+    coverage_ref = inner.get("proxy_feature_coverage_ref")
+    if (
+        coordinator is not None
+        and parent_id is None
+        and not coordinator.reserve_stopped
+        and isinstance(coverage_ref, dict)
+    ):
+        _, statuses, _, _ = await coordinator.graph_snapshot()
+        unresolved = unresolved_proxy_endpoints(coverage_ref, agent_statuses=statuses)
+        if unresolved:
+            return json.dumps(
+                {
+                    "success": False,
+                    "scan_completed": False,
+                    "error": (
+                        "Cannot finish scan while passive-proxy endpoints remain uncovered. "
+                        "Spawn specialists or record explicit not-applicable reasons first"
+                    ),
+                    "unresolved_endpoints": unresolved,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
 
     result = await asyncio.to_thread(
         _do_finish,

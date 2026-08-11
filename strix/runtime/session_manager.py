@@ -10,24 +10,26 @@ import ipaddress
 import logging
 import os
 import shlex
-import shutil
 import socket
+import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
-from strix.runtime.backends import get_backend
+from strix.runtime.backends import backend_supports_bind_mounts, get_backend
 from strix.runtime.caido_bootstrap import UpstreamProxyHttpConfig, bootstrap_caido
 from strix.runtime.host_bridge_proxy import (
     HostBridgeProxyServer,
     acquire_shared_host_bridge_proxy,
     release_shared_host_bridge_proxy,
 )
-from strix.runtime.local_dir_staging import stage_symlink_safe_dir
+
+if TYPE_CHECKING:
+    from strix.runtime.status import StatusSink
 
 
 logger = logging.getLogger(__name__)
@@ -158,11 +160,44 @@ async def _start_container_proxy_compat_shim(
     if not callable(exec_command):
         raise RuntimeError("当前 sandbox session 不支持 exec，无法启动 Caido 兼容代理")
 
-    shim_script = f"""
+    shim_script = _container_proxy_compat_shim_script(
+        listen_port=listen_port,
+        target_port=target_port,
+    )
+    payload = base64.b64encode(shim_script.encode("utf-8")).decode("ascii")
+    python_command = (
+        "import base64; "
+        f"exec(compile(base64.b64decode({payload!r}), "
+        "'_strix_caido_proxy_compat.py', 'exec'))"
+    )
+    shell_command = (
+        f"nohup python3 -c {shlex.quote(python_command)} "
+        f">{shlex.quote(_CONTAINER_PROXY_COMPAT_LOG)} 2>&1 < /dev/null & "
+        f"echo $! > {shlex.quote(_CONTAINER_PROXY_COMPAT_PID)}"
+    )
+    result = await exec_command("sh", "-lc", shell_command, timeout=15)
+    if result.ok():
+        return
+
+    stderr = _result_stream_text(getattr(result, "stderr", "")).strip()
+    stdout = _result_stream_text(getattr(result, "stdout", "")).strip()
+    detail = stderr or stdout or f"exit={result.exit_code}"
+    raise RuntimeError(f"启动 Caido 旧镜像兼容代理失败：{detail}")
+
+
+def _container_proxy_compat_shim_script(
+    *,
+    listen_port: int,
+    target_port: int,
+) -> str:
+    # Bind on 0.0.0.0 so Docker's published host port can reach the shim.
+    # The upstream Caido mixed-mode listener stays on loopback inside the
+    # container, so only the compatibility layer is exposed externally.
+    return f"""
 import socket
 import threading
 
-LISTEN = ("127.0.0.1", {listen_port})
+LISTEN = ("0.0.0.0", {listen_port})
 TARGET = ("127.0.0.1", {target_port})
 
 
@@ -205,25 +240,6 @@ while True:
     threading.Thread(target=pipe, args=(client, upstream), daemon=True).start()
     threading.Thread(target=pipe, args=(upstream, client), daemon=True).start()
 """.strip()
-    payload = base64.b64encode(shim_script.encode("utf-8")).decode("ascii")
-    python_command = (
-        "import base64; "
-        f"exec(compile(base64.b64decode({payload!r}), "
-        "'_strix_caido_proxy_compat.py', 'exec'))"
-    )
-    shell_command = (
-        f"nohup python3 -c {shlex.quote(python_command)} "
-        f">{shlex.quote(_CONTAINER_PROXY_COMPAT_LOG)} 2>&1 < /dev/null & "
-        f"echo $! > {shlex.quote(_CONTAINER_PROXY_COMPAT_PID)}"
-    )
-    result = await exec_command("sh", "-lc", shell_command, timeout=15)
-    if result.ok():
-        return
-
-    stderr = _result_stream_text(getattr(result, "stderr", "")).strip()
-    stdout = _result_stream_text(getattr(result, "stdout", "")).strip()
-    detail = stderr or stdout or f"exit={result.exit_code}"
-    raise RuntimeError(f"启动 Caido 旧镜像兼容代理失败：{detail}")
 
 
 async def _ensure_container_proxy_listener(
@@ -337,43 +353,93 @@ async def _cleanup_partial_session(
             with contextlib.suppress(Exception):
                 docker_client.close()
 
+_PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
 
-def build_session_entries(
-    local_sources: list[dict[str, Any]],
-) -> tuple[dict[str | Path, BaseEntry], list[dict[str, Any]], list[Path]]:
-    """Split local sources into copied manifest entries and host bind mounts.
 
-    Sources flagged ``mount`` are bind-mounted read-only at
-    ``/workspace/<workspace_subdir>`` (not added to the manifest, so the SDK
-    does not stream them in file-by-file). Every other source becomes a
-    ``LocalDir`` entry copied into the container as before. Trees containing
-    symlinks (which the SDK's ``LocalDir`` walker refuses outright) are first
-    staged into a symlink-safe temp copy; those temp dirs are returned so the
-    caller can remove them once the upload completes.
-    """
-    entries: dict[str | Path, BaseEntry] = {}
+def _host_identity_env() -> dict[str, str]:
+    # Read the platform through a local so it is not narrowed to whichever OS is
+    # type-checking: comparing sys.platform directly makes one of these branches
+    # statically dead, and which one flips between Linux and macOS.
+    platform_name: str = sys.platform
+    if platform_name != "linux":
+        return {}
+    # Bind-mount ownership only needs mapping on Linux, where the container uid
+    # must match the host's.
+    return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
+
+
+def _target_credential_environment(
+    target_credentials: dict[str, str] | None,
+) -> dict[str, str]:
+    if target_credentials is None:
+        return {}
+    username = str(target_credentials.get("username") or "")
+    password = str(target_credentials.get("password") or "")
+    if not username or not password:
+        raise ValueError("target_credentials requires non-empty username and password")
+    return {
+        "STRIX_TARGET_USERNAME": username,
+        "STRIX_TARGET_PASSWORD": password,
+    }
+
+
+def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     bind_mounts: list[dict[str, Any]] = []
-    staged_dirs: list[Path] = []
     for src in local_sources:
         ws_subdir = src.get("workspace_subdir") or ""
         host_path = src.get("source_path") or ""
         if not ws_subdir or not host_path:
             continue
         resolved = Path(host_path).expanduser().resolve()
-        if src.get("mount"):
-            bind_mounts.append(
-                {
-                    "source": str(resolved),
-                    "target": f"{_WORKSPACE_ROOT}/{ws_subdir}",
-                    "read_only": True,
-                }
+        target = f"{_WORKSPACE_ROOT}/{ws_subdir}"
+        bind_mounts.append({"source": str(resolved), "target": target, "read_only": False})
+        if src.get("protect_metadata"):
+            bind_mounts.extend(_metadata_mounts(resolved, target))
+    return bind_mounts
+
+
+def build_manifest_entries(local_sources: list[dict[str, Any]]) -> dict[str | Path, BaseEntry]:
+    entries: dict[str | Path, BaseEntry] = {}
+    for src in local_sources:
+        ws_subdir = src.get("workspace_subdir") or ""
+        host_path = src.get("source_path") or ""
+        if not ws_subdir or not host_path:
+            continue
+        entries[ws_subdir] = LocalDir(src=Path(host_path).expanduser().resolve())
+    return entries
+
+
+def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
+    mounts: list[dict[str, Any]] = []
+    for name in _PROTECTED_METADATA_NAMES:
+        metadata = tree / name
+        if not metadata.is_dir() and not metadata.is_file():
+            continue
+        if not metadata.resolve().is_relative_to(tree):
+            continue
+        mounts.append({"source": str(metadata), "target": f"{target}/{name}", "read_only": True})
+        gitdir = _gitdir_from_pointer(metadata) if metadata.is_file() else None
+        if gitdir is not None and gitdir.exists() and gitdir.is_relative_to(tree):
+            relative = gitdir.relative_to(tree).as_posix()
+            mounts.append(
+                {"source": str(gitdir), "target": f"{target}/{relative}", "read_only": True}
             )
-        else:
-            upload_path, staged = stage_symlink_safe_dir(resolved)
-            if staged is not None:
-                staged_dirs.append(staged)
-            entries[ws_subdir] = LocalDir(src=upload_path)
-    return entries, bind_mounts, staged_dirs
+    return mounts
+
+
+def _gitdir_from_pointer(git_file: Path) -> Path | None:
+    try:
+        content = git_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in content.splitlines():
+        prefix, _, value = line.partition(":")
+        if prefix.strip() == "gitdir" and value.strip():
+            candidate = Path(value.strip()).expanduser()
+            if not candidate.is_absolute():
+                candidate = git_file.parent / candidate
+            return candidate.resolve()
+    return None
 
 
 async def create_or_reuse(
@@ -382,19 +448,35 @@ async def create_or_reuse(
     image: str,
     local_sources: list[dict[str, Any]],
     burp_port: int | None = None,
+    status_sink: StatusSink | None = None,
+    target_credentials: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
     Each ``local_sources`` entry exposes its host ``source_path`` at
-    ``/workspace/<workspace_subdir>`` inside the container — copied in, or
-    bind-mounted read-only when the entry is flagged ``mount``.
+    ``/workspace/<workspace_subdir>`` inside the container.
     """
+
+    def report(phase: str) -> None:
+        if status_sink is not None:
+            status_sink(phase)
+
+    credential_environment = _target_credential_environment(target_credentials)
+
     cached = _SESSION_CACHE.get(scan_id)
     if cached is not None:
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    entries, bind_mounts, staged_dirs = build_session_entries(local_sources)
+    backend_name = load_settings().runtime.backend
+    backend = get_backend(backend_name)
+
+    if backend_supports_bind_mounts(backend_name):
+        bind_mounts = build_bind_mounts(local_sources)
+        entries: dict[str | Path, BaseEntry] = {}
+    else:
+        bind_mounts = []
+        entries = build_manifest_entries(local_sources)
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
@@ -409,18 +491,17 @@ async def create_or_reuse(
             value={
                 "PYTHONUNBUFFERED": "1",
                 "HOST_GATEWAY": "host.docker.internal",
+                **_host_identity_env(),
                 "http_proxy": container_caido_proxy_url,
                 "https_proxy": container_caido_proxy_url,
                 "ALL_PROXY": container_caido_proxy_url,
                 "NO_PROXY": "localhost,127.0.0.1",
+                **credential_environment,
             },
         ),
     )
 
-    backend_name = load_settings().runtime.backend
-    backend = get_backend(backend_name)
     _assert_burp_port_available(backend_name=backend_name, burp_port=burp_port)
-
     logger.info(
         "Creating sandbox session for scan %s (backend=%s, image=%s)",
         scan_id,
@@ -431,7 +512,14 @@ async def create_or_reuse(
     session: Any | None = None
     caido_client: Any | None = None
     host_bridge_proxy: HostBridgeProxyServer | None = None
+    upstream_proxy: UpstreamProxyHttpConfig | None = None
+    host_caido_ui_url = ""
+    host_caido_proxy_url = ""
+    burp_upstream_url: str | None = None
+    burp_upstream_unavailable_reason: str | None = None
+    caido_ui_url: str | None = None
     try:
+        report("Starting sandbox container")
         backend_kwargs: dict[str, Any] = {
             "image": image,
             "manifest": manifest,
@@ -462,12 +550,12 @@ async def create_or_reuse(
             host_caido_ui_url,
             host_caido_proxy_url,
         )
+        report("Setting up the proxy")
         burp_upstream_url, burp_upstream_unavailable_reason = _burp_upstream_metadata(
             backend_name=backend_name,
             host_proxy_url=host_caido_proxy_url,
         )
         caido_ui_url = _caido_ui_metadata(host_ui_url=host_caido_ui_url)
-        upstream_proxy: UpstreamProxyHttpConfig | None = None
         if backend_name == "docker":
             host_bridge_proxy = await acquire_shared_host_bridge_proxy()
             upstream_proxy = host_bridge_proxy.upstream_config()
@@ -489,10 +577,6 @@ async def create_or_reuse(
             host_bridge_proxy=host_bridge_proxy,
         )
         raise
-    finally:
-        for staged in staged_dirs:
-            shutil.rmtree(staged, ignore_errors=True)
-
     bundle = {
         "client": client,
         "session": session,

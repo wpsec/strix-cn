@@ -14,11 +14,11 @@ def test_build_proxy_scope_constraints_for_passive_mode_adds_noise_denylist() ->
     constraints = proxy_scope.build_proxy_scope_constraints({"burp_port": 8081})
 
     assert constraints["proxy_scope_enforced"] is True
+    assert constraints["proxy_scope_allowlist"] == ["*"]
     assert "caido.io" in constraints["proxy_scope_denylist"]
     assert "*.caido.io" in constraints["proxy_scope_denylist"]
     assert "googleapis.com" in constraints["proxy_scope_denylist"]
     assert "*.oast.site" in constraints["proxy_scope_denylist"]
-    assert constraints["proxy_scope_allowlist"] == []
 
 
 def test_build_proxy_scope_constraints_uses_exact_target_hosts() -> None:
@@ -58,6 +58,19 @@ def test_host_matches_scope_applies_allowlist_and_denylist() -> None:
         "other.example.com",
         allowlist=["app.example.com"],
         denylist=[],
+    )
+
+
+def test_host_matches_scope_requires_explicit_allowlist_membership() -> None:
+    assert not proxy_scope.host_matches_scope(
+        "app.example.com",
+        allowlist=[],
+        denylist=["google.com", "*.google.com"],
+    )
+    assert proxy_scope.host_matches_scope(
+        "app.example.com",
+        allowlist=["*"],
+        denylist=["google.com", "*.google.com"],
     )
 
 

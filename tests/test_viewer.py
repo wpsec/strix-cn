@@ -198,6 +198,56 @@ def test_server_serves_api_and_static(tmp_path: Path, monkeypatch: pytest.Monkey
         httpd.server_close()
 
 
+def test_server_generates_html_report_download_when_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(
+        tmp_path,
+        "served-html",
+        status="completed",
+        end_time="2026-01-01T00:00:00Z",
+    )
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_name": "served-html",
+                "status": "completed",
+                "end_time": "2026-01-01T00:00:00Z",
+                "targets": ["https://example.com"],
+                "scan_mode": "deep",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "vulnerabilities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "STRIX-TEST-001",
+                    "title": "SQL injection",
+                    "severity": "high",
+                    "target": "https://example.com/login",
+                    "summary": "confirmed issue",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _bundle(tmp_path, monkeypatch)
+
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    try:
+        status, ctype, body = _get(f"{url}/api/report.html")
+        assert status == 200
+        assert "text/html" in ctype
+        assert b"SQL injection" in body
+        assert (run_dir / "penetration_test_report.html").is_file()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_server_serves_preloaded_static_assets_when_disk_reads_fail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

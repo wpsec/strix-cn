@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
-from strix.core.inputs import DEFAULT_MAX_TURNS
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.interface.branding import branding_items
 from strix.report.state import ReportState, set_global_report_state
@@ -23,6 +23,7 @@ from .utils import (
     build_live_stats_text,
     build_target_summary_text,
     format_vulnerability_report,
+    has_model_response,
 )
 
 
@@ -51,6 +52,8 @@ def _resolve_sandbox_image() -> str:
 
 async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console = Console()
+    target_credentials = getattr(args, "target_credentials", None)
+    args.target_credentials = None
 
     start_text = Text()
     start_text.append("渗透测试已启动", style="bold #22c55e")
@@ -107,6 +110,10 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "diff_base": getattr(args, "diff_base", None),
         "burp_port": getattr(args, "burp_port", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
+        "credential_auth_available": bool(target_credentials),
+        "allow_credential_attacks": bool(
+            getattr(args, "allow_credential_attacks", False)
+        ),
     }
 
     report_state = ReportState(args.run_name)
@@ -147,10 +154,16 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     set_global_report_state(report_state)
 
+    startup_phase: list[str] = ["Starting up"]
+
     def create_live_status() -> Panel:
         status_text = Text()
         status_text.append("渗透测试进行中", style="bold #22c55e")
         status_text.append("\n\n")
+
+        if not has_model_response(report_state):
+            status_text.append(f"{startup_phase[0]}...", style="dim")
+            status_text.append("\n\n")
 
         stats_text = build_live_stats_text(report_state)
         if stats_text:
@@ -163,6 +176,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             border_style="#22c55e",
             padding=(1, 2),
         )
+
+    def _note_startup_phase(phase: str) -> None:
+        startup_phase[:] = [phase]
 
     try:
         console.print()
@@ -198,8 +214,12 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     interactive=bool(getattr(args, "interactive", False)),
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
+                    status_sink=_note_startup_phase,
+                    target_credentials=target_credentials,
                 )
             finally:
+                if target_credentials is not None:
+                    target_credentials.clear()
                 stop_updates.set()
                 update_thread.join(timeout=1)
                 with contextlib.suppress(Exception):

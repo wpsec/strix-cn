@@ -109,6 +109,7 @@ async def test_fetch_proxy_capture_snapshot_selects_strix_project_before_query(
                 node=SimpleNamespace(
                     request=SimpleNamespace(
                         id="req-9",
+                        created_at=datetime(2026, 8, 11, 2, 36, tzinfo=UTC),
                         method="POST",
                         host="app.example.com",
                         path="/api/orders",
@@ -126,10 +127,12 @@ async def test_fetch_proxy_capture_snapshot_selects_strix_project_before_query(
     monkeypatch.setattr(proxy_capture, "_login_as_guest", lambda _host_url: "token")
     monkeypatch.setattr(proxy_capture, "Client", lambda *_args, **_kwargs: fake_client)
 
-    async def _count_requests(*_args: Any, **_kwargs: Any) -> int:
-        return 14
+    async def _request_inventory(
+        *_args: Any, **_kwargs: Any
+    ) -> tuple[int, tuple[tuple[str, int], ...]]:
+        return 14, (("POST app.example.com/api/orders", 14),)
 
-    monkeypatch.setattr(proxy_capture, "_count_requests", _count_requests)
+    monkeypatch.setattr(proxy_capture, "_request_inventory", _request_inventory)
 
     snapshot = await proxy_capture.fetch_proxy_capture_snapshot(
         "http://127.0.0.1:52124",
@@ -145,11 +148,13 @@ async def test_fetch_proxy_capture_snapshot_selects_strix_project_before_query(
     assert builder.scope_id == "scope-1"
     assert snapshot.recent_request_count == 1
     assert snapshot.latest_request_id == "req-9"
+    assert snapshot.latest_request_created_at == "2026-08-11T02:36:00+00:00"
     assert snapshot.latest_method == "POST"
     assert snapshot.latest_host == "app.example.com"
     assert snapshot.latest_path == "/api/orders"
     assert snapshot.latest_status_code == 201
     assert snapshot.total_request_count == 14
+    assert snapshot.endpoint_request_counts == (("POST app.example.com/api/orders", 14),)
 
 
 @pytest.mark.asyncio
@@ -169,10 +174,12 @@ async def test_proxy_capture_poller_reuses_connected_client(
     monkeypatch.setattr(proxy_capture, "_login_as_guest", lambda _host_url: "token")
     monkeypatch.setattr(proxy_capture, "Client", _make_client)
 
-    async def _count_requests(*_args: Any, **_kwargs: Any) -> int:
-        return 0
+    async def _request_inventory(
+        *_args: Any, **_kwargs: Any
+    ) -> tuple[int, tuple[tuple[str, int], ...]]:
+        return 0, ()
 
-    monkeypatch.setattr(proxy_capture, "_count_requests", _count_requests)
+    monkeypatch.setattr(proxy_capture, "_request_inventory", _request_inventory)
 
     poller = proxy_capture.ProxyCapturePoller("http://127.0.0.1:52124")
     try:
@@ -204,3 +211,39 @@ async def test_fetch_proxy_capture_snapshot_fails_when_strix_project_missing(
 
     assert fake_client.connected is True
     assert fake_client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_request_inventory_counts_all_dynamic_endpoints_and_skips_assets() -> None:
+    def edge(method: str, path: str) -> Any:
+        return SimpleNamespace(
+            node=SimpleNamespace(
+                request=SimpleNamespace(
+                    method=method,
+                    host="dvwa.local",
+                    path=path,
+                )
+            )
+        )
+
+    connection = _FakeConnection(
+        edges=[
+            edge("GET", "/vulnerabilities/sqli/"),
+            edge("GET", "/vulnerabilities/sqli/"),
+            edge("POST", "/vulnerabilities/upload/"),
+            edge("GET", "/assets/app.js"),
+        ],
+        page_info=SimpleNamespace(has_next_page=False),
+    )
+    client = _FakeClient(
+        _FakeProjectSDK([]),
+        _FakeRequestSDK(_FakeRequestBuilder(connection)),
+    )
+
+    total, endpoint_counts = await proxy_capture._request_inventory(client, page_size=200)
+
+    assert total == 4
+    assert endpoint_counts == (
+        ("GET dvwa.local/vulnerabilities/sqli/", 2),
+        ("POST dvwa.local/vulnerabilities/upload/", 1),
+    )

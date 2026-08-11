@@ -1,217 +1,223 @@
-<!-- 这是一张图片，ocr 内容为： -->
+# Strix CN
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1771932705094-c88426f2-74cc-4214-8f91-e3a4c8882279.png)
+Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.5.2`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
 
-Strix开源 AI 渗透测试工具。面向中文用户持续维护，优先解决国内模型、Burp 工作流与兼容性适配。
+- 上游项目：https://github.com/usestrix/strix
+- 当前分支：https://github.com/wpsec/strix-cn
 
-这个是原项目地址：[https://github.com/usestrix/strix](https://github.com/usestrix/strix)
+## 分支目标
 
-当前是分支：[https://github.com/wpsec/strix-cn](https://github.com/wpsec/strix-cn)
+- 完整吸收上游当前发布版的功能、修复和新架构
+- 保留 `strix-cn` 既有的中文文档、中文提示和中文报告输出
+- 保留 Burp / Caido 被动扫描工作流与本地模型、兼容网关适配
+- 保留本地开发者熟悉的 CLI 入口、常用参数和恢复路径
 
-> [!TIP]  
-> **新功能**：Strix 已可无缝接入 GitHub Actions 和 CI/CD 流水线。你可以在每个 Pull Request 上自动执行漏洞扫描，在不安全代码进入生产环境前直接拦截。可前往 [app.strix.ai](https://app.strix.ai) 体验免配置接入。
+## 当前版本重点
 
-> [!IMPORTANT]  
-> `strix-cn` 是面向中文用户的持续维护分支。这个分支会优先围绕以下方向长期演进：
->
-> - 国内可访问、可落地的模型接入，包括 OpenAI-compatible 网关、LiteLLM 路由与本地模型
-> - Burp Suite 与常用 Burp 插件工作流兼容，方便接入现有手工验证流程
-> - macOS、Linux、Windows 以及受限网络环境下的安装、运行与代理兼容性
-> - 中文文档、中文说明和中文报告输出体验
+- 交互界面已迁移到上游 Go / Bubble Tea TUI
+- 支持 API spec / Postman collection 目标类型
+- 支持 `LLM_EXTRA_HEADERS`、`LLM_DISABLE_STREAMING`、`STRIX_REASONING_EFFORT=max`
+- 默认沙箱镜像基线升级到 `ghcr.io/usestrix/strix-sandbox:1.3.0`
+- 本地目录统一走挂载模式，不再保留旧的逐文件复制主路径
+- 本地 Viewer 已内置，无需额外前端安装
 
----
+## 使用注意
 
-## Strix 简介
+- 只能在你拥有或获得明确书面授权的目标上运行
+- Burp 被动扫描模式下，不要一次性把整站大量接口流量导给 Strix
+- 对增删改类接口保持谨慎，不建议把高风险破坏性操作直接交给 AI
+- AI 会把任务分发给多个专家代理，复杂扫描通常需要较长时间
 
-Strix 是一组自治 AI 渗透测试代理，工作方式尽量贴近真实黑客。它会动态运行你的代码、发现漏洞，并通过真实的 PoC 进行验证。`strix-cn` 在保留上游核心能力的同时，优先补齐国内模型接入、Burp 工作流协同、环境兼容和中文化体验，方便在本地研发、内网、自建网关和受限网络环境中落地。
+## 核心能力
 
-**核心能力：**
-
-- **完整渗透测试工具链**：内置侦察、利用、验证能力
-- **多代理协同**：多名 AI 渗透测试代理可协作并行工作
-- **真实利用验证**：输出可执行 PoC，而不只是传统扫描器式的告警
-- **面向开发者的 CLI**：提供可执行的修复建议与可落地的发现结果
-- **自动修复与报告**：可生成补丁与适合合规场景的渗透测试报告
-- **模型兼容优先**：优先验证 OpenAI-compatible、LiteLLM 路由和本地模型接入
-- **语言与环境适配**：默认中文报告，并持续修复跨平台与代理环境兼容问题
-
-## 使用场景
-
-- **应用安全测试**：发现并验证应用中的高危安全漏洞
-- **快速渗透测试**：在数小时内完成渗透测试，而不是等待数周，并输出合规报告
-- **漏洞赏金自动化**：自动化研究、生成 PoC，加快漏洞提交
-- **CI/CD 集成**：在发布前阻断漏洞进入生产环境
-- **内网与受限环境落地**：配合本地模型、兼容网关和网络代理完成扫描
-
-## 注意！！！
-
-一定在测试系统使用
-
-不要一次性代理过多的接口给工具，burp 可以少量多次的进行功能接口的分发，不要把所有接口都跑一边然后等结果！
-
-增删改的接口一定慎重（不建议给 AI 测）
-
-AI 需要分发任务给对应的专家，测试过程会很慢，过多的接口可能导致不可预测的结果。
+- 多代理渗透测试：侦察、利用、验证和报告并行协作
+- Web、代码库、API 契约、域名、IP、Burp 被动流量多目标支持
+- 真实 PoC 验证：报告包含可复现步骤和证据
+- Burp / Caido 联动：适合“采集一个功能点，再开始测试”的工作流
+- 中文交付体验：CLI、TUI、README、关键 docs、报告默认中文
+- 本地兼容优先：支持 OpenAI-compatible 网关、本地模型和代理环境
 
 ## 快速开始
 
-**前置要求：**
+### 前置要求
 
 - Docker 已启动
-- 一个可用的 LLM 接入方式。优先推荐 OpenAI-compatible 网关、LiteLLM 路由或本地模型；仍兼容 OpenAI、Anthropic、Google 等上游提供商。
+- Python 3.12+
+- 一个可用的 LLM 接入方式
+  - 推荐：OpenAI-compatible 网关、本地模型、LiteLLM 路由
+  - 兼容：OpenAI、Anthropic、Vertex AI、Bedrock、Azure、ChatGPT 订阅登录
 
-### 安装并执行第一次扫描
+### 从源码安装
 
 ```bash
-# 获取当前 strix-cn 分支源码
+# 获取当前分支源码
 git clone https://github.com/wpsec/strix-cn.git
 cd strix-cn
 
-# 创建虚拟环境并安装当前分支
+# 创建虚拟环境并安装
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 
-# 确认当前虚拟环境里的版本已经刷新
+# 确认版本
 .venv/bin/strix --version
+```
 
-# 如果这里仍显示旧版本，可执行一次无依赖重装刷新元数据
-# python -m pip install -e . --no-deps
+### 准备本地沙箱镜像
 
-# 源码仓库运行时，如果后续提示上游 strix 有新版本，
-# 这里只会提示，不支持按 y 直接自升级，避免把当前分支覆盖成上游发布包
-# 正确更新方式：先手工合并上游代码，再重新执行 `python -m pip install -e .`
+```bash
+# 准备 overlay 构建依赖的基础镜像
+docker pull ghcr.io/usestrix/strix-sandbox:1.3.0
 
-# 准备基础沙箱镜像（docker-overlay 方式依赖它）
-# 这里的 1.1.0 是当前分支使用的基础 sandbox 镜像标签，
-# 不等同于上面 `strix --version` 显示的 CLI/源码版本
-docker pull ghcr.io/usestrix/strix-sandbox:1.1.0
-
+# 国内网络可选：配置构建镜像源
 export STRIX_KALI_APT_MIRROR="http://mirrors.tuna.tsinghua.edu.cn/kali"
 export STRIX_GO_PROXY="https://goproxy.cn,direct"
 export STRIX_GO_SUMDB="sum.golang.google.cn"
 export STRIX_NPM_REGISTRY="https://registry.npmmirror.com"
 export STRIX_PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
 
-# 推荐：轻量覆盖构建当前分支的本地 sandbox 镜像
-# 这条路径只依赖上面已经拉到本机的 ghcr 基础镜像，
-# 在国内网络下通常比完整构建更稳
+# 推荐：在上游 1.3.0 基础上叠加当前分支改动
 ./scripts/docker-overlay.sh local
 
-# 如果你明确改了大量基础环境，必须重建完整 Kali sandbox，
-# 再执行完整构建：
+# 如果你明确修改了大量基础环境，再执行完整构建
 # ./scripts/docker.sh local
 
-# 在当前 shell 中指定 Strix 使用本地镜像
-export STRIX_IMAGE=strix-sandbox:local
+# 指定 Strix 使用本地镜像
+export STRIX_IMAGE="strix-sandbox:local"
+```
 
-# 配置 AI 提供商
-# 示例：兼容国内/自建 OpenAI-compatible 网关
-# MAC/Linux
+### 配置模型
+
+```bash
+# 示例：兼容网关 / 自建入口 / 国内可访问模型网关
 export STRIX_LLM="openai/your-compatible-model"
 export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="https://your-gateway.example/v1"
 
-# Windows PowerShell（当前窗口立即生效，保持注释按需复制）
-# $env:STRIX_LLM="openai/your-compatible-model"
-# $env:LLM_API_KEY="your-api-key"
-# $env:LLM_API_BASE="https://your-gateway.example/v1"
-#
-# Windows PowerShell（写入用户环境变量；需重新打开终端）
-# setx STRIX_LLM "openai/your-compatible-model"
-# setx LLM_API_KEY "your-api-key"
-# setx LLM_API_BASE "https://your-gateway.example/v1"
+# 可选：额外路由头
+export LLM_EXTRA_HEADERS='{"X-Tenant":"acme"}'
 
-# 扫描app-directory
-.venv/bin/strix --target ./app-directory
-# 被动扫描
-.venv/bin/strix --burp-port 8081
+# 可选：受限网络或兼容网关流式不稳定时关闭 streaming
+export LLM_DISABLE_STREAMING="false"
+
+# 可选：推理强度
+export STRIX_REASONING_EFFORT="high"
+
+# 可选：受限网络环境
+export HTTP_PROXY="http://127.0.0.1:7897"
+export HTTPS_PROXY="http://127.0.0.1:7897"
+export ALL_PROXY="socks5://127.0.0.1:7897"
 ```
 
-> [!NOTE]  
-> 上面的方式安装的是当前 `strix-cn` 分支源码，不是官方安装脚本拉取的发布版。首次运行会自动拉取沙箱 Docker 镜像。扫描结果会保存在 `strix_runs/<run-name>`。  
-> 当前分支默认输出中文报告；如果你需要英文或双语结果，可在 `--instruction` 中显式说明.
-
-> [!TIP]  
-> Windows 下运行前请先确认 Docker Desktop 已安装并处于运行状态；Strix 会自动拉取缺失镜像，但不会自动启动 Docker Desktop。没有在windows上测试过。
-
-### Burp 被动扫描快速开始
-
-推荐按“一个功能一个功能”测试，不要一次性把整个站点的大量接口流量都导给 Strix。
+### 第一条命令
 
 ```bash
-# 启动 Strix，监听给 Burp 的上游代理端口
+# 本地代码扫描
+.venv/bin/strix --target ./app-directory
+
+# Web 应用扫描
+.venv/bin/strix --target https://example.com
+
+# Burp 被动扫描
 .venv/bin/strix --burp-port 8081
 ```
 
-1. 在 Burp 里把上游代理指向 `127.0.0.1:8081`。
-2. 浏览器继续走 Burp，先手工点完一个完整功能点，让相关请求进入当前采集批次。
-3. 回到 Strix 后按 `Ctrl+T`，开始测试当前功能点。
-4. 当前功能点测完后按 `Ctrl+N`，切换到下一个功能采集批次。
-5. 按这个节奏循环，直到全部功能点测试完成。
+## 常见用法
 
-> [!TIP]  
-> 这种“单功能采集 -> 开始测试 -> 切换下一个功能”的方式，比一次性灌入整站流量更稳定，也更符合当前 `strix-cn` 的 Burp 被动扫描工作流。
+### 基础扫描
 
-**这样既能保证功能都测试到了，也能缓解流量过多造成的 AI 幻觉等问题**
+```bash
+# 本地代码库
+strix --target ./app-directory
 
-burp 被动扫描模式
+# GitHub 仓库
+strix --target https://github.com/org/repo
 
-<!-- 这是一张图片，ocr 内容为： -->
+# Web 应用
+strix --target https://your-app.com
+```
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785324796747-e9535f6b-d4fa-49a8-b3d9-0b59a17923ec.png)
+### API Testing（OpenAPI / Swagger / Postman）
 
-burp 开启代理
+```bash
+# OpenAPI / Swagger 文件
+strix --target ./openapi.yaml --target https://api.your-app.com
 
-<!-- 这是一张图片，ocr 内容为： -->
+# Postman collection 导出文件
+strix --target ./collection.postman_collection.json --target https://api.your-app.com
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785324817437-b9b33e4b-d9e3-4489-8573-53005b03bcab.png)
+# 通过 Postman collection id 实时拉取
+export POSTMAN_API_KEY="PMAK-..."
+strix --target "postman://<collection-uuid>?env=<environment-uuid>"
+```
 
-功能测试完成，按下 ctrl+t 开始测试
+### Burp 被动扫描
 
-**主 agent 接收到流量下发任务**
+```bash
+# 仅使用 Burp 流量建立作用域
+strix --burp-port 8081
 
-<!-- 这是一张图片，ocr 内容为： -->
+# 同时显式限制目标主机
+strix --target https://example.com --burp-port 8081
+```
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785324988720-41e11014-6d83-4a16-8060-a417e9c0563b.png)
+推荐工作流：
 
----
+1. 在 Burp 中把上游代理指向 `127.0.0.1:8081`
+2. 浏览器继续走 Burp，先手工完成一个完整功能点
+3. 回到 Strix 后在对话框发送 `开始测试`，冻结当前功能点并暂停继续采集
+4. 当前功能点测完后发送 `下一功能点`，重新开启下一轮采集
+5. 全部功能点完成后发送 `结束测试`，生成总报告
 
-**各类子 agent 扮演专家，执行安全测试，结果返回给主 agent**
+这种“单功能采集 -> 开始测试 -> 切换下一功能”的方式，比一次性灌入整站流量更稳定，也更符合当前 `strix-cn` 的 Burp 工作流。
 
-<!-- 这是一张图片，ocr 内容为： -->
+### 进阶组合
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325439367-c1170f38-c5d5-432a-b788-98593b1f3710.png)
+```bash
+# 多目标测试（源码 + 已部署应用）
+strix -t https://github.com/org/app -t https://staging.example.com
 
-<!-- 这是一张图片，ocr 内容为： -->
+# 从文件读取目标
+strix --target-list ./targets.txt
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325437035-0870761d-af50-4779-832c-a53a6cfea7c9.png)
+# 兼容参数：只挂载工作目录
+strix --mount ./huge-monorepo --instruction "Review the changed auth flow"
 
-**报告自带 poc ，方便复现**
+# 聚焦测试
+strix --target api.example.com --instruction "重点测试 IDOR、认证绕过和业务逻辑缺陷"
 
-<!-- 这是一张图片，ocr 内容为： -->
+# 从文件读取详细说明
+strix --target api.example.com --instruction-file ./instruction.md
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325476847-5d898e95-b30c-40ce-9028-af8dbdb516a1.png)
+# 快速模式 + diff-scope
+strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
-<!-- 这是一张图片，ocr 内容为： -->
+# 恢复之前中断的运行
+strix --resume <run_name>
+```
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325528579-3cb0790a-f8f4-469f-aa00-605775e97cc5.png)
+## 本地 Viewer
 
-<!-- 这是一张图片，ocr 内容为： -->
+每次扫描结果都会实时落盘。你可以直接在浏览器中查看运行状态、漏洞详情、代理图和历史运行：
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325560838-625dfe38-bd20-40cb-8e07-81495576f1df.png)
+```bash
+# 打开最近一次运行
+strix view
 
-<!-- 这是一张图片，ocr 内容为： -->
+# 或者打开指定运行
+strix view <run_name>
+```
 
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1785325629999-27910663-7a4a-40e8-83a2-180b5861d325.png)
+Viewer 默认只绑定到本机回环地址，读取本地 `strix_runs/` 目录中的结果文件，不需要额外前端安装。
 
-### ChatGPT 订阅登录
+## ChatGPT 订阅登录
 
-如果你不想直接使用按量 API Key，也可以使用上游新增的 ChatGPT 订阅登录能力：
+如果你不想直接使用按量 API Key，也可以使用当前版本内置的 ChatGPT 订阅登录能力：
 
 ```bash
 strix auth login chatgpt
+
 export STRIX_LLM="chatgpt/gpt-5.4"
 strix --target ./app-directory
 
@@ -219,154 +225,36 @@ strix auth status
 strix auth logout
 ```
 
-### 本地 Viewer
+## 在编码代理中使用 Strix
 
-当前版本已内置本地 Viewer。每次扫描结果都会实时落盘，你可以直接在浏览器里查看运行状态、漏洞详情、代理图和历史运行：
-
-```bash
-# 打开最近一次运行
-.venv/bin/strix view
-
-# 或者打开指定运行
-.venv/bin/strix view <run-name>
-```
-
-Viewer 默认只绑定到本机回环地址，读取本地 `strix_runs/` 目录中的结果文件，不需要额外前端构建。
-
-### 先看帮助
+Strix 已支持通过 skills 接入常见编码代理：
 
 ```bash
-# 源码仓库内直接运行
-.venv/bin/strix -h
-
-# 已安装到系统后直接运行
-strix -h
+npx skills add usestrix/strix
 ```
 
-> [!NOTE]  
-> 某些网络环境下执行 `-h` 时，可能先看到 LiteLLM 关于远端 model cost map 的 warning。它通常会自动回退到本地 backup，不影响查看帮助或正常运行。
+这会安装 4 个技能，分别覆盖无头扫描与结果读取、云端托管渗透测试 API 驱动、修复后复扫验证，以及 CI 场景下的 PR 安全扫描。编码代理既可以直接驱动本地开源 CLI，也可以在没有本地 Docker 或 LLM Key 时走托管云端能力。
 
----
+相关参考：
 
-## 功能特性
+- [`AGENTS.md`](AGENTS.md)：本地快速说明
+- [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt)：CLI 文档
+- [docs.app.strix.ai](https://docs.app.strix.ai)：云端 API 文档
 
-### Agentic 渗透测试工具集
+- `strix-pentest`：无头扫描与结果读取
+- `strix-cloud-api`：通过云端平台 REST API 驱动扫描
+- `strix-fix-findings`：修复并复扫验证
+- `strix-ci-setup`：在 CI 中接入 PR 扫描
 
-Strix 代理内置了完整的攻防工具链，覆盖专业渗透测试人员和白帽黑客常用能力：
+## 无头模式与 CI
 
-- **HTTP 拦截代理**：当前基于 Caido，并持续补齐与 Burp Suite 工作流的兼容适配
-- **浏览器利用能力**：自动化浏览器，可测试 XSS、CSRF、点击劫持和认证绕过流程
-- **Shell 与命令执行**：交互式终端，用于漏洞利用与后渗透阶段
-- **自定义利用运行时**：内置 Python 沙箱，用于编写和验证 PoC
-- **侦察与 OSINT**：自动化攻击面梳理、子域枚举、指纹识别
-- **静态与动态代码分析**：同时具备 SAST 与 DAST 能力
-- **漏洞知识库**：结构化发现结果，带 CVSS 评分与 OWASP 分类
-
-### 综合漏洞扫描能力
-
-Strix 可以识别、验证并利用覆盖 OWASP Top 10 及更多类别的安全问题：
-
-- **访问控制缺陷**：IDOR、提权、认证绕过
-- **注入类攻击**：SQL 注入、NoSQL 注入、命令注入、SSTI
-- **服务端漏洞**：SSRF、XXE、不安全反序列化、RCE
-- **客户端攻击**：XSS（存储型 / 反射型 / DOM）、原型污染、CSRF
-- **业务逻辑缺陷**：竞态条件、支付绕过、流程绕过
-- **认证与会话问题**：JWT 攻击、会话固定、撞库向量
-- **基础设施与云安全**：配置错误、暴露服务、云侧安全问题
-- **API 安全**：认证缺陷、批量赋值、限速绕过
-
-### 多代理图（Graph of Agents）
-
-Strix 提供多代理协同编排能力，用于更完整的自动化渗透测试：
-
-- **分布式渗透测试**：将侦察、利用、后渗透交给不同 AI 代理执行
-- **可扩展的安全测试**：面向多目标并行执行，加快覆盖速度
-- **动态协同**：代理间可共享发现、串联漏洞，接近真实红队协作方式
-
----
-
-## 使用示例
-
-### 基础用法
-
-```bash
-# 扫描本地代码库
-strix --target ./app-directory
-
-# 审查 GitHub 仓库
-strix --target https://github.com/org/repo
-
-# 黑盒 Web 应用测试
-strix --target https://your-app.com
-```
-
-### 进阶测试场景
-
-```bash
-# Burp 被动扫描：浏览器 -> Burp -> Strix -> 目标站点
-strix --burp-port 8081
-
-# Burp 被动扫描 + 显式限制目标主机
-strix --target https://example.com --burp-port 8081
-
-# 灰盒认证测试
-strix --target https://your-app.com --instruction "Perform authenticated testing using credentials: user:pass"
-
-# 多目标测试（源码 + 已部署应用）
-strix -t https://github.com/org/app -t https://your-app.com
-
-# 从文件读取目标，每行一个，忽略空行和注释
-strix --target-list ./targets.txt
-
-# 白盒源码感知扫描（本地仓库）
-strix --target ./app-directory --scan-mode standard
-
-# 带自定义要求的聚焦测试
-strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
-
-# 通过文件提供详细说明（例如测试规则、范围、排除项）
-strix --target api.your-app.com --instruction-file ./instruction.md
-
-# 针对指定基线分支强制启用 PR diff-scope
-strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
-```
-
-### 常用参数组合
-
-```bash
-# 查看完整帮助与全部参数
-.venv/bin/strix -h
-
-# Burp 被动扫描，固定监听给 Burp 的上游代理端口
-strix --burp-port 8081
-
-# 大型本地仓库改用只读挂载，而不是逐文件复制
-strix --mount ./huge-monorepo
-
-# 从文件批量读取目标
-strix --target-list ./targets.txt
-
-# 快速模式 + 成本上限，适合先跑一轮摸底
-strix -n --target ./app-directory --scan-mode quick --max-budget-usd 1
-
-# CI / PR 场景中只审查变更文件
-strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
-
-# 恢复之前中断的扫描
-strix --resume <run_name>
-```
-
-### 无头模式
-
-使用 `-n/--non-interactive` 参数即可在无交互场景下以程序化方式运行 Strix。非常适合服务器与自动化任务。CLI 会实时输出漏洞发现与最终报告。若发现漏洞，进程会以非零退出码结束。
+无交互场景下可使用 `-n/--non-interactive`：
 
 ```bash
 strix -n --target https://your-app.com
 ```
 
-### CI/CD（GitHub Actions）
-
-你可以通过轻量化 GitHub Actions 工作流，将 Strix 集成进 PR 安全测试流程：
+GitHub Actions 示例：
 
 ```yaml
 name: strix-penetration-test
@@ -396,74 +284,20 @@ jobs:
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-
         run: strix -n -t ./ --scan-mode quick
 ```
 
-> [!TIP]  
-> 在 CI 的 Pull Request 场景下，Strix 会自动把快速审查范围限制在变更文件内。  
-> 如果 diff-scope 无法解析，请确认 `checkout` 使用了完整历史（`fetch-depth: 0`），或者显式传入 `--diff-base`。
+## 相关文档
 
-### 配置
+- CLI 参考：`docs/usage/cli.mdx`
+- 配置说明：`docs/advanced/configuration.mdx`
+- 贡献说明：`CONTRIBUTING.md`
+- 同步计划：`docs/plan/071-v1.5.0主线全量吸收与兼容迁移方案.md`
 
-```bash
-# 示例 1：OpenAI-compatible 网关
-export STRIX_LLM="openai/your-compatible-model"
-export LLM_API_KEY="your-api-key"
-export LLM_API_BASE="https://your-gateway.example/v1"
+## 致谢
 
-# Windows PowerShell（当前窗口立即生效，保持注释按需复制）
-# $env:STRIX_LLM="openai/your-compatible-model"
-# $env:LLM_API_KEY="your-api-key"
-# $env:LLM_API_BASE="https://your-gateway.example/v1"
-#
-# Windows PowerShell（写入用户环境变量；需重新打开终端）
-# setx STRIX_LLM "openai/your-compatible-model"
-# setx LLM_API_KEY "your-api-key"
-# setx LLM_API_BASE "https://your-gateway.example/v1"
+Strix 构建在多个优秀的开源项目之上，包括 LiteLLM、Caido、Nuclei、Playwright 和 Bubble Tea。感谢这些项目的维护者。
 
-# 示例 2：本地模型（Ollama / LM Studio / vLLM）
-# export STRIX_LLM="ollama/qwen3-vl"
-# export LLM_API_BASE="http://localhost:11434"
+## 安全声明
 
-# 可选
-export PERPLEXITY_API_KEY="your-api-key"  # 用于搜索能力
-export STRIX_REASONING_EFFORT="high"  # 控制思考强度（默认 high，quick 扫描默认 medium）
-```
-
-> [!NOTE]  
-> Strix 会自动把配置保存到 `~/.strix/cli-config.json`，无需每次重新输入。
-
-> [!TIP]  
-> 如果你的网络环境访问外部模型或安装源受限，可以在运行前设置 `HTTP_PROXY`、`HTTPS_PROXY` 和 `ALL_PROXY`，并通过 `LLM_API_BASE` 指向可访问的兼容网关。
-
-#### 使用 ChatGPT 订阅登录
-
-如果你不想直接使用按量 API Key，也可以使用 ChatGPT Plus / Pro 订阅能力：
-
-```bash
-strix auth login chatgpt
-
-export STRIX_LLM="chatgpt/gpt-5.4"
-strix --target ./app-directory
-
-strix auth status
-strix auth logout
-```
-
-**本分支优先推荐的模型接入路径：**
-
-- **OpenAI-compatible 网关**：`openai/<your-model>` + `LLM_API_BASE=https://.../v1`
-- **本地模型**：`ollama/qwen3-vl`、`ollama/deepseek-v3.1`
-- **兼容提供商**：如 [Novita](https://docs.strix.ai/llm-providers/novita) 等 OpenAI-compatible 服务
-- **上游官方提供商**：继续支持 OpenAI、Anthropic、Vertex AI、Bedrock、Azure 等
-
-可前往 [LLM Providers 文档](https://docs.strix.ai/llm-providers/overview) 查看完整支持列表，以及本地模型、兼容网关与提供商接入方式。
-
-## 公益项目
-
-欢迎支持
-
-<!-- 这是一张图片，ocr 内容为： -->
-
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1784541650281-4adb72be-cb03-4ee9-89ca-454354165e2e.png)
+Strix 会主动对目标发起安全测试。请仅在你拥有或已获得明确书面授权的系统上运行，并严格遵守约定范围与适用法律。对于未经授权的使用或由此产生的后果，使用者自行承担责任。

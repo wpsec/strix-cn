@@ -31,11 +31,16 @@ def test_caido_url_round_trips_via_run_record(
             recent_request_count=3,
             recent_request_has_more=True,
             latest_request_id="req-3",
+            latest_request_created_at="2026-08-11T10:36:42+08:00",
             latest_method="POST",
             latest_host="app.example.com",
             latest_path="/api/login",
             latest_status_code=200,
             total_request_count=27,
+            endpoint_request_counts=(
+                ("GET app.example.com/api/profile", 5),
+                ("POST app.example.com/api/login", 22),
+            ),
         ),
         persist=True,
     )
@@ -46,8 +51,13 @@ def test_caido_url_round_trips_via_run_record(
     assert payload["proxy_scope_id"] == "scope-1"
     assert payload["proxy_scope_name"] == "strix-proxy-scope-run"
     assert payload["proxy_capture"]["latest_request_id"] == "req-3"
+    assert payload["proxy_capture"]["latest_request_created_at"] == "2026-08-11T10:36:42+08:00"
     assert payload["proxy_capture"]["recent_request_has_more"] is True
     assert payload["proxy_capture"]["total_request_count"] == 27
+    assert payload["proxy_capture"]["endpoint_request_counts"] == [
+        ["GET app.example.com/api/profile", 5],
+        ["POST app.example.com/api/login", 22],
+    ]
 
     restored = ReportState(run_name="run")
     _patch_run_dir(monkeypatch, tmp_path)
@@ -58,8 +68,13 @@ def test_caido_url_round_trips_via_run_record(
     assert restored.proxy_scope_id == "scope-1"
     assert restored.proxy_scope_name == "strix-proxy-scope-run"
     assert restored.proxy_capture_state.latest_request_id == "req-3"
+    assert restored.proxy_capture_state.latest_request_created_at == "2026-08-11T10:36:42+08:00"
     assert restored.proxy_capture_state.recent_request_count == 3
     assert restored.proxy_capture_state.total_request_count == 27
+    assert restored.proxy_capture_state.endpoint_request_counts == (
+        ("GET app.example.com/api/profile", 5),
+        ("POST app.example.com/api/login", 22),
+    )
     assert restored.burp_upstream_unavailable_reason is None
 
 

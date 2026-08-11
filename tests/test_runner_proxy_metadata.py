@@ -55,7 +55,7 @@ def _patch_runner_scaffold(
 
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
     monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: {"scope": "built-in"})
-    monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(runner, "build_strix_agent", lambda **_kwargs: object())
     monkeypatch.setattr(runner, "make_child_factory", lambda **_kwargs: lambda **_k: object())
 

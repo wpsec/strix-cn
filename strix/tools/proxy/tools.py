@@ -86,6 +86,48 @@ def _ctx_scope_patterns(ctx: RunContextWrapper) -> tuple[list[str], list[str]]:
     return allow, deny
 
 
+def _ctx_proxy_feature_cutoff(ctx: RunContextWrapper) -> str | None:
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    boundary_ref = inner.get("proxy_feature_boundary_ref")
+    if not isinstance(boundary_ref, dict):
+        return None
+    if not bool(boundary_ref.get("active")):
+        return None
+    cutoff = boundary_ref.get("captured_before")
+    return cutoff.strip() if isinstance(cutoff, str) and cutoff.strip() else None
+
+
+def _ctx_proxy_feature_start(ctx: RunContextWrapper) -> str | None:
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    boundary_ref = inner.get("proxy_feature_boundary_ref")
+    if not isinstance(boundary_ref, dict) or not bool(boundary_ref.get("active")):
+        return None
+    start = boundary_ref.get("captured_after")
+    return start.strip() if isinstance(start, str) and start.strip() else None
+
+
+def _quote_httpql_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _merge_httpql_filters(
+    httpql_filter: str | None,
+    *,
+    captured_after: str | None,
+    captured_before: str | None,
+) -> str | None:
+    filters: list[str] = []
+    if isinstance(httpql_filter, str) and httpql_filter.strip():
+        filters.append(f"({httpql_filter.strip()})")
+    if isinstance(captured_after, str) and captured_after.strip():
+        filters.append(f'req.created_at.gt:"{_quote_httpql_string(captured_after.strip())}"')
+    if isinstance(captured_before, str) and captured_before.strip():
+        filters.append(f'req.created_at.lte:"{_quote_httpql_string(captured_before.strip())}"')
+    if not filters:
+        return None
+    return " AND ".join(filters)
+
+
 async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
     """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``."""
     async with _CAIDO_CALL_LOCK:
@@ -208,11 +250,16 @@ async def list_requests(
 
     try:
         resolved_scope_id = scope_id or _ctx_scope_id(ctx)
+        effective_filter = _merge_httpql_filters(
+            httpql_filter,
+            captured_after=_ctx_proxy_feature_start(ctx),
+            captured_before=_ctx_proxy_feature_cutoff(ctx),
+        )
         connection = await _call(
             client,
             lambda client: caido_api.list_requests_with_client(
                 client,
-                httpql_filter=httpql_filter,
+                httpql_filter=effective_filter,
                 first=first,
                 after=after,
                 sort_by=sort_by,
@@ -438,9 +485,14 @@ async def repeat_request(
         result = await caido_api.get_request_with_client(client, request_id, part="request")
         if result is None or result.request.raw is None:
             return None
-        if not host_matches_scope(result.request.host, allowlist=allowlist, denylist=denylist):
+        if (allowlist or denylist) and not host_matches_scope(
+            result.request.host,
+            allowlist=allowlist,
+            denylist=denylist,
+        ):
             raise ValueError(
-                f"请求 {request_id} 的主机 {result.request.host} 不在当前 Strix 代理作用域内，已拒绝重放"
+                f"请求 {request_id} 的主机 {result.request.host} "
+                "不在当前 Strix 代理作用域内，已拒绝重放"
             )
         original = result.request
         raw_str = result.request.raw.decode("utf-8", errors="replace")
@@ -461,7 +513,8 @@ async def repeat_request(
         if not caido_api.is_replay_transport_error(exc) or refresh_client is None:
             return _err("repeat_request", exc)
         logger.warning(
-            "repeat_request hit a replay transport error; refreshing the shared Caido client and retrying once"
+            "repeat_request hit a replay transport error; refreshing the shared "
+            "Caido client and retrying once"
         )
         try:
             client = await refresh_client(expected_client=client)

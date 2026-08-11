@@ -3,7 +3,7 @@ title: "自定义说明"
 description: "通过自定义指令引导 Strix 的测试行为"
 ---
 
-你可以通过说明（instructions）为扫描补充上下文、凭据或聚焦方向。`strix-cn` 默认推荐直接使用中文编写说明；当前分支也默认输出中文报告。如果你需要英文或双语结果，可以在说明里显式写明。
+你可以通过说明（instructions）为扫描补充上下文、聚焦方向、排除项和交付要求。`strix-cn` 默认推荐直接使用中文编写说明；当前分支也默认输出中文报告。如果你需要英文或双语结果，可以在说明里显式写明。
 
 ## 行内说明
 
@@ -23,9 +23,11 @@ strix --target https://app.com --instruction-file ./pentest-instructions.md
 
 ### 认证测试
 
+说明里只写测试目标和关注点，不要直接写账户密码：
+
 ```bash
 strix --target https://app.com \
-  --instruction "使用测试账号登录：admin@example.com / TestPass123，重点测试会话固定和越权"
+  --instruction "重点测试登录后会话固定、越权和找回密码流程"
 ```
 
 ### 聚焦范围
@@ -46,17 +48,26 @@ strix --target https://app.com \
 
 ```bash
 strix --target https://api.example.com \
-  --instruction "请求头带上 X-API-Key: abc123。重点测试限流绕过、签名校验和重放攻击。"
+  --instruction "请求头需要带上 X-API-Key，占位值由运行环境提供。重点测试限流绕过、签名校验和重放攻击。"
 ```
+
+## 目标登录凭据
+
+如果本次测试需要使用已授权的登录账户，请使用专门参数，而不是把凭据写进说明：
+
+```bash
+strix --target https://app.com \
+  --auth-username '<username>' \
+  --auth-password-stdin \
+  --instruction "登录后重点测试订单、用户资料和管理后台的越权问题"
+```
+
+`--auth-password-stdin` 会在当前终端安全读取密码，或从标准输入读取一行密码。Strix 只会把它注入本次沙箱的内存环境变量，不会写入 Prompt、日志、运行记录或总报告。
 
 ## 说明文件示例
 
 ```markdown instructions.md
 # 渗透测试说明
-
-## 凭据
-- Admin: admin@example.com / AdminPass123
-- User: user@example.com / UserPass123
 
 ## 重点关注
 1. 用户资料接口中的 IDOR
@@ -69,5 +80,5 @@ strix --target https://api.example.com \
 ```
 
 <Tip>
-说明越具体，Strix 越能优先探索最有价值的攻击路径。对于中文团队，直接用中文描述范围、账号、约束和输出要求通常最省心。
+说明越具体，Strix 越能优先探索最有价值的攻击路径。对于中文团队，直接用中文描述范围、约束和输出要求通常最省心；敏感凭据请走专门参数或安全注入通道，不要写进说明文件。
 </Tip>

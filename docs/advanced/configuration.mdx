@@ -8,7 +8,7 @@ description: "Strix 的环境变量与配置文件说明"
 ## LLM 配置
 
 <ParamField path="STRIX_LLM" type="string" required>
-  以 LiteLLM 格式指定模型名，例如 `openai/gpt-5.4`、`anthropic/claude-sonnet-4-6` 或兼容网关下的 `openai/<your-model>`。
+  以 LiteLLM 格式指定模型名，例如 `openai/gpt-5.4`、`anthropic/claude-sonnet-4-6`，或兼容网关下的 `openai/<your-model>`。
 </ParamField>
 
 <ParamField path="LLM_API_KEY" type="string">
@@ -17,6 +17,14 @@ description: "Strix 的环境变量与配置文件说明"
 
 <ParamField path="LLM_API_BASE" type="string">
   自定义 API base URL。也接受 `OPENAI_API_BASE`、`LITELLM_BASE_URL` 或 `OLLAMA_API_BASE`。
+</ParamField>
+
+<ParamField path="LLM_EXTRA_HEADERS" type="string">
+  额外附加到每次 LLM 请求上的 HTTP 头，格式为 JSON 对象，例如 `{"X-Feature-Key":"value","X-Tenant":"acme"}`。适用于要求额外路由头、租户头或计费头的 OpenAI-compatible 网关。
+</ParamField>
+
+<ParamField path="LLM_DISABLE_STREAMING" type="string">
+  关闭模型流式输出。设置为 `1`、`true`、`yes` 或 `on` 时生效。适用于某些兼容网关、受限网络或不稳定流式实现。
 </ParamField>
 
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
@@ -28,62 +36,45 @@ description: "Strix 的环境变量与配置文件说明"
 </ParamField>
 
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
-  控制推理模型的思考强度。可选值为 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`。在 `quick` 扫描模式下默认会降为 `medium`。
+  控制推理模型的思考强度。可选值为 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。`quick` 扫描模式下默认会降为 `medium`。
 </ParamField>
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
   上下文压缩操作的超时时间，单位为秒。
 </ParamField>
 
-### Dedicated deduplication model
+## 独立去重模型
 
-Finding deduplication is a cheap, structured classification task. By default it
-runs on the main model, but you can route it to a smaller/cheaper model without
-affecting the agents that do the actual testing.
-
-<ParamField path="STRIX_DEDUPE_MODEL" type="string">
-  Model used to judge whether a candidate finding duplicates an existing report.
-  Falls back to `STRIX_LLM` when unset.
-</ParamField>
-
-<ParamField path="DEDUPE_LLM_API_KEY" type="string">
-  Optional provider key for the deduplication model.
-</ParamField>
-
-<ParamField path="DEDUPE_LLM_API_BASE" type="string">
-  Optional custom API base URL for the deduplication model. Use when the dedupe
-  model runs on a different endpoint than the main model.
-</ParamField>
-
-<ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
-  Reasoning effort for the deduplication model. Defaults to the model's own
-  baseline when unset.
-</ParamField>
-
-## 可选功能
-
-### 独立去重模型
-
-漏洞去重本质上是一个成本较低、结构化很强的分类任务。默认情况下它会复用主模型；如果你希望把真正的渗透测试能力和去重判断拆开，可以单独指定一个更便宜或更快的模型。
+漏洞去重是一个成本较低、结构化很强的分类任务。默认复用主模型；如需把真正的渗透测试能力和去重判断拆开，可单独指定一个更便宜或更快的模型。
 
 <ParamField path="STRIX_DEDUPE_MODEL" type="string">
   用于判断候选漏洞是否与现有报告重复的模型。未设置时回退到 `STRIX_LLM`。
 </ParamField>
 
 <ParamField path="DEDUPE_LLM_API_KEY" type="string">
-  独立去重模型可选的 provider API Key。
+  独立去重模型的 provider API Key。
 </ParamField>
 
 <ParamField path="DEDUPE_LLM_API_BASE" type="string">
-  独立去重模型可选的 API Base 地址。当去重模型与主模型不在同一个兼容网关或 provider 时使用。
+  独立去重模型的 API Base 地址。当去重模型与主模型不在同一个兼容网关或 provider 时使用。
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_EXTRA_HEADERS" type="string">
+  独立去重模型的额外 HTTP 头，格式同 `LLM_EXTRA_HEADERS`。它不会自动继承主模型的额外请求头。
 </ParamField>
 
 <ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
   独立去重模型的推理强度。未设置时使用该模型自身的默认行为。
 </ParamField>
 
+## 可选功能
+
 <ParamField path="PERPLEXITY_API_KEY" type="string">
-  Perplexity AI 的 API Key。配置后可在扫描中启用实时 Web 搜索，用于 OSINT 与漏洞研究。
+  Perplexity AI 的 API Key。配置后可启用实时 Web 搜索，用于 OSINT 与漏洞研究。
+</ParamField>
+
+<ParamField path="POSTMAN_API_KEY" type="string">
+  Postman API Key（`PMAK-…`）。用于通过 `postman://<collection-uid>` 拉取 collection，或通过 `postman://<collection-uid>?env=<environment-uid>` 拉取 environment 并解析变量。若直接传本地 collection 导出文件，则不需要。
 </ParamField>
 
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
@@ -108,11 +99,9 @@ affecting the agents that do the actual testing.
 strix_runs/<run_name>/events.jsonl
 ```
 
-配置远程变量后，Strix 会同时写入本地 JSONL 和远端 OTEL 端点。
-
 ## Docker 配置
 
-<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.1.0" type="string">
+<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.0" type="string">
   指定用于沙箱容器的 Docker 镜像。
 </ParamField>
 
@@ -121,11 +110,7 @@ strix_runs/<run_name>/events.jsonl
 </ParamField>
 
 <ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
-  沙箱运行时后端。
-</ParamField>
-
-<ParamField path="STRIX_MAX_LOCAL_COPY_MB" default="1024" type="integer">
-  本地目录目标允许逐文件复制进沙箱的最大体积，单位为 MB。超过后会提前退出并提示改用 `--mount`。设为 `0` 可关闭该检查。
+  沙箱运行时后端。默认使用 Docker。
 </ParamField>
 
 ## 沙箱配置
@@ -146,13 +131,16 @@ Strix 默认把配置保存到 `~/.strix/cli-config.json`。你也可以通过 `
 strix --target ./app --config /path/to/config.json
 ```
 
-**配置文件格式：**
+配置文件格式：
 
 ```json
 {
   "env": {
     "STRIX_LLM": "openai/gpt-5.4",
     "LLM_API_KEY": "sk-...",
+    "LLM_API_BASE": "https://your-gateway.example/v1",
+    "LLM_EXTRA_HEADERS": "{\"X-Tenant\":\"acme\"}",
+    "LLM_DISABLE_STREAMING": "false",
     "STRIX_REASONING_EFFORT": "high"
   }
 }
@@ -167,9 +155,19 @@ export LLM_API_KEY="your-api-key"
 
 # 可选：兼容网关或本地模型
 export LLM_API_BASE="https://your-gateway.example/v1"
+export LLM_EXTRA_HEADERS='{"X-Tenant":"acme"}'
+export LLM_DISABLE_STREAMING="false"
 
 # 可选：启用 Web 搜索
 export PERPLEXITY_API_KEY="pplx-..."
+
+# 可选：调高推理强度
+export STRIX_REASONING_EFFORT="max"
+
+# 可选：受限网络环境
+export HTTP_PROXY="http://127.0.0.1:7897"
+export HTTPS_PROXY="http://127.0.0.1:7897"
+export ALL_PROXY="socks5://127.0.0.1:7897"
 
 # 可选：自定义超时
 export LLM_TIMEOUT="600"

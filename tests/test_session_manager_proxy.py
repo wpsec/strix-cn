@@ -9,6 +9,25 @@ import pytest
 from strix.runtime import session_manager
 
 
+def test_target_credentials_are_mapped_only_to_sandbox_environment() -> None:
+    credentials = {"username": "authorized-user", "password": "not-a-real-secret"}
+
+    environment = session_manager._target_credential_environment(credentials)
+
+    assert environment == {
+        "STRIX_TARGET_USERNAME": "authorized-user",
+        "STRIX_TARGET_PASSWORD": "not-a-real-secret",
+    }
+    assert credentials == {"username": "authorized-user", "password": "not-a-real-secret"}
+
+
+def test_target_credentials_reject_partial_values() -> None:
+    with pytest.raises(ValueError, match="non-empty username and password"):
+        session_manager._target_credential_environment(
+            {"username": "authorized-user", "password": ""}
+        )
+
+
 def test_burp_upstream_metadata_accepts_loopback_docker_endpoint(
     monkeypatch: object,
 ) -> None:
@@ -113,6 +132,16 @@ async def test_ensure_container_proxy_listener_starts_compat_shim_for_legacy_sin
         "listen_port": 48081,
         "target_port": 48080,
     }
+
+
+def test_container_proxy_compat_shim_binds_all_interfaces_for_published_port() -> None:
+    script = session_manager._container_proxy_compat_shim_script(
+        listen_port=48081,
+        target_port=48080,
+    )
+
+    assert 'LISTEN = ("0.0.0.0", 48081)' in script
+    assert 'TARGET = ("127.0.0.1", 48080)' in script
 
 
 @pytest.mark.asyncio

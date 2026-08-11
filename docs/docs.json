@@ -46,7 +46,8 @@
             "group": "集成",
             "pages": [
               "integrations/github-actions",
-              "integrations/ci-cd"
+              "integrations/ci-cd",
+              "integrations/coding-agents"
             ]
           },
           {

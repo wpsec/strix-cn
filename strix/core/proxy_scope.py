@@ -41,6 +41,11 @@ def build_proxy_scope_constraints(scan_config: dict[str, Any]) -> dict[str, Any]
         }
 
     allowlist = _dedupe_patterns(_extract_target_host_patterns(scan_config.get("targets") or []))
+    if not allowlist:
+        # Caido scopes treat "*" as the explicit include-everything pattern.
+        # Passive Burp mode has no declared targets, so we must opt into full
+        # capture first and then carve obvious noise back out with the denylist.
+        allowlist = ["*"]
     denylist = _default_noise_denylist()
     return {
         "proxy_scope_enforced": bool(allowlist or denylist),
@@ -65,7 +70,7 @@ def host_matches_scope(
 
     allow_patterns = tuple(allowlist or ())
     if not allow_patterns:
-        return True
+        return False
     return any(_pattern_matches(normalized, pattern) for pattern in allow_patterns)
 
 

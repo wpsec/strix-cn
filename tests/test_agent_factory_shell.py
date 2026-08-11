@@ -26,12 +26,18 @@ def _capturing_exec_tool(captured: dict[str, str]) -> FunctionTool:
     )
 
 
+def _ctx(**context: Any) -> Any:
+    return SimpleNamespace(context=context)
+
+
 @pytest.mark.asyncio
 async def test_wrap_exec_command_defaults_shell_to_bash() -> None:
     captured: dict[str, str] = {}
     wrapped = factory._wrap_exec_command(_capturing_exec_tool(captured))
 
-    result = await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "source /tmp/env"}))
+    result = await wrapped.on_invoke_tool(
+        cast("Any", None), json.dumps({"cmd": "source /tmp/env"})
+    )
 
     assert result == "ok"
     parsed = json.loads(captured["raw_input"])
@@ -81,6 +87,20 @@ async def test_wrap_exec_command_preserves_explicit_shell(shell: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_wrap_exec_command_blocks_shell_in_passive_proxy_mode() -> None:
+    captured: dict[str, str] = {}
+    wrapped = factory._wrap_exec_command(_capturing_exec_tool(captured))
+
+    result = await wrapped.on_invoke_tool(
+        _ctx(proxy_passive_mode=True),
+        json.dumps({"cmd": "curl -I http://10.0.0.8:8000/"}),
+    )
+
+    assert "被动代理模式下默认禁用 shell 命令" in result
+    assert captured == {}
+
+
+@pytest.mark.asyncio
 async def test_responses_filesystem_custom_tool_output_is_bounded() -> None:
     async def invoke(_ctx: Any, _inp: str) -> str:
         return "line\n" * 50_000
@@ -108,6 +128,68 @@ async def test_chat_completions_filesystem_custom_tool_becomes_function_tool() -
     factory._configure_filesystem_tools(toolset, chat_completions=True)
 
     assert isinstance(toolset.read_file, FunctionTool)
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_is_blocked_outside_whitebox_in_responses_path() -> None:
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        return "should-not-run"
+
+    toolset = SimpleNamespace(
+        apply_patch=CustomTool(name="apply_patch", description="patch", on_invoke_tool=invoke)
+    )
+    factory._configure_filesystem_tools(
+        toolset,
+        chat_completions=False,
+        allow_workspace_edits=False,
+    )
+
+    result = await toolset.apply_patch.on_invoke_tool(cast("Any", None), "*** Begin Patch\n")
+
+    assert "不是白盒源码审计场景" in result
+    assert "notes、todos、reports" in result
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_is_blocked_outside_whitebox_in_chat_completions_path() -> None:
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        return "should-not-run"
+
+    toolset = SimpleNamespace(
+        apply_patch=CustomTool(name="apply_patch", description="patch", on_invoke_tool=invoke)
+    )
+    factory._configure_filesystem_tools(
+        toolset,
+        chat_completions=True,
+        allow_workspace_edits=False,
+    )
+
+    result = await toolset.apply_patch.on_invoke_tool(
+        cast("Any", None),
+        json.dumps({"patch": "*** Begin Patch\n*** Delete File: demo.txt\n*** End Patch"}),
+    )
+
+    assert isinstance(toolset.apply_patch, FunctionTool)
+    assert "不是白盒源码审计场景" in result
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_remains_available_in_whitebox() -> None:
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        return "ok"
+
+    toolset = SimpleNamespace(
+        apply_patch=CustomTool(name="apply_patch", description="patch", on_invoke_tool=invoke)
+    )
+    factory._configure_filesystem_tools(
+        toolset,
+        chat_completions=False,
+        allow_workspace_edits=True,
+    )
+
+    result = await toolset.apply_patch.on_invoke_tool(cast("Any", None), "*** Begin Patch\n")
+
+    assert result == "ok"
 
 
 def test_function_tools_are_result_bounded() -> None:
