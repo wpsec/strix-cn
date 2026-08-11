@@ -50,6 +50,7 @@ dependencies = [
   # the Intel macOS (macos-x86_64) release build's `uv sync --frozen`.
   "cryptography>=48.0.1,<49",
   "pyyaml>=6.0",
+  "markdown-it-py>=4.0",
 ]
 
 [project.optional-dependencies]

@@ -368,6 +368,21 @@ def _host_identity_env() -> dict[str, str]:
     return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
 
 
+def _target_credential_environment(
+    target_credentials: dict[str, str] | None,
+) -> dict[str, str]:
+    if target_credentials is None:
+        return {}
+    username = str(target_credentials.get("username") or "")
+    password = str(target_credentials.get("password") or "")
+    if not username or not password:
+        raise ValueError("target_credentials requires non-empty username and password")
+    return {
+        "STRIX_TARGET_USERNAME": username,
+        "STRIX_TARGET_PASSWORD": password,
+    }
+
+
 def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     bind_mounts: list[dict[str, Any]] = []
     for src in local_sources:
@@ -434,6 +449,7 @@ async def create_or_reuse(
     local_sources: list[dict[str, Any]],
     burp_port: int | None = None,
     status_sink: StatusSink | None = None,
+    target_credentials: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
@@ -444,6 +460,8 @@ async def create_or_reuse(
     def report(phase: str) -> None:
         if status_sink is not None:
             status_sink(phase)
+
+    credential_environment = _target_credential_environment(target_credentials)
 
     cached = _SESSION_CACHE.get(scan_id)
     if cached is not None:
@@ -478,6 +496,7 @@ async def create_or_reuse(
                 "https_proxy": container_caido_proxy_url,
                 "ALL_PROXY": container_caido_proxy_url,
                 "NO_PROXY": "localhost,127.0.0.1",
+                **credential_environment,
             },
         ),
     )

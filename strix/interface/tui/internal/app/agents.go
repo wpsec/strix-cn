@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/protocol"
 	"github.com/usestrix/strix/tui/internal/render"
 )
@@ -147,6 +148,16 @@ func (m Model) selectedAgentCanStop() bool {
 	default:
 		return false
 	}
+}
+
+func (m Model) agentDisclosureHit(chatWidth, x int, entry agentTreeEntry) bool {
+	agent := m.snapshot.Agents[entry.index]
+	if !hasAgentChildren(agent.ID, m.snapshot.Agents) {
+		return false
+	}
+	start := chatWidth + 3 + ansi.StringWidth(entry.prefix)
+	end := start + ansi.StringWidth("▼ ")
+	return x >= start-1 && x < end+1
 }
 
 func (m Model) agentsView(width, height int) string {

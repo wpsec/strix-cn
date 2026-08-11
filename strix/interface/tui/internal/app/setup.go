@@ -133,9 +133,10 @@ func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight i
 	if showSidebar {
 		// A very wide terminal made the sidebar grow without bound, so every
 		// fixed-width panel inside it looked padded out with excessive blank
-		// space. Keep the desktop sidebar readable, but cap the width once it
-		// has enough room for the proxy stats and agent tree.
-		sidebarWidth = min(max(24, m.width/5), 32)
+		// space. Keep the desktop sidebar readable, but give the proxy stats
+		// enough room that common lines such as the Caido URL do not wrap into
+		// a label line followed by a mostly empty row.
+		sidebarWidth = min(max(32, m.width/5), 36)
 		chatWidth = m.width - sidebarWidth - 1
 	} else {
 		chatWidth = m.width

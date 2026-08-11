@@ -64,6 +64,7 @@ class GoTuiRuntime:
         self.scan_config: dict[str, Any] = {}
         self.scan_task: asyncio.Task[None] | None = None
         self.scan_error: BaseException | None = None
+        self.target_credentials: dict[str, str] | None = None
         self._last_sync_fingerprint = ""
         self._error_noted_agents: set[str] = set()
         self._proxy_capture_poller: ProxyCapturePoller | None = None
@@ -79,6 +80,11 @@ class GoTuiRuntime:
         self.server = TuiBackendServer(self.controller)
 
     def init_run_state(self) -> None:
+        credentials = getattr(self.args, "target_credentials", None)
+        if credentials:
+            self.target_credentials = dict(credentials)
+            credentials.clear()
+        self.args.target_credentials = None
         self.scan_config = {
             "scan_id": self.args.run_name,
             "targets": self.args.targets_info,
@@ -94,6 +100,10 @@ class GoTuiRuntime:
             "resume_instruction": self.args.user_explicit_instruction or "",
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
             "workspace_subdir": getattr(self.args, "workspace_subdir", None) or "",
+            "credential_auth_available": bool(self.target_credentials),
+            "allow_credential_attacks": bool(
+                getattr(self.args, "allow_credential_attacks", False)
+            ),
         }
         self.report_state = ReportState(self.scan_config["run_name"])
         self.report_state.hydrate_from_run_dir()
@@ -191,6 +201,7 @@ class GoTuiRuntime:
                 max_turns=self.args.max_turns,
                 max_budget_usd=self.args.max_budget_usd,
                 event_sink=self.capture_event,
+                target_credentials=self.target_credentials,
             )
             await self._sync_agent_state()
             if self.controller.scan_state == "running":
@@ -208,6 +219,9 @@ class GoTuiRuntime:
             self.controller.error = str(exc)
             self.controller.scan_state = "failed"
         finally:
+            if self.target_credentials is not None:
+                self.target_credentials.clear()
+                self.target_credentials = None
             with contextlib.suppress(Exception):
                 await self._sync_agent_state()
             self.controller.notify_changed()

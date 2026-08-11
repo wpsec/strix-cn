@@ -130,6 +130,68 @@ async def test_chat_completions_filesystem_custom_tool_becomes_function_tool() -
     assert isinstance(toolset.read_file, FunctionTool)
 
 
+@pytest.mark.asyncio
+async def test_apply_patch_is_blocked_outside_whitebox_in_responses_path() -> None:
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        return "should-not-run"
+
+    toolset = SimpleNamespace(
+        apply_patch=CustomTool(name="apply_patch", description="patch", on_invoke_tool=invoke)
+    )
+    factory._configure_filesystem_tools(
+        toolset,
+        chat_completions=False,
+        allow_workspace_edits=False,
+    )
+
+    result = await toolset.apply_patch.on_invoke_tool(cast("Any", None), "*** Begin Patch\n")
+
+    assert "不是白盒源码审计场景" in result
+    assert "notes、todos、reports" in result
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_is_blocked_outside_whitebox_in_chat_completions_path() -> None:
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        return "should-not-run"
+
+    toolset = SimpleNamespace(
+        apply_patch=CustomTool(name="apply_patch", description="patch", on_invoke_tool=invoke)
+    )
+    factory._configure_filesystem_tools(
+        toolset,
+        chat_completions=True,
+        allow_workspace_edits=False,
+    )
+
+    result = await toolset.apply_patch.on_invoke_tool(
+        cast("Any", None),
+        json.dumps({"patch": "*** Begin Patch\n*** Delete File: demo.txt\n*** End Patch"}),
+    )
+
+    assert isinstance(toolset.apply_patch, FunctionTool)
+    assert "不是白盒源码审计场景" in result
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_remains_available_in_whitebox() -> None:
+    async def invoke(_ctx: Any, _inp: str) -> str:
+        return "ok"
+
+    toolset = SimpleNamespace(
+        apply_patch=CustomTool(name="apply_patch", description="patch", on_invoke_tool=invoke)
+    )
+    factory._configure_filesystem_tools(
+        toolset,
+        chat_completions=False,
+        allow_workspace_edits=True,
+    )
+
+    result = await toolset.apply_patch.on_invoke_tool(cast("Any", None), "*** Begin Patch\n")
+
+    assert result == "ok"
+
+
 def test_function_tools_are_result_bounded() -> None:
     agent = factory.build_strix_agent(is_root=True)
     by_name = {t.name: t for t in agent.tools}

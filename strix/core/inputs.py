@@ -201,6 +201,28 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
 
     parts.extend(_render_diff_scope(diff_scope))
 
+    if scan_config.get("credential_auth_available"):
+        parts.append("\n\nAuthorized Login Credentials:")
+        parts.append(
+            "- A platform-supplied target account is available inside the sandbox as "
+            "`STRIX_TARGET_USERNAME` and `STRIX_TARGET_PASSWORD`."
+        )
+        parts.append(
+            "- Use it to establish an authenticated session and cover authenticated "
+            "application surfaces. Never print, echo, log, persist, report, or send "
+            "either value in an agent message."
+        )
+        if scan_config.get("allow_credential_attacks"):
+            parts.append(
+                "- The operator explicitly authorized credential-attack validation "
+                "for this run; keep attempts bounded to in-scope authentication endpoints."
+            )
+        else:
+            parts.append(
+                "- These credentials authorize ordinary login only. Do not perform "
+                "brute force, password spraying, credential stuffing, or repeated-password tests."
+            )
+
     task = " ".join(parts)
     if user_instructions:
         task = f"{task}\n\nSpecial instructions: {user_instructions}"
@@ -217,6 +239,12 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
             "authorized_targets": [],
             "container_image_targets": [],
             "proxy_passive_mode": True,
+            "target_credentials_available": bool(
+                scan_config.get("credential_auth_available", False)
+            ),
+            "allow_credential_attacks": bool(
+                scan_config.get("allow_credential_attacks", False)
+            ),
             **proxy_scope,
             "user_instructions_do_not_expand_scope": True,
         }
@@ -263,6 +291,12 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": authorized,
         "container_image_targets": container_images,
+        "target_credentials_available": bool(
+            scan_config.get("credential_auth_available", False)
+        ),
+        "allow_credential_attacks": bool(
+            scan_config.get("allow_credential_attacks", False)
+        ),
         **proxy_scope,
         "user_instructions_do_not_expand_scope": True,
     }
@@ -284,7 +318,13 @@ def make_model_settings(
         extra_args=request_timeout_extra_args(request_timeout),
         extra_headers=dict(extra_headers) if extra_headers else None,
     )
-    if (
+    if reasoning_effort == "max":
+        # ``max`` is an explicit pass-through mode for frontier providers that
+        # may not yet exist in LiteLLM's local capability map.
+        model_settings = model_settings.resolve(
+            _reasoning_settings(reasoning_effort, model_settings.extra_args),
+        )
+    elif (
         reasoning_effort is not None
         and reasoning_effort != "none"
         and model_supports_reasoning(model_name)

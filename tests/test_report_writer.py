@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from strix.report.html_report import render_html_report
 from strix.report.writer import (
     read_run_record,
     render_complete_report,
@@ -234,3 +235,61 @@ def test_complete_report_contains_cover_toc_risk_table_and_findings() -> None:
     assert "### vuln-0001" in report
     assert "#### 漏洞描述" in report
     assert "## 6. 附录：交付物说明" in report
+
+
+def test_html_report_is_viewer_style_and_escapes_target_content() -> None:
+    report = render_html_report(
+        final_scan_result="""# 执行摘要
+
+已完成授权测试。
+
+# 测试方法
+
+基于代理流量验证。
+
+# 技术分析
+
+确认一个问题。
+
+# 修复建议
+
+优先修复高危问题。
+""",
+        run_record={
+            "run_name": "交付测试",
+            "status": "completed",
+            "scan_mode": "deep",
+            "targets_info": [{"original": "https://app.example.com"}],
+        },
+        vulnerability_reports=[
+            _sample_report(
+                title="SQL Injection <script>alert(1)</script>",
+                description="<img src=x onerror=alert(1)>",
+            )
+        ],
+    )
+
+    assert "安全渗透测试报告" in report
+    assert "最终报告" in report
+    assert "问题详情" in report
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in report
+    assert "<script>alert(1)</script>" not in report
+    assert "<img src=x" not in report
+
+
+def test_html_report_accepts_delivery_markdown_headings() -> None:
+    report = render_html_report(
+        final_scan_result="""## 1. 执行摘要
+
+历史运行摘要。
+
+## 2. 测试方法
+
+历史运行方法。
+""",
+        run_record={"run_name": "历史运行", "status": "completed"},
+        vulnerability_reports=[],
+    )
+
+    assert "历史运行摘要。" in report
+    assert "历史运行方法。" in report

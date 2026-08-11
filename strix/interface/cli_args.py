@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from pathlib import Path
 
@@ -59,6 +60,21 @@ def _tcp_port(value: str) -> int:
     return port
 
 
+def _read_target_password(parser: argparse.ArgumentParser) -> str:
+    try:
+        if sys.stdin.isatty():
+            password = getpass.getpass("目标账户密码：")
+        else:
+            password = sys.stdin.readline().rstrip("\r\n")
+    except (EOFError, OSError) as exc:
+        parser.error(f"无法从标准输入读取目标账户密码：{exc}")
+    if not password:
+        parser.error("目标账户密码不能为空。")
+    if "\x00" in password:
+        parser.error("目标账户密码不能包含 NUL 字符。")
+    return password
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix 多代理网络安全渗透测试工具",
@@ -109,6 +125,9 @@ def parse_arguments() -> argparse.Namespace:
   # 自定义指令（来自文件）
   strix --target example.com --instruction-file ./instructions.txt
   strix --target https://app.com --instruction-file /path/to/detailed_instructions.md
+
+  # 使用已授权登录账户（密码从终端安全读取，不写入命令行和报告）
+  strix --target https://app.com --auth-username '<username>' --auth-password-stdin
         """,
     )
 
@@ -163,14 +182,34 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--instruction",
         type=str,
-        help="为本次渗透测试补充自定义指令，例如重点漏洞类型、测试方法、"
-        "测试凭据或关注区域。",
+        help="为本次渗透测试补充自定义指令，例如重点漏洞类型、测试方法或关注区域。"
+        "登录凭据请使用 --auth-username 与 --auth-password-stdin，避免泄露到运行记录。",
     )
 
     parser.add_argument(
         "--instruction-file",
         type=str,
         help="包含详细测试指令的文件路径，适合较长或较复杂的说明。",
+    )
+
+    parser.add_argument(
+        "--auth-username",
+        type=str,
+        metavar="USERNAME",
+        help="已授权目标登录账户。必须与 --auth-password-stdin 一起使用；"
+        "账户值不会写入报告或 Agent Prompt。",
+    )
+    parser.add_argument(
+        "--auth-password-stdin",
+        action="store_true",
+        help="从 TTY 隐藏输入或标准输入读取一行目标账户密码。"
+        "密码仅注入本次沙箱内存环境，不写入命令行、运行记录或 Prompt。",
+    )
+    parser.add_argument(
+        "--allow-credential-attacks",
+        action="store_true",
+        help="显式授权本次测试执行弱口令、密码喷洒或登录重试测试。"
+        "默认仅允许使用提供的账户正常登录，不允许口令攻击。",
     )
 
     parser.add_argument(
@@ -257,12 +296,26 @@ def parse_arguments() -> argparse.Namespace:
     args.run_name = None
     args.workspace_mount = None
     args.workspace_subdir = None
+    args.target_credentials = None
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
 
     if args.update:
         sys.exit(0 if self_update() else 1)
+
+    if bool(args.auth_username) != bool(args.auth_password_stdin):
+        parser.error("--auth-username 与 --auth-password-stdin 必须同时使用。")
+    if args.auth_username is not None:
+        username = args.auth_username.strip()
+        if not username:
+            parser.error("--auth-username 不能为空。")
+        args.target_credentials = {
+            "username": username,
+            "password": _read_target_password(parser),
+        }
+        args.auth_username = None
+        args.auth_password_stdin = False
 
     if args.instruction and args.instruction_file:
         parser.error(

@@ -92,6 +92,7 @@ def render_system_prompt(
             available_skills=get_available_skills(),
             interactive=interactive,
             is_root=is_root,
+            is_whitebox=is_whitebox,
             system_prompt_context=system_prompt_context or {},
             **skill_content,
         )

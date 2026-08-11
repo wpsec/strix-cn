@@ -139,6 +139,7 @@ async def run_strix_scan(
     root_instructions_override: str | None = None,
     extra_system_prompt_context: dict[str, Any] | None = None,
     status_sink: StatusSink | None = None,
+    target_credentials: dict[str, str] | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -246,6 +247,7 @@ async def run_strix_scan(
             local_sources=local_sources or [],
             burp_port=scan_config.get("burp_port"),
             status_sink=status_sink,
+            target_credentials=target_credentials,
         )
     except BaseException:
         # The normal scan finally starts after the bundle is returned. Cover
@@ -413,6 +415,16 @@ async def run_strix_scan(
             "caido_scope_id": scope_context.get("proxy_scope_id"),
             "caido_scope_allowlist": scope_context.get("proxy_scope_allowlist") or [],
             "caido_scope_denylist": scope_context.get("proxy_scope_denylist") or [],
+            "proxy_feature_boundary_ref": (
+                report_state.proxy_feature_boundary_ref
+                if report_state is not None
+                else {"active": False, "captured_after": None, "captured_before": None}
+            ),
+            "proxy_feature_coverage_ref": (
+                report_state.proxy_feature_coverage_ref
+                if report_state is not None
+                else {"active": False, "batch_id": None, "endpoints": {}}
+            ),
             "proxy_passive_mode": bool(scope_context.get("proxy_passive_mode")),
             "allow_shell_in_proxy_passive_mode": False,
             "agent_id": root_id,

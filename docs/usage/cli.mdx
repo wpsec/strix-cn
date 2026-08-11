@@ -48,11 +48,23 @@ strix (--target <target> | --target-list <path> | --mount <path> | --burp-port <
 </ParamField>
 
 <ParamField path="--instruction" type="string">
-  为本次扫描提供自定义说明，例如凭据、排除项、重点漏洞类型、测试边界或报告要求。当前分支默认中文体验，推荐直接使用中文。
+  为本次扫描提供自定义说明，例如排除项、重点漏洞类型、测试边界或报告要求。当前分支默认中文体验，推荐直接使用中文。
 </ParamField>
 
 <ParamField path="--instruction-file" type="string">
-  从文件读取较长的测试说明。适合保存详细范围、凭据、排除项和交付要求。
+  从文件读取较长的测试说明。适合保存详细范围、排除项和交付要求。
+</ParamField>
+
+<ParamField path="--auth-username" type="string">
+  提供已授权的目标登录账户。必须与 `--auth-password-stdin` 一起使用。账户名不会写入报告、Prompt 或运行记录。
+</ParamField>
+
+<ParamField path="--auth-password-stdin" type="boolean">
+  从当前终端的隐藏输入，或从标准输入读取一行目标账户密码。密码只会在本次运行中注入沙箱环境变量，不会进入命令行历史、Prompt、运行记录或总报告。
+</ParamField>
+
+<ParamField path="--allow-credential-attacks" type="boolean">
+  显式授权本次测试执行弱口令、密码喷洒、登录重试等凭据攻击验证。默认只允许使用提供的账户做正常登录，不允许扩展成口令攻击。
 </ParamField>
 
 <ParamField path="--non-interactive, -n" type="boolean">
@@ -122,6 +134,9 @@ strix --mount ./huge-monorepo --instruction "Review the changed auth flow"
 
 # 自定义指令
 strix --target api.example.com --instruction "重点测试 IDOR、认证绕过和业务逻辑缺陷"
+
+# 使用已授权登录账户（运行时安全读取密码）
+strix --target https://app.example.com --auth-username '<username>' --auth-password-stdin
 
 # 针对指定基线强制启用 diff-scope
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main

@@ -35,6 +35,7 @@ from strix.tools.notes.tools import (
     update_note,
 )
 from strix.tools.output_store import bound_and_store, bound_text
+from strix.tools.proxy.coverage import get_endpoint_coverage, mark_endpoint_not_applicable
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -85,6 +86,11 @@ _PASSIVE_PROXY_EXEC_DISABLED_MESSAGE = (
 _PASSIVE_PROXY_STDIN_DISABLED_MESSAGE = (
     "write_stdin: 被动代理模式下没有可继续交互的 shell 会话。"
     "请改用代理历史工具，而不是继续执行终端命令。"
+)
+_WORKSPACE_EDIT_DISABLED_MESSAGE = (
+    "apply_patch: 当前不是白盒源码审计场景，禁止修改 /workspace 文件。"
+    "仅当源码目录本身是授权目标时才允许编辑工作区文件；"
+    "请改用 notes、todos、reports 和 agent messages 记录分析结果。"
 )
 
 
@@ -295,24 +301,70 @@ def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     return tool
 
 
-def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None:
+def _wrap_workspace_edit_tool(
+    tool: FunctionTool | CustomTool,
+    *,
+    allow_workspace_edits: bool,
+) -> FunctionTool | CustomTool:
+    if allow_workspace_edits or tool.name != "apply_patch":
+        return tool
+    if getattr(tool, "_strix_workspace_edit_blocked", False):
+        return tool
+
+    async def invoke(_ctx: Any, _raw_input: str) -> str:
+        return _WORKSPACE_EDIT_DISABLED_MESSAGE
+
+    tool.on_invoke_tool = invoke
+    tool._strix_workspace_edit_blocked = True  # type: ignore[attr-defined]
+    return tool
+
+
+def _configure_filesystem_tools(
+    toolset: Any,
+    *,
+    chat_completions: bool,
+    allow_workspace_edits: bool = True,
+) -> None:
     for name, tool in vars(toolset).items():
         if chat_completions:
             if isinstance(tool, CustomTool):
-                setattr(toolset, name, _custom_tool_as_function_tool(tool))
+                wrapped = _custom_tool_as_function_tool(tool)
+                wrapped = _wrap_workspace_edit_tool(
+                    wrapped,
+                    allow_workspace_edits=allow_workspace_edits,
+                )
+                setattr(toolset, name, wrapped)
             elif isinstance(tool, FunctionTool):
+                wrapped = _wrap_workspace_edit_tool(
+                    tool,
+                    allow_workspace_edits=allow_workspace_edits,
+                )
                 setattr(
-                    toolset, name, _function_tool_with_error_result(_with_coerced_arguments(tool))
+                    toolset,
+                    name,
+                    _function_tool_with_error_result(_with_coerced_arguments(wrapped)),
                 )
         elif isinstance(tool, CustomTool):
-            setattr(toolset, name, _bound_custom_tool(tool))
+            wrapped = _wrap_workspace_edit_tool(
+                tool,
+                allow_workspace_edits=allow_workspace_edits,
+            )
+            setattr(toolset, name, _bound_custom_tool(wrapped))
         elif isinstance(tool, FunctionTool):
-            setattr(toolset, name, _with_bounded_result(_with_coerced_arguments(tool)))
+            wrapped = _wrap_workspace_edit_tool(
+                tool,
+                allow_workspace_edits=allow_workspace_edits,
+            )
+            setattr(toolset, name, _with_bounded_result(_with_coerced_arguments(wrapped)))
 
 
-def _make_filesystem_configurator(*, chat_completions: bool) -> Any:
+def _make_filesystem_configurator(*, chat_completions: bool, allow_workspace_edits: bool) -> Any:
     def configure(toolset: Any) -> None:
-        _configure_filesystem_tools(toolset, chat_completions=chat_completions)
+        _configure_filesystem_tools(
+            toolset,
+            chat_completions=chat_completions,
+            allow_workspace_edits=allow_workspace_edits,
+        )
 
     return configure
 
@@ -531,6 +583,8 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     list_sitemap,
     view_sitemap_entry,
     scope_rules,
+    get_endpoint_coverage,
+    mark_endpoint_not_applicable,
     view_agent_graph,
     send_message_to_agent,
     wait_for_agents,
@@ -652,6 +706,7 @@ def build_strix_agent(
             Filesystem(
                 configure_tools=_make_filesystem_configurator(
                     chat_completions=chat_completions_tools,
+                    allow_workspace_edits=is_whitebox,
                 ),
             ),
             Shell(

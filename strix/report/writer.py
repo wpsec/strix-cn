@@ -339,6 +339,28 @@ def write_executive_report(
     logger.info("Saved final penetration test report to: %s", path)
 
 
+def write_html_report(
+    run_dir: Path,
+    *,
+    final_scan_result: str | None,
+    run_record: dict[str, Any],
+    vulnerability_reports: list[dict[str, Any]],
+) -> None:
+    """Write the portable Viewer-style report for live and completed runs."""
+    from strix.report.html_report import render_html_report
+
+    path = run_dir / "penetration_test_report.html"
+    _atomic_write_text(
+        path,
+        render_html_report(
+            final_scan_result=final_scan_result,
+            run_record=run_record,
+            vulnerability_reports=vulnerability_reports,
+        ),
+    )
+    logger.info("Saved HTML penetration test report to: %s", path)
+
+
 def write_vulnerabilities(
     run_dir: Path,
     vulnerability_reports: list[dict[str, Any]],

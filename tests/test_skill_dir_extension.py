@@ -179,6 +179,20 @@ def test_system_prompt_omits_empty_skill_description(tmp_path: Path) -> None:
     assert "- extra/widget: " not in prompt
 
 
+def test_non_whitebox_prompt_forbids_workspace_edits() -> None:
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, is_whitebox=False)
+
+    assert "WORKSPACE FILE EDITING CONSTRAINTS" in prompt
+    assert "Do not use `apply_patch`" in prompt
+
+
+def test_whitebox_prompt_does_not_forbid_workspace_edits() -> None:
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, is_whitebox=True)
+
+    assert "WORKSPACE FILE EDITING CONSTRAINTS" not in prompt
+    assert "Do not use `apply_patch`" not in prompt
+
+
 def test_registered_root_skill_is_discoverable_and_valid(tmp_path: Path) -> None:
     _write_root_skill(tmp_path, "widget", "widget body")
     register_skill_dir(tmp_path)

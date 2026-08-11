@@ -262,5 +262,11 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,
         "burp_port": getattr(args, "burp_port", None),
+        "credential_auth_available": bool(
+            getattr(args, "target_credentials", None)
+        ),
+        "allow_credential_attacks": bool(
+            getattr(args, "allow_credential_attacks", False)
+        ),
     }
     write_run_record(run_dir, run_record)

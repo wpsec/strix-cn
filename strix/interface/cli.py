@@ -52,6 +52,8 @@ def _resolve_sandbox_image() -> str:
 
 async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console = Console()
+    target_credentials = getattr(args, "target_credentials", None)
+    args.target_credentials = None
 
     start_text = Text()
     start_text.append("渗透测试已启动", style="bold #22c55e")
@@ -108,6 +110,10 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "diff_base": getattr(args, "diff_base", None),
         "burp_port": getattr(args, "burp_port", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
+        "credential_auth_available": bool(target_credentials),
+        "allow_credential_attacks": bool(
+            getattr(args, "allow_credential_attacks", False)
+        ),
     }
 
     report_state = ReportState(args.run_name)
@@ -209,8 +215,11 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
                     status_sink=_note_startup_phase,
+                    target_credentials=target_credentials,
                 )
             finally:
+                if target_credentials is not None:
+                    target_credentials.clear()
                 stop_updates.set()
                 update_thread.join(timeout=1)
                 with contextlib.suppress(Exception):

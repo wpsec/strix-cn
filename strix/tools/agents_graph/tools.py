@@ -16,10 +16,11 @@ from strix.core.agent_naming import normalize_agent_name
 from strix.core.agents import Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
+from strix.runtime.proxy_coverage import assign_proxy_coverage, unresolved_proxy_endpoints
 from strix.skills import validate_requested_skills
 
 
-_ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting"})
+_ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting", "budget_paused"})
 
 
 logger = logging.getLogger(__name__)
@@ -347,6 +348,33 @@ async def wait_for_agents(  # noqa: PLR0911
             default=str,
         )
 
+    if inner.get("parent_id") is None:
+        _, statuses, _, _ = await coordinator.graph_snapshot()
+        coverage_ref = inner.get("proxy_feature_coverage_ref")
+        unresolved = unresolved_proxy_endpoints(
+            coverage_ref if isinstance(coverage_ref, dict) else None,
+            agent_statuses=statuses,
+        )
+        active_children = [
+            agent_id
+            for agent_id, status in statuses.items()
+            if agent_id != me and status in _ACTIVE_STATUSES
+        ]
+        if unresolved and not active_children:
+            return json.dumps(
+                {
+                    "success": False,
+                    "wait_outcome": "coverage_incomplete",
+                    "error": (
+                        "当前批次仍有未覆盖 endpoint。请创建任务中明确包含这些 endpoint "
+                        "的测试专家，或调用 mark_endpoint_not_applicable 逐项说明理由"
+                    ),
+                    "unresolved_endpoints": unresolved,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+
     if interactive:
         await coordinator.park_waiting(me, wait_kind="agents")
         return json.dumps(
@@ -515,8 +543,31 @@ async def create_agent(
         len(task or ""),
     )
 
+    covered_endpoints: list[str] = []
+    coverage_ref = inner.get("proxy_feature_coverage_ref")
+    child_id = result.get("agent_id")
+    if isinstance(coverage_ref, dict) and isinstance(child_id, str):
+        covered_endpoints = assign_proxy_coverage(
+            coverage_ref,
+            agent_id=child_id,
+            agent_name=normalized_name,
+            task=task,
+        )
+        if covered_endpoints:
+            logger.info(
+                "create_agent: %s claimed %d passive-proxy endpoint(s)",
+                child_id,
+                len(covered_endpoints),
+            )
+
     return json.dumps(
-        result,
+        {
+            **result,
+            "covered_endpoints": covered_endpoints,
+            "unresolved_endpoints": unresolved_proxy_endpoints(coverage_ref)
+            if isinstance(coverage_ref, dict) and coverage_ref.get("active")
+            else [],
+        },
         ensure_ascii=False,
         default=str,
     )

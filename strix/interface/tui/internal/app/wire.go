@@ -54,6 +54,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		// resize (not just refresh): status-row visibility changes the chat height.
 		m.resizeViewport()
 		m.resizeVulnerabilityViewport()
+		m.syncInputFocus()
 	case "collection_bootstrap":
 		return m.handleCollectionBootstrap(envelope.Payload)
 	case "collection_delta":
@@ -433,15 +434,18 @@ func (m *Model) refreshAfterCollection(name string) tea.Cmd {
 		}
 		m.ensureAgentVisible()
 		m.refreshViewport()
+		m.syncInputFocus()
 		return m.notifyBudgetPause()
 	}
 	if name == "events" {
 		m.refreshViewport()
+		m.syncInputFocus()
 		return nil
 	}
 	m.selectedVuln = min(m.selectedVuln, max(0, len(m.snapshot.Vulnerabilities)-1))
 	m.ensureVulnerabilityVisible()
 	m.resizeVulnerabilityViewport()
+	m.syncInputFocus()
 	return nil
 }
 

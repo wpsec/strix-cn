@@ -227,6 +227,8 @@ async def test_root_prompt_includes_burp_passive_mode_constraints(
     assert "PASSIVE PROXY FEATURE-BATCH COORDINATION" in instructions_override
     assert "attack-surface mapping specialist" in instructions_override
     assert "create_vulnerability_report" in instructions_override
+    assert "WORKSPACE FILE EDITING CONSTRAINTS" in instructions_override
+    assert "Do not use `apply_patch`" in instructions_override
     assert "PASSIVE BURP MODE" in instructions_override
 
 

@@ -131,16 +131,16 @@ func (m *Model) chatContent() string {
 					return centeredPlaceholder(message, m.viewport.Width, m.viewport.Height)
 				}
 				if m.snapshot.PassiveProxyMode && m.isPassiveProxyAwaitingNextFeature() && agent.ParentID == nil {
-					message := "当前功能点测试已结束。\n\n发送“下一功能点”进入新一轮采集；完成新一轮操作后再发送“开始测试”。"
+					message := "当前功能点测试已结束。\n\n发送“下一功能点”重新开启采集，或发送“结束测试”生成总报告。"
 					if msg := strings.TrimSpace(agent.ErrorMessage); msg != "" {
-						message = msg + "\n\n发送“下一功能点”进入新一轮采集。"
+						message = msg + "\n\n发送“下一功能点”重新开启采集，或发送“结束测试”生成总报告。"
 					}
 					return centeredPlaceholder(message, m.viewport.Width, m.viewport.Height)
 				}
 				if m.snapshot.PassiveProxyMode && m.passiveProxyPhase() == "testing" && agent.ParentID == nil {
-					message := "当前功能点测试中，正在等待运行中的子 agent 完成。\n\n本轮结束后发送“下一功能点”开始下一轮。"
+					message := "当前功能点测试中，正在等待运行中的子 agent 完成。\n\n代理采集已暂停；测试期间经过 Burp 的新流量不会进入任何测试批次。"
 					if msg := strings.TrimSpace(agent.ErrorMessage); msg != "" {
-						message = msg + "\n\n本轮结束后发送“下一功能点”开始下一轮。"
+						message = msg + "\n\n代理采集已暂停；测试期间的新流量会被忽略。"
 					}
 					return centeredPlaceholder(message, m.viewport.Width, m.viewport.Height)
 				}
@@ -566,9 +566,10 @@ func (m Model) mainView() string {
 // and so never applied - honoring it made the outline vanish on the one panel
 // that had just become active.
 func (m Model) sidebarView(width, height int) string {
-	// Stats box height fits its content (auto, max 15); vulns panel max-height 12.
-	statsBody := m.statsView()
-	statsHeight, vulnHeight, agentHeight := m.sidebarHeights()
+	// Keep the top viewer panel visible even when the lower stats box grows.
+	viewerHeight, statsHeight, vulnHeight, agentHeight := m.sidebarPanelHeights()
+	viewerBody := fixedPanelBody(m.viewerView(width-4), width-4, max(1, viewerHeight-2))
+	statsBody := fixedPanelBody(m.statsView(), width-4, max(1, statsHeight-2))
 	agentBorder := dark
 	if m.focus == focusAgents {
 		agentBorder = green
@@ -586,8 +587,8 @@ func (m Model) sidebarView(width, height int) string {
 		m.scrollbarThumb(scrollbarAgents),
 	)
 	parts := []string{
-		lipgloss.NewStyle().Width(width-2).Height(m.viewerHeight()-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(m.viewerView(width - 4)),
-		lipgloss.NewStyle().Width(width-2).Height(agentHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(agentBorder).Padding(1, 1).Render(agents),
+		lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(viewerBody),
+		lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).BorderForeground(agentBorder).Padding(1, 1).Render(agents),
 	}
 	if vulnHeight > 0 {
 		vulnBorder := dark
@@ -605,13 +606,23 @@ func (m Model) sidebarView(width, height int) string {
 			offsetRows,
 			m.scrollbarThumb(scrollbarFindings),
 		)
-		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(vulnRows).Border(lipgloss.RoundedBorder()).BorderForeground(vulnBorder).Padding(0, 1).Render(findings))
+		parts = append(parts, lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).BorderForeground(vulnBorder).Padding(0, 1).Render(findings))
 	}
-	parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(statsHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(statsBody))
+	parts = append(parts, lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(statsBody))
 	return strings.Join(parts, "\n")
 }
 
-func (m Model) sidebarHeights() (statsHeight, vulnHeight, agentHeight int) {
+func shaveHeight(height *int, floor int, overflow *int) {
+	if *overflow <= 0 || *height <= floor {
+		return
+	}
+	shrink := min(*overflow, *height-floor)
+	*height -= shrink
+	*overflow -= shrink
+}
+
+func (m Model) sidebarPanelHeights() (viewerHeight, statsHeight, vulnHeight, agentHeight int) {
+	viewerHeight = m.viewerHeight()
 	// Measure the stats panel the way its box will render it: a long model name
 	// wraps inside the sidebar, and counting only its newlines would size the
 	// box short and push the whole frame past the bottom of the terminal.
@@ -620,7 +631,35 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, agentHeight int) {
 	if len(m.snapshot.Vulnerabilities) > 0 {
 		vulnHeight = min(12, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+2)
 	}
-	agentHeight = max(3, m.height-m.viewerHeight()-statsHeight-vulnHeight)
+	const (
+		minViewerHeight = 3
+		minStatsHeight  = 3
+		minAgentHeight  = 3
+	)
+	separatorRows := 2
+	if vulnHeight > 0 {
+		separatorRows++
+	}
+	overflow := viewerHeight + statsHeight + vulnHeight + minAgentHeight + separatorRows - m.height
+	shaveHeight(&statsHeight, minStatsHeight, &overflow)
+	shaveHeight(&vulnHeight, 0, &overflow)
+	shaveHeight(&viewerHeight, minViewerHeight, &overflow)
+	agentHeight = max(minAgentHeight, m.height-separatorRows-viewerHeight-statsHeight-vulnHeight)
+	return
+}
+
+func (m Model) sidebarHeights() (statsHeight, vulnHeight, agentHeight int) {
+	_, statsHeight, vulnHeight, agentHeight = m.sidebarPanelHeights()
+	return
+}
+
+func (m Model) sidebarPanelStarts() (viewerHeight, agentStart, vulnStart int) {
+	viewerHeight, _, vulnHeight, agentHeight := m.sidebarPanelHeights()
+	agentStart = viewerHeight
+	vulnStart = agentStart + agentHeight
+	if vulnHeight == 0 {
+		vulnStart = -1
+	}
 	return
 }
 
@@ -743,14 +782,12 @@ func (m Model) statsView() string {
 			b.WriteString("\n")
 			b.WriteString(label.Render("阶段: ") + w.Render("当前功能点测试中"))
 			b.WriteString("\n")
+			b.WriteString(label.Render("代理采集: ") + w.Render("已暂停（测试期间流量忽略）"))
+			b.WriteString("\n")
 			if m.isPassiveProxyAwaitingNextFeature() {
-				b.WriteString(label.Render("说明: ") + w.Render("本轮测试已结束，新流量仍不会自动切到下一功能点"))
-				b.WriteString("\n")
-				b.WriteString(label.Render("操作: ") + w.Render("发送“下一功能点”进入下一轮采集"))
+				b.WriteString(label.Render("操作: ") + w.Render("“下一功能点”重新采集，或“结束测试”生成报告"))
 			} else {
-				b.WriteString(label.Render("说明: ") + w.Render("新进入 Burp 的流量不会切换当前功能点"))
-				b.WriteString("\n")
-				b.WriteString(label.Render("操作: ") + w.Render("等待本轮结束后发送“下一功能点”"))
+				b.WriteString(label.Render("操作: ") + w.Render("等待本轮结束"))
 			}
 		}
 	}
@@ -822,14 +859,14 @@ func (m Model) statusView(width int) string {
 					left = statusMessage(msg, red, " · 采集完成后发送“开始测试”继续", width)
 				}
 			} else if m.snapshot.PassiveProxyMode && m.isPassiveProxyAwaitingNextFeature() && agent.ParentID == nil {
-				left = lipgloss.NewStyle().Foreground(dim).Render("当前功能点测试已结束。发送“下一功能点”进入下一轮采集；完成新一轮操作后再发送“开始测试”。")
+				left = lipgloss.NewStyle().Foreground(dim).Render("当前功能点测试已结束。发送“下一功能点”重新采集，或发送“结束测试”生成总报告。")
 				if msg := agent.ErrorMessage; msg != "" {
-					left = statusMessage(msg, red, " · 发送“下一功能点”进入下一轮采集", width)
+					left = statusMessage(msg, red, " · 下一功能点重新采集，或结束测试生成报告", width)
 				}
 			} else if m.snapshot.PassiveProxyMode && m.passiveProxyPhase() == "testing" && agent.ParentID == nil {
-				left = lipgloss.NewStyle().Foreground(dim).Render("当前功能点测试中，等待运行中的子 agent 完成。本轮结束后发送“下一功能点”开始下一轮。")
+				left = lipgloss.NewStyle().Foreground(dim).Render("当前功能点测试中，等待运行中的子 agent 完成。代理采集已暂停，测试期间流量会被忽略。")
 				if msg := agent.ErrorMessage; msg != "" {
-					left = statusMessage(msg, red, " · 完成后发送“下一功能点”开始下一轮", width)
+					left = statusMessage(msg, red, " · 完成后切换下一功能点或结束测试", width)
 				}
 			} else {
 				left = lipgloss.NewStyle().Foreground(dim).Render("Send message to resume")

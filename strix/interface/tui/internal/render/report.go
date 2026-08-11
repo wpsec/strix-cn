@@ -14,7 +14,7 @@ import (
 func renderVulnerabilityReport(args map[string]any, result any) string {
 	resultMap, _ := result.(map[string]any)
 	var b strings.Builder
-	b.WriteString("🐞 " + Bold(ReportHdr).Render("Vulnerability Report"))
+	b.WriteString("🐞 " + Bold(ReportHdr).Render("漏洞报告"))
 
 	field := func(label, value string) {
 		if value != "" {
@@ -22,26 +22,26 @@ func renderVulnerabilityReport(args map[string]any, result any) string {
 		}
 	}
 	title := StringValue(args["title"])
-	field("Title", title)
+	field("标题", title)
 
 	if sev := StringValue(resultMap["severity"]); sev != "" {
-		b.WriteString("\n\n" + Bold(Field).Render("Severity: ") +
-			lipgloss.NewStyle().Bold(true).Foreground(SeverityColor(sev)).Render(strings.ToUpper(sev)))
+		b.WriteString("\n\n" + Bold(Field).Render("严重性: ") +
+			lipgloss.NewStyle().Bold(true).Foreground(SeverityColor(sev)).Render(SeverityLabelZH(sev)))
 	}
 	if score, ok := NumericValue(resultMap["cvss_score"]); ok {
-		b.WriteString("\n\n" + Bold(Field).Render("CVSS Score: ") +
+		b.WriteString("\n\n" + Bold(Field).Render("CVSS 分数: ") +
 			lipgloss.NewStyle().Bold(true).Foreground(CVSSColor(score)).Render(StringValue(resultMap["cvss_score"])))
 	}
-	field("Target", StringValue(args["target"]))
-	field("Endpoint", StringValue(args["endpoint"]))
-	field("Method", StringValue(args["method"]))
+	field("目标", StringValue(args["target"]))
+	field("接口", StringValue(args["endpoint"]))
+	field("方法", StringValue(args["method"]))
 	field("CVE", StringValue(args["cve"]))
 	field("CWE", StringValue(args["cwe"]))
 
 	if bd, ok := args["cvss_breakdown"].(map[string]any); ok && len(bd) > 0 {
 		parts := CVSSVectorParts(bd)
 		if len(parts) > 0 {
-			b.WriteString("\n\n" + Bold(Field).Render("CVSS Vector: ") + Dim().Render(strings.Join(parts, "/")))
+			b.WriteString("\n\n" + Bold(Field).Render("CVSS 向量: ") + Dim().Render(strings.Join(parts, "/")))
 		}
 	}
 
@@ -50,18 +50,18 @@ func renderVulnerabilityReport(args map[string]any, result any) string {
 			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
 		}
 	}
-	section("Description", StringValue(args["description"]))
-	section("Impact", StringValue(args["impact"]))
-	section("Technical Analysis", StringValue(args["technical_analysis"]))
+	section("漏洞描述", StringValue(args["description"]))
+	section("影响", StringValue(args["impact"]))
+	section("技术分析", StringValue(args["technical_analysis"]))
 	renderCodeLocations(&b, args["code_locations"])
-	section("PoC Description", StringValue(args["poc_description"]))
+	section("概念验证说明", StringValue(args["poc_description"]))
 	if poc := StringValue(args["poc_script_code"]); poc != "" {
-		b.WriteString("\n\n" + Bold(Field).Render("PoC Code") + "\n" + Col(Text).Render(poc))
+		b.WriteString("\n\n" + Bold(Field).Render("概念验证代码") + "\n" + Col(Text).Render(poc))
 	}
-	section("Remediation", StringValue(args["remediation_steps"]))
+	section("修复建议", StringValue(args["remediation_steps"]))
 
 	if title == "" {
-		b.WriteString("\n  " + Dim().Render("Creating report..."))
+		b.WriteString("\n  " + Dim().Render("正在创建漏洞报告..."))
 	}
 	return "\n\n" + b.String() + "\n\n"
 }
@@ -87,13 +87,13 @@ func renderCodeLocations(b *strings.Builder, raw any) {
 	if !ok || len(locs) == 0 {
 		return
 	}
-	b.WriteString("\n\n" + Bold(Field).Render("Code Locations"))
+	b.WriteString("\n\n" + Bold(Field).Render("代码位置"))
 	for i, l := range locs {
 		loc, ok := l.(map[string]any)
 		if !ok {
 			continue
 		}
-		b.WriteString("\n\n" + Dim().Render(fmt.Sprintf("  Location %d: ", i+1)))
+		b.WriteString("\n\n" + Dim().Render(fmt.Sprintf("  位置 %d: ", i+1)))
 		file := StringValue(loc["file"])
 		if file == "" {
 			file = "unknown"
@@ -114,7 +114,7 @@ func renderCodeLocations(b *strings.Builder, raw any) {
 		}
 		before, after := StringValue(loc["fix_before"]), StringValue(loc["fix_after"])
 		if before != "" || after != "" {
-			b.WriteString("\n  " + Dim().Render("Fix:"))
+			b.WriteString("\n  " + Dim().Render("建议修复:"))
 			if before != "" {
 				b.WriteString("\n  " + Col(Red).Render("- ") + Col(Red).Render(before))
 			}

@@ -439,8 +439,8 @@ func TestPassiveProxyPhaseSwitchesToTestingWhileChildAgentRuns(t *testing.T) {
 		"代理捕获: 累计 22 条",
 		"最近批次: 4 条",
 		"最近流量: GET app.example.com/api/profile",
-		"说明: 新进入 Burp 的流量不会切换当前功能点",
-		"操作: 等待本轮结束后发送“下一功能点”",
+		"代理采集: 已暂停（测试期间流量忽略）",
+		"操作: 等待本轮结束",
 	} {
 		if !strings.Contains(stats, want) {
 			t.Fatalf("passive proxy testing phase missing %q: %s", want, stats)
@@ -448,7 +448,8 @@ func TestPassiveProxyPhaseSwitchesToTestingWhileChildAgentRuns(t *testing.T) {
 	}
 
 	content := ansi.Strip(model.chatContent())
-	if !strings.Contains(content, "当前功能点测试中，正在等待运行中的子 agent 完成。") {
+	if !strings.Contains(content, "当前功能点测试中，正在等待运行中的子 agent 完成。") ||
+		!strings.Contains(content, "代理采集已暂停") {
 		t.Fatalf("passive proxy testing placeholder missing: %s", content)
 	}
 }
@@ -475,8 +476,8 @@ func TestPassiveProxyTestingWaitsForNextFeatureCommandAfterCompletion(t *testing
 	stats := ansi.Strip(model.statsView())
 	for _, want := range []string{
 		"阶段: 当前功能点测试中",
-		"说明: 本轮测试已结束，新流量仍不会自动切到下一功能点",
-		"操作: 发送“下一功能点”进入下一轮采集",
+		"代理采集: 已暂停（测试期间流量忽略）",
+		"操作: “下一功能点”重新采集，或“结束测试”生成报告",
 	} {
 		if !strings.Contains(stats, want) {
 			t.Fatalf("passive proxy next-feature stats missing %q: %s", want, stats)
@@ -484,7 +485,7 @@ func TestPassiveProxyTestingWaitsForNextFeatureCommandAfterCompletion(t *testing
 	}
 
 	content := ansi.Strip(model.chatContent())
-	if !strings.Contains(content, "当前功能点测试已结束。") || !strings.Contains(content, "发送“下一功能点”进入新一轮采集") {
+	if !strings.Contains(content, "当前功能点测试已结束。") || !strings.Contains(content, "发送“下一功能点”重新开启采集") {
 		t.Fatalf("passive proxy next-feature placeholder missing: %s", content)
 	}
 }
@@ -810,11 +811,11 @@ func TestVulnerabilityListSupportsWheelAndPageNavigation(t *testing.T) {
 		})
 	}
 	_, _, chatWidth, _ := model.layout()
-	_, _, agentHeight := model.sidebarHeights()
+	_, _, vulnStart := model.sidebarPanelStarts()
 	pageItems := model.vulnerabilityPageItems()
 
 	updated, _ := model.updateMouse(tea.MouseMsg{
-		X: chatWidth + 2, Y: model.viewerHeight() + agentHeight + 1, Button: tea.MouseButtonWheelDown,
+		X: chatWidth + 2, Y: vulnStart + 1, Button: tea.MouseButtonWheelDown,
 	})
 	model = updated.(Model)
 	if model.focus != focusVulnerabilities || model.vulnOffset != 3 || model.selectedVuln != 3 {
@@ -847,9 +848,10 @@ func TestAgentTreeWheelScrollSurvivesSnapshot(t *testing.T) {
 		})
 	}
 	_, _, chatWidth, _ := model.layout()
+	_, agentStart, _ := model.sidebarPanelStarts()
 
 	updated, _ := model.updateMouse(tea.MouseMsg{
-		X: chatWidth + 2, Y: model.viewerHeight() + 2, Button: tea.MouseButtonWheelDown,
+		X: chatWidth + 2, Y: agentStart + 2, Button: tea.MouseButtonWheelDown,
 	})
 	model = updated.(Model)
 	if model.focus != focusAgents || model.agentOffset != 3 || model.selectedAgent != 3 {
@@ -1001,10 +1003,30 @@ func TestFindingTitlesWrapAndViewerCTAIsClickable(t *testing.T) {
 
 	_, _, chatWidth, _ := model.layout()
 	_, cmd := model.updateMouse(tea.MouseMsg{
-		X: chatWidth + 2, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+		X: chatWidth + 3, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	if cmd == nil {
 		t.Fatal("clicking viewer CTA did not send viewer.open")
+	}
+}
+
+func TestViewerChromeDoesNotTriggerViewerOpen(t *testing.T) {
+	model, connection := newCommandTestModel(t)
+	model.width, model.height = 130, 30
+
+	_, _, chatWidth, _ := model.layout()
+	_, cmd := model.updateMouse(tea.MouseMsg{
+		X: chatWidth + 1, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	if cmd != nil {
+		message := cmd()
+		if sent, ok := message.(sentMsg); ok && sent.command == "viewer.open" {
+			t.Fatalf("clicking viewer chrome triggered viewer.open: %#v", message)
+		}
+		t.Fatalf("clicking viewer chrome returned unexpected command: %#v", message)
+	}
+	if connection.Len() != 0 {
+		t.Fatalf("clicking viewer chrome sent an unexpected command: %q", connection.String())
 	}
 }
 
@@ -1028,6 +1050,164 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 	}
 	if want := strings.Count(model.viewerView(model.viewerContentWidth()), "\n") + 3; model.viewerHeight() != want {
 		t.Fatalf("viewer height = %d, want %d", model.viewerHeight(), want)
+	}
+}
+
+func TestClickingRenderedRootAgentDoesNotTriggerViewerOpenWhileTesting(t *testing.T) {
+	model, connection := newCommandTestModel(t)
+	model.width, model.height = 130, 34
+	model.showSplash = false
+	url := "http://127.0.0.1:43123/?token=abcdefghijklmnopqrstuvwxyz0123456789"
+	model.snapshot = protocol.Snapshot{
+		ScanStarted:       true,
+		ScanState:         "running",
+		ViewerStatus:      "running",
+		ViewerURL:         &url,
+		PassiveProxyMode:  true,
+		PassiveProxyPhase: "testing",
+		Agents: []protocol.Agent{
+			{ID: "root", Name: "Root Agent", Status: "running"},
+			{ID: "child", Name: "Analyzer", Status: "running"},
+		},
+	}
+
+	_, sidebarWidth, chatWidth, _ := model.layout()
+	sidebar := strings.Split(ansi.Strip(model.sidebarView(sidebarWidth, model.height)), "\n")
+	row := -1
+	col := -1
+	for i, line := range sidebar {
+		if idx := strings.Index(line, "Root Agent"); idx >= 0 {
+			row = i
+			col = idx
+			break
+		}
+	}
+	if row < 0 || col < 0 {
+		t.Fatalf("rendered sidebar did not contain Root Agent: %s", strings.Join(sidebar, "\n"))
+	}
+
+	updated, cmd := model.updateMouse(tea.MouseMsg{
+		X:      chatWidth + 1 + col,
+		Y:      row,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	result := updated.(Model)
+
+	if cmd != nil {
+		message := cmd()
+		if sent, ok := message.(sentMsg); ok && sent.command == "viewer.open" {
+			t.Fatalf("clicking rendered Root Agent triggered viewer.open at row=%d col=%d", row, col)
+		}
+		t.Fatalf("clicking rendered Root Agent returned unexpected command: %#v", message)
+	}
+	if result.selectedAgent != 0 {
+		t.Fatalf("clicking rendered Root Agent selected index %d, want 0", result.selectedAgent)
+	}
+	if result.collapsedAgents["root"] {
+		t.Fatal("clicking rendered Root Agent label should not collapse it")
+	}
+	if connection.Len() != 0 {
+		t.Fatalf("clicking rendered Root Agent sent an unexpected command: %q", connection.String())
+	}
+}
+
+func TestClickingRenderedChildAgentSelectsItWhileTesting(t *testing.T) {
+	model, connection := newCommandTestModel(t)
+	model.width, model.height = 130, 34
+	model.showSplash = false
+	url := "http://127.0.0.1:43123/?token=abcdefghijklmnopqrstuvwxyz0123456789"
+	model.snapshot = protocol.Snapshot{
+		ScanStarted:       true,
+		ScanState:         "running",
+		ViewerStatus:      "running",
+		ViewerURL:         &url,
+		PassiveProxyMode:  true,
+		PassiveProxyPhase: "testing",
+		Agents: []protocol.Agent{
+			{ID: "root", Name: "Root Agent", Status: "running"},
+			{ID: "child", Name: "Analyzer", Status: "running"},
+		},
+	}
+
+	_, sidebarWidth, chatWidth, _ := model.layout()
+	sidebar := strings.Split(ansi.Strip(model.sidebarView(sidebarWidth, model.height)), "\n")
+	row := -1
+	col := -1
+	for i, line := range sidebar {
+		if idx := strings.Index(line, "Analyzer"); idx >= 0 {
+			row = i
+			col = idx
+			break
+		}
+	}
+	if row < 0 || col < 0 {
+		t.Fatalf("rendered sidebar did not contain child agent: %s", strings.Join(sidebar, "\n"))
+	}
+
+	updated, cmd := model.updateMouse(tea.MouseMsg{
+		X:      chatWidth + 1 + col,
+		Y:      row,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	result := updated.(Model)
+
+	if cmd != nil {
+		message := cmd()
+		if sent, ok := message.(sentMsg); ok && sent.command == "viewer.open" {
+			t.Fatalf("clicking rendered child agent triggered viewer.open at row=%d col=%d", row, col)
+		}
+		t.Fatalf("clicking rendered child agent returned unexpected command: %#v", message)
+	}
+	if result.selectedAgent != 1 {
+		t.Fatalf("clicking rendered child agent selected index %d, want 1", result.selectedAgent)
+	}
+	if connection.Len() != 0 {
+		t.Fatalf("clicking rendered child agent sent an unexpected command: %q", connection.String())
+	}
+}
+
+func TestClickingRenderedRootAgentDisclosureCollapsesIt(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 34
+	model.showSplash = false
+	rootID := "root"
+	model.snapshot = protocol.Snapshot{
+		ScanStarted:      true,
+		ScanState:        "running",
+		PassiveProxyMode: true,
+		Agents: []protocol.Agent{
+			{ID: rootID, Name: "Root Agent", Status: "running"},
+			{ID: "child", Name: "Analyzer", ParentID: &rootID, Status: "running"},
+		},
+	}
+
+	_, sidebarWidth, chatWidth, _ := model.layout()
+	sidebar := strings.Split(ansi.Strip(model.sidebarView(sidebarWidth, model.height)), "\n")
+	row := -1
+	col := -1
+	for i, line := range sidebar {
+		if idx := strings.Index(line, "▼ "); idx >= 0 && strings.Contains(line, "Root Agent") {
+			row = i
+			col = idx
+			break
+		}
+	}
+	if row < 0 || col < 0 {
+		t.Fatalf("rendered sidebar did not contain Root Agent disclosure: %s", strings.Join(sidebar, "\n"))
+	}
+
+	updated, _ := model.updateMouse(tea.MouseMsg{
+		X:      chatWidth + 1 + col,
+		Y:      row,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	result := updated.(Model)
+
+	if !result.collapsedAgents["root"] {
+		t.Fatal("clicking rendered Root Agent disclosure should collapse it")
 	}
 }
 
@@ -1119,7 +1299,7 @@ func TestMainScrollbarsSupportClickAndDrag(t *testing.T) {
 	model.viewportContent = strings.Repeat("trace line\n", 100)
 	model.viewport.SetContent(model.viewportContent)
 	showSidebar, _, chatWidth, chatHeight := model.layout()
-	viewerHeight := model.viewerHeight()
+	_, agentStart, vulnStart := model.sidebarPanelStarts()
 	_, vulnHeight, agentHeight := model.sidebarHeights()
 	if !showSidebar {
 		t.Fatal("test requires sidebar")
@@ -1144,7 +1324,7 @@ func TestMainScrollbarsSupportClickAndDrag(t *testing.T) {
 	}
 
 	updated, _ = model.updateMouse(tea.MouseMsg{
-		X: model.width - 3, Y: viewerHeight + agentHeight - 3,
+		X: model.width - 3, Y: agentStart + agentHeight - 3,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	model = updated.(Model)
@@ -1155,7 +1335,7 @@ func TestMainScrollbarsSupportClickAndDrag(t *testing.T) {
 	model = updated.(Model)
 
 	updated, _ = model.updateMouse(tea.MouseMsg{
-		X: model.width - 3, Y: viewerHeight + agentHeight + vulnHeight - 2,
+		X: model.width - 3, Y: vulnStart + vulnHeight - 2,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	model = updated.(Model)
@@ -1431,14 +1611,78 @@ func TestSidebarWidthIsCappedOnWideTerminal(t *testing.T) {
 	if !showSidebar {
 		t.Fatal("wide terminal should keep the sidebar visible")
 	}
-	if sidebarWidth != 32 {
-		t.Fatalf("sidebar width should be capped at 32, got %d", sidebarWidth)
+	if sidebarWidth != 36 {
+		t.Fatalf("sidebar width should be capped at 36, got %d", sidebarWidth)
 	}
 	if chatWidth != model.width-sidebarWidth-1 {
 		t.Fatalf("chat width mismatch: got %d", chatWidth)
 	}
 	if chatHeight < 4 {
 		t.Fatalf("chat height should stay usable, got %d", chatHeight)
+	}
+}
+
+func TestPassiveProxyStatsKeepCaidoLineTogetherOnDesktop(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 34
+	model.showSplash = false
+	model.snapshot = protocol.Snapshot{
+		CaidoURL:         "http://127.0.0.1:8082",
+		PassiveProxyMode: true,
+		Agents:           []protocol.Agent{{ID: "root", Name: "Root Agent", Status: "waiting"}},
+	}
+
+	showSidebar, sidebarWidth, _, _ := model.layout()
+	if !showSidebar {
+		t.Fatal("desktop layout should show the sidebar")
+	}
+
+	sidebar := ansi.Strip(model.sidebarView(sidebarWidth, model.height))
+	if !strings.Contains(sidebar, "Caido: http://127.0.0.1:8082") {
+		t.Fatalf("Caido line should stay on one row: %s", sidebar)
+	}
+}
+
+func TestSidebarKeepsViewerVisibleWhenStatsGrow(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 18
+	model.showSplash = false
+	url := "https://viewer.example.com/runs/2026/08/11/passive-proxy/session/root-agent/live"
+	model.snapshot = protocol.Snapshot{
+		Model:                     "deepseek-v4-pro-with-an-extraordinarily-long-provider-name-for-wrap-testing",
+		ViewerStatus:              "running",
+		ViewerURL:                 &url,
+		CaidoURL:                  "http://127.0.0.1:8082",
+		PassiveProxyMode:          true,
+		PassiveProxyPhase:         "testing",
+		ProxyRecentRequestCount:   12,
+		ProxyRecentRequestHasMore: true,
+		ProxyLatestMethod:         "POST",
+		ProxyLatestHost:           "app.example.com",
+		ProxyLatestPath:           "/api/orders/submit",
+		ProxyTotalRequestCount:    42,
+		Agents:                    []protocol.Agent{{ID: "root", Name: "Root Agent", Status: "waiting"}},
+		Vulnerabilities: []map[string]any{
+			{"title": "Finding 01"},
+			{"title": "Finding 02"},
+			{"title": "Finding 03"},
+			{"title": "Finding 04"},
+			{"title": "Finding 05"},
+			{"title": "Finding 06"},
+		},
+	}
+
+	showSidebar, sidebarWidth, _, _ := model.layout()
+	if !showSidebar {
+		t.Fatal("desktop layout should show the sidebar")
+	}
+
+	sidebar := ansi.Strip(model.sidebarView(sidebarWidth, model.height))
+	if got := lipgloss.Height(sidebar); got > model.height {
+		t.Fatalf("sidebar is %d rows in a %d-row terminal", got, model.height)
+	}
+	if !strings.Contains(sidebar, "Viewer running") {
+		t.Fatalf("viewer panel was pushed out of the sidebar: %s", sidebar)
 	}
 }
 

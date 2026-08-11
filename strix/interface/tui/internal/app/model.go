@@ -177,7 +177,7 @@ const (
 	setupPlaceholderShort   = "What should Strix test?"
 	chatPlaceholder         = "Send a message"
 	passiveProxyPlaceholder = "先在 Burp 中完成当前功能点操作；采集完成后发送“开始测试”，也可补充关注点。"
-	nextFeaturePlaceholder  = "当前功能点测试已结束；发送“下一功能点”后，在 Burp 中操作新功能点，再发送“开始测试”。"
+	nextFeaturePlaceholder  = "本轮已结束；发送“下一功能点”重新采集，或发送“结束测试”生成总报告。"
 )
 
 // The composer opens at minInputLines rows for breathing room and grows with
@@ -362,6 +362,14 @@ func (m *Model) syncLiveInputPlaceholder() {
 		}
 	}
 	m.input.Placeholder = chatPlaceholder
+}
+
+func (m *Model) syncInputFocus() {
+	if m.modal != modalNone || m.focus != focusInput {
+		m.input.Blur()
+		return
+	}
+	m.input.Focus()
 }
 
 // composerHeight is how many rows the composer needs to show all of its

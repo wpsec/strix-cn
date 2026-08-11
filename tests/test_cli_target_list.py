@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import sys
 from typing import TYPE_CHECKING, Any
@@ -68,6 +69,49 @@ def test_parse_arguments_accepts_burp_port(monkeypatch: pytest.MonkeyPatch) -> N
     args = cli_args.parse_arguments()
 
     assert args.burp_port == 8081
+
+
+def test_parse_arguments_reads_target_password_outside_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = "not-a-real-secret"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "strix",
+            "--target",
+            "https://example.com",
+            "--auth-username",
+            "authorized-user",
+            "--auth-password-stdin",
+            "-n",
+        ],
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO(password + "\n"))
+
+    args = cli_args.parse_arguments()
+
+    assert args.target_credentials == {
+        "username": "authorized-user",
+        "password": password,
+    }
+    assert args.auth_username is None
+    assert args.auth_password_stdin is False
+    assert password not in (args.instruction or "")
+
+
+def test_parse_arguments_requires_complete_target_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--target", "https://example.com", "--auth-username", "user", "-n"],
+    )
+
+    with pytest.raises(SystemExit):
+        cli_args.parse_arguments()
 
 
 def test_parse_arguments_accepts_burp_port_without_targets(

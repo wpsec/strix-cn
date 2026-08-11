@@ -381,6 +381,36 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     HTTPStatus.OK,
                     {"markdown": self._with_fd_reserve(lambda: read_report_markdown(run_dir))},
                 )
+            elif path == "/api/report.html":
+                report_path = run_dir / "penetration_test_report.html"
+                if not report_path.is_file():
+                    from strix.report.writer import write_html_report
+
+                    summary = self._with_fd_reserve(lambda: read_run_summary(run_dir))
+                    vulnerabilities = self._with_fd_reserve(
+                        lambda: read_vulnerabilities(run_dir)
+                    )
+                    final_markdown = self._with_fd_reserve(
+                        lambda: read_report_markdown(run_dir)
+                    )
+                    self._with_fd_reserve(
+                        lambda: write_html_report(
+                            run_dir,
+                            final_scan_result=final_markdown or None,
+                            run_record=summary,
+                            vulnerability_reports=vulnerabilities,
+                        )
+                    )
+                body = self._with_fd_reserve(report_path.read_bytes)
+                filename = f"{run_dir.name}-security-report.html"
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif path == "/api/transcript":
                 self._send_json(
                     HTTPStatus.OK,

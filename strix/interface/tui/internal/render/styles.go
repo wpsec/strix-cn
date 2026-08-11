@@ -80,3 +80,24 @@ func CVSSColor(score float64) lipgloss.Color {
 	}
 	return Gray
 }
+
+func SeverityLabelZH(sev string) string {
+	switch strings.ToLower(strings.TrimSpace(sev)) {
+	case "critical":
+		return "严重"
+	case "high":
+		return "高危"
+	case "medium":
+		return "中危"
+	case "low":
+		return "低危"
+	case "info":
+		return "信息"
+	case "none":
+		return "无"
+	}
+	if strings.TrimSpace(sev) == "" {
+		return "未知"
+	}
+	return sev
+}

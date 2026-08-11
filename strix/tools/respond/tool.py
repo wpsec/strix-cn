@@ -8,6 +8,7 @@ from typing import Any
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import coordinator_from_context
+from strix.runtime.proxy_coverage import unresolved_proxy_endpoints
 
 
 def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
@@ -100,6 +101,33 @@ async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
             ensure_ascii=False,
             default=str,
         )
+
+    if inner.get("parent_id") is None:
+        _, statuses, _, _ = await coordinator.graph_snapshot()
+        coverage_ref = inner.get("proxy_feature_coverage_ref")
+        unresolved = unresolved_proxy_endpoints(
+            coverage_ref if isinstance(coverage_ref, dict) else None,
+            agent_statuses=statuses,
+        )
+        active_children = [
+            agent_id
+            for agent_id, status in statuses.items()
+            if agent_id != me and status in {"running", "waiting", "budget_paused"}
+        ]
+        if unresolved and not active_children:
+            return json.dumps(
+                {
+                    "success": False,
+                    "wait_outcome": "coverage_incomplete",
+                    "error": (
+                        "当前批次仍有未覆盖 endpoint，不能等待用户。请补派测试专家，"
+                        "或调用 mark_endpoint_not_applicable 逐项说明理由"
+                    ),
+                    "unresolved_endpoints": unresolved,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
 
     await coordinator.park_waiting(me, wait_kind="user")
     return json.dumps(

@@ -93,14 +93,14 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 				map[string]any{"title": "SQL injection in login", "target": "https://x.test"},
 				map[string]any{"severity": "critical", "cvss_score": 9.8},
 				"completed"),
-			[]string{"Vulnerability Report", "SQL injection in login", "CRITICAL", "9.8"},
+			[]string{"漏洞报告", "SQL injection in login", "严重", "9.8"},
 		},
 		{
 			"create_dependency_report",
 			tool("create_dependency_report",
 				map[string]any{"package_name": "requests", "installed_version": "2.0.0"},
 				nil, "completed"),
-			[]string{"requests"},
+			[]string{"依赖漏洞报告", "组件", "requests", "当前版本", "2.0.0"},
 		},
 		{
 			"list_reports",
@@ -113,12 +113,12 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 					map[string]any{"id": "VULN-2", "title": "Weak header", "severity": "low", "agent_name": "recon"},
 				},
 			}, "completed"),
-			[]string{"reports", "(2)", "CRITICAL", "VULN-1", "SQLi", "(you)", "LOW", "VULN-2", "(recon)"},
+			[]string{"报告列表", "(2)", "严重", "VULN-1", "SQLi", "(你)", "低危", "VULN-2", "(recon)"},
 		},
 		{
 			"list_reports empty",
 			tool("list_reports", nil, map[string]any{"success": true, "total_count": 0}, "completed"),
-			[]string{"reports", "(0)", "No reports filed yet"},
+			[]string{"报告列表", "(0)", "当前还没有已提交的报告"},
 		},
 		{
 			"get_report",
@@ -128,12 +128,12 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 					"id": "VULN-1", "title": "SQLi", "severity": "high", "target": "https://x.test",
 				},
 			}, "completed"),
-			[]string{"report read", "HIGH", "VULN-1", "SQLi", "https://x.test"},
+			[]string{"读取报告", "高危", "VULN-1", "SQLi", "https://x.test"},
 		},
 		{
 			"get_report error",
 			tool("get_report", nil, map[string]any{"success": false, "error": "not found"}, "failed"),
-			[]string{"report read", "not found"},
+			[]string{"读取报告", "not found"},
 		},
 		{
 			"respond_to_user",
@@ -143,7 +143,7 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 		{
 			"finish_scan",
 			tool("finish_scan", map[string]any{"executive_summary": "All done"}, nil, "completed"),
-			[]string{"Penetration test completed", "All done"},
+			[]string{"渗透测试已完成", "All done"},
 		},
 		{
 			"think",

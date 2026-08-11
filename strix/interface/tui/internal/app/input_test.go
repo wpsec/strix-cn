@@ -166,6 +166,44 @@ func TestCtrlJInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestTypingReclaimsComposerFocusFromChat(t *testing.T) {
+	model := inputModel(t)
+	model.focus = focusChat
+	model.input.Blur()
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("开")})
+	model = updated.(Model)
+
+	if model.focus != focusInput {
+		t.Fatalf("focus after typing from chat = %v, want %v", model.focus, focusInput)
+	}
+	if !model.input.Focused() {
+		t.Fatal("composer was not re-focused after typing from chat")
+	}
+	if got := model.input.Value(); got != "开" {
+		t.Fatalf("value after typing from chat = %q, want %q", got, "开")
+	}
+}
+
+func TestTypingReclaimsComposerFocusFromSidebar(t *testing.T) {
+	model := inputModel(t)
+	model.focus = focusAgents
+	model.input.Blur()
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	model = updated.(Model)
+
+	if model.focus != focusInput {
+		t.Fatalf("focus after typing from sidebar = %v, want %v", model.focus, focusInput)
+	}
+	if !model.input.Focused() {
+		t.Fatal("composer was not re-focused after typing from sidebar")
+	}
+	if got := model.input.Value(); got != "b" {
+		t.Fatalf("value after typing from sidebar = %q, want %q", got, "b")
+	}
+}
+
 func TestEnterSubmitsTrimmedMultilineMessage(t *testing.T) {
 	model := inputModel(t)
 	model.input.SetValue("first\nsecond ")

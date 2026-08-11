@@ -10,6 +10,7 @@ from typing import Any
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import coordinator_from_context
+from strix.runtime.proxy_coverage import unresolved_proxy_endpoints
 
 
 logger = logging.getLogger(__name__)
@@ -279,6 +280,30 @@ async def finish_scan(
             ensure_ascii=False,
             default=str,
         )
+
+    coverage_ref = inner.get("proxy_feature_coverage_ref")
+    if (
+        coordinator is not None
+        and parent_id is None
+        and not coordinator.reserve_stopped
+        and isinstance(coverage_ref, dict)
+    ):
+        _, statuses, _, _ = await coordinator.graph_snapshot()
+        unresolved = unresolved_proxy_endpoints(coverage_ref, agent_statuses=statuses)
+        if unresolved:
+            return json.dumps(
+                {
+                    "success": False,
+                    "scan_completed": False,
+                    "error": (
+                        "Cannot finish scan while passive-proxy endpoints remain uncovered. "
+                        "Spawn specialists or record explicit not-applicable reasons first"
+                    ),
+                    "unresolved_endpoints": unresolved,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
 
     result = await asyncio.to_thread(
         _do_finish,

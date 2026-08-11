@@ -442,6 +442,63 @@ async def test_list_requests_defaults_to_context_scope_id(
     assert captured["scope_id"] == "scope-1"
 
 
+async def test_list_requests_merges_passive_proxy_feature_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+    captured: dict[str, Any] = {}
+
+    class _PageInfo:
+        has_next_page = False
+        has_previous_page = False
+        start_cursor = None
+        end_cursor = None
+
+    class _Connection:
+        edges: list[Any] = []
+        page_info = _PageInfo()
+
+    async def _list_requests_with_client(
+        _client: Any,
+        *,
+        httpql_filter: str | None = None,
+        first: int = 50,
+        after: str | None = None,
+        sort_by: str = "timestamp",
+        sort_order: str = "desc",
+        scope_id: str | None = None,
+    ) -> Any:
+        captured["httpql_filter"] = httpql_filter
+        return _Connection()
+
+    monkeypatch.setattr(caido_api, "list_requests_with_client", _list_requests_with_client)
+
+    payload = await tools.list_requests.on_invoke_tool(
+        cast(
+            "Any",
+            _Ctx(
+                {
+                    "caido_client": client,
+                    "proxy_feature_boundary_ref": {
+                        "active": True,
+                        "captured_after": "2026-08-11T10:35:00+08:00",
+                        "captured_before": "2026-08-11T10:36:42+08:00",
+                    },
+                }
+            ),
+        ),
+        json.dumps({"httpql_filter": 'req.host.eq:"app.example.com"'}),
+    )
+
+    assert json.loads(payload)["success"] is True
+    assert (
+        captured["httpql_filter"]
+        == '(req.host.eq:"app.example.com") '
+        'AND req.created_at.gt:"2026-08-11T10:35:00+08:00" '
+        'AND req.created_at.lte:"2026-08-11T10:36:42+08:00"'
+    )
+
+
 async def test_list_requests_classifies_invalid_httpql(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

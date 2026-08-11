@@ -24,11 +24,13 @@ class ProxyCaptureSnapshot:
     recent_request_count: int
     recent_request_has_more: bool
     latest_request_id: str | None
-    latest_method: str | None
-    latest_host: str | None
-    latest_path: str | None
-    latest_status_code: int | None
+    latest_request_created_at: str | None = None
+    latest_method: str | None = None
+    latest_host: str | None = None
+    latest_path: str | None = None
+    latest_status_code: int | None = None
     total_request_count: int = 0
+    endpoint_request_counts: tuple[tuple[str, int], ...] = ()
 
 
 class ProxyCapturePoller:
@@ -129,7 +131,7 @@ async def _fetch_proxy_capture_snapshot_with_client(
     if scope_id:
         builder = builder.scope(scope_id)
     connection = await builder.execute()
-    total_request_count = await _count_requests(
+    total_request_count, endpoint_request_counts = await _request_inventory(
         client,
         scope_id=scope_id,
         page_size=max(1, total_page_size),
@@ -145,12 +147,44 @@ async def _fetch_proxy_capture_snapshot_with_client(
         recent_request_count=len(edges),
         recent_request_has_more=_has_next_page(connection),
         latest_request_id=_string_or_none(getattr(latest_request, "id", None)),
+        latest_request_created_at=_string_or_none(
+            getattr(getattr(latest_request, "created_at", None), "isoformat", lambda: None)()
+        ),
         latest_method=_string_or_none(getattr(latest_request, "method", None)),
         latest_host=_string_or_none(getattr(latest_request, "host", None)),
         latest_path=_string_or_none(getattr(latest_request, "path", None)),
         latest_status_code=_int_or_none(getattr(latest_response, "status_code", None)),
         total_request_count=total_request_count,
+        endpoint_request_counts=endpoint_request_counts,
     )
+
+
+async def _request_inventory(
+    client: Client,
+    *,
+    scope_id: str | None = None,
+    page_size: int = 200,
+) -> tuple[int, tuple[tuple[str, int], ...]]:
+    builder = client.request.list().first(max(1, page_size)).descending("req", "created_at")
+    if scope_id:
+        builder = builder.scope(scope_id)
+
+    connection = await builder.execute()
+    edges = list(getattr(connection, "edges", []) or [])
+    total = len(edges)
+    endpoint_counts: dict[str, int] = {}
+    _accumulate_endpoint_counts(endpoint_counts, edges)
+
+    while _has_next_page(connection):
+        next_page = await connection.next()
+        if next_page is None:
+            break
+        connection = next_page
+        edges = list(getattr(connection, "edges", []) or [])
+        total += len(edges)
+        _accumulate_endpoint_counts(endpoint_counts, edges)
+
+    return total, tuple(sorted(endpoint_counts.items()))
 
 
 async def _count_requests(
@@ -159,21 +193,56 @@ async def _count_requests(
     scope_id: str | None = None,
     page_size: int = 200,
 ) -> int:
-    builder = client.request.list().first(max(1, page_size)).descending("req", "created_at")
-    if scope_id:
-        builder = builder.scope(scope_id)
-
-    connection = await builder.execute()
-    total = len(getattr(connection, "edges", []) or [])
-
-    while _has_next_page(connection):
-        next_page = await connection.next()
-        if next_page is None:
-            break
-        connection = next_page
-        total += len(getattr(connection, "edges", []) or [])
-
+    total, _ = await _request_inventory(client, scope_id=scope_id, page_size=page_size)
     return total
+
+
+def _accumulate_endpoint_counts(endpoint_counts: dict[str, int], edges: list[Any]) -> None:
+    for edge in edges:
+        node = getattr(edge, "node", None)
+        request = getattr(node, "request", None)
+        method = _clean_endpoint_part(getattr(request, "method", None), max_length=16)
+        host = _clean_endpoint_part(getattr(request, "host", None), max_length=255)
+        path = _clean_endpoint_part(getattr(request, "path", None), max_length=512)
+        if not method or not host or not path or _is_static_asset_request(method, path):
+            continue
+        if not path.startswith("/"):
+            path = f"/{path}"
+        endpoint = f"{method.upper()} {host}{path}"
+        endpoint_counts[endpoint] = endpoint_counts.get(endpoint, 0) + 1
+
+
+def _clean_endpoint_part(value: Any, *, max_length: int) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).split())[:max_length]
+
+
+def _is_static_asset_request(method: str, path: str) -> bool:
+    if method.upper() != "GET":
+        return False
+    clean_path = path.split("?", 1)[0].casefold()
+    return clean_path.endswith(
+        (
+            ".avif",
+            ".bmp",
+            ".css",
+            ".eot",
+            ".gif",
+            ".ico",
+            ".jpeg",
+            ".jpg",
+            ".js",
+            ".map",
+            ".otf",
+            ".png",
+            ".svg",
+            ".ttf",
+            ".webp",
+            ".woff",
+            ".woff2",
+        )
+    )
 
 
 def _has_next_page(connection: Any) -> bool:

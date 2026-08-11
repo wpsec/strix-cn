@@ -20,9 +20,11 @@ from strix.report.usage import LLMUsageLedger
 from strix.report.writer import (
     read_run_record,
     write_executive_report,
+    write_html_report,
     write_run_record,
     write_vulnerabilities,
 )
+from strix.runtime.proxy_coverage import begin_proxy_coverage, clear_proxy_coverage
 from strix.telemetry import posthog, scarf
 
 
@@ -36,11 +38,13 @@ class ProxyCaptureState:
     recent_request_count: int = 0
     recent_request_has_more: bool = False
     latest_request_id: str | None = None
+    latest_request_created_at: str | None = None
     latest_method: str | None = None
     latest_host: str | None = None
     latest_path: str | None = None
     latest_status_code: int | None = None
     total_request_count: int = 0
+    endpoint_request_counts: tuple[tuple[str, int], ...] = ()
 
 
 def _strix_version() -> str | None:
@@ -157,6 +161,16 @@ class ReportState:
         self.proxy_scope_name: str | None = None
         self.proxy_capture_state = ProxyCaptureState()
         self.proxy_capture_error: str | None = None
+        self.proxy_feature_boundary_ref: dict[str, str | bool | None] = {
+            "active": False,
+            "captured_after": None,
+            "captured_before": None,
+        }
+        self.proxy_feature_coverage_ref: dict[str, Any] = {
+            "active": False,
+            "batch_id": None,
+            "endpoints": {},
+        }
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
 
         self._sarif_repo_ctx: dict[str, Any] | None = None
@@ -228,11 +242,17 @@ class ReportState:
                     recent_request_count=int(proxy_capture.get("recent_request_count") or 0),
                     recent_request_has_more=bool(proxy_capture.get("recent_request_has_more")),
                     latest_request_id=_string_or_none(proxy_capture.get("latest_request_id")),
+                    latest_request_created_at=_string_or_none(
+                        proxy_capture.get("latest_request_created_at")
+                    ),
                     latest_method=_string_or_none(proxy_capture.get("latest_method")),
                     latest_host=_string_or_none(proxy_capture.get("latest_host")),
                     latest_path=_string_or_none(proxy_capture.get("latest_path")),
                     latest_status_code=_int_or_none(proxy_capture.get("latest_status_code")),
                     total_request_count=int(proxy_capture.get("total_request_count") or 0),
+                    endpoint_request_counts=_endpoint_request_counts(
+                        proxy_capture.get("endpoint_request_counts")
+                    ),
                 )
             else:
                 self.proxy_capture_state = ProxyCaptureState()
@@ -425,6 +445,8 @@ class ReportState:
         self.proxy_scope_name = None
         self.proxy_capture_state = ProxyCaptureState()
         self.proxy_capture_error = None
+        self.clear_proxy_feature_boundary()
+        self.clear_proxy_feature_coverage()
         self.run_record["status"] = "running"
         self.run_record["end_time"] = None
         self.run_record.pop("scan_results", None)
@@ -447,6 +469,12 @@ class ReportState:
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
                 "burp_port": config.get("burp_port"),
+                "credential_auth_available": bool(
+                    config.get("credential_auth_available", False)
+                ),
+                "allow_credential_attacks": bool(
+                    config.get("allow_credential_attacks", False)
+                ),
             }
         )
 
@@ -495,6 +523,38 @@ class ReportState:
             else None
         )
         self.save_run_data()
+
+    def set_proxy_feature_boundary(
+        self,
+        *,
+        captured_before: str | None,
+        captured_after: str | None = None,
+    ) -> None:
+        lower_boundary = captured_after.strip() if isinstance(captured_after, str) else ""
+        boundary = captured_before.strip() if isinstance(captured_before, str) else ""
+        self.proxy_feature_boundary_ref["captured_after"] = lower_boundary or None
+        self.proxy_feature_boundary_ref["captured_before"] = boundary or None
+        self.proxy_feature_boundary_ref["active"] = bool(boundary)
+
+    def clear_proxy_feature_boundary(self) -> None:
+        self.proxy_feature_boundary_ref["captured_after"] = None
+        self.proxy_feature_boundary_ref["captured_before"] = None
+        self.proxy_feature_boundary_ref["active"] = False
+
+    def begin_proxy_feature_coverage(
+        self,
+        *,
+        batch_id: str,
+        endpoint_request_counts: dict[str, int],
+    ) -> None:
+        begin_proxy_coverage(
+            self.proxy_feature_coverage_ref,
+            batch_id=batch_id,
+            endpoint_request_counts=endpoint_request_counts,
+        )
+
+    def clear_proxy_feature_coverage(self) -> None:
+        clear_proxy_coverage(self.proxy_feature_coverage_ref)
 
     def update_proxy_capture_state(
         self,
@@ -562,6 +622,13 @@ class ReportState:
                     run_record=self.run_record,
                     vulnerability_reports=self.vulnerability_reports,
                 )
+
+            write_html_report(
+                run_dir,
+                final_scan_result=self.final_scan_result,
+                run_record=self.run_record,
+                vulnerability_reports=self.vulnerability_reports,
+            )
 
             if self.vulnerability_reports:
                 write_vulnerabilities(run_dir, self.vulnerability_reports, self._saved_vuln_ids)
@@ -876,3 +943,17 @@ def _int_or_none(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed
+
+
+def _endpoint_request_counts(value: Any) -> tuple[tuple[str, int], ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    counts: list[tuple[str, int]] = []
+    for item in value:
+        if not isinstance(item, list | tuple) or len(item) != 2:
+            continue
+        endpoint = _string_or_none(item[0])
+        count = _int_or_none(item[1])
+        if endpoint is not None and count is not None and count > 0:
+            counts.append((endpoint, count))
+    return tuple(counts)
