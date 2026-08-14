@@ -47,6 +47,9 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平�
 
 - Docker 已启动
 - Python 3.12+
+- Go 1.24+
+  - 仅源码仓库下的交互模式需要，例如 `strix`、`strix --burp-port 8081`
+  - 官方 wheel / 发布包已内置 Go TUI sidecar，不需要额外安装 Go
 - 一个可用的 LLM 接入方式
   - 推荐：OpenAI-compatible 网关、本地模型、LiteLLM 路由
   - 兼容：OpenAI、Anthropic、Vertex AI、Bedrock、Azure、ChatGPT 订阅登录
@@ -64,9 +67,20 @@ source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 
+# 如果要直接在源码仓库里使用交互式 TUI / Burp 被动代理入口
+# macOS 可先安装 Go
+brew install go
+
 # 确认版本
 .venv/bin/strix --version
+go version
 ```
+
+说明：
+
+- 源码仓库下的交互模式会直接运行 Go / Bubble Tea TUI；如果本机没有 `go`，启动 `strix` 或 `strix --burp-port 8081` 时会报 `Bubble Tea TUI binary not found`
+- 只跑无交互模式 `-n/--non-interactive` 时，不依赖本机 Go TUI
+- 使用官方 wheel / 发布包安装时，Go sidecar 已随包提供，不需要额外安装 Go
 
 ### 准备本地沙箱镜像
 
