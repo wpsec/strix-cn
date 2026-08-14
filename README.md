@@ -4,7 +4,7 @@
 
 # Strix CN
 
-Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.5.2`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
+Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.5.3`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
 
 - 上游项目：[https://github.com/usestrix/strix](https://github.com/usestrix/strix)
 - 当前分支：[https://github.com/wpsec/strix-cn](https://github.com/wpsec/strix-cn)
