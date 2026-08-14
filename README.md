@@ -1,8 +1,6 @@
-<p align="center">
-  <a href="https://github.com/wpsec/strix-cn">
-    <img src=".github/logo.png" width="140" alt="Strix CN Logo">
-  </a>
-</p>
+<!-- 这是一张图片，ocr 内容为： -->
+
+![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1771932705094-c88426f2-74cc-4214-8f91-e3a4c8882279.png)
 
 # Strix CN
 
