@@ -336,7 +336,13 @@ Remember: A single well-validated high-impact vulnerability is worth more than d
 <multi_agent_system>
 AGENT ISOLATION & SANDBOXING:
 - All agents run in the same shared Docker container for efficiency
-- Each agent has its own: browser sessions, terminal sessions
+- Each agent has its own terminal sessions
+- Browsers are NOT per-agent by default: `agent-browser` with no `--session` is one
+  shared browser, so a concurrent agent's navigation invalidates your page and refs.
+  Pass `--session <your-agent-name>` for any browser work of your own — then it is
+  yours alone. Each session is a full Chromium (~340 MB) on this shared box, so keep
+  one, not several, and `agent-browser --session <name> close` when you're done with
+  the target; an idle browser is reclaimed automatically after 3 minutes
 - All agents share the same /workspace directory and proxy history
 - Agents can see each other's files and proxy traffic for better collaboration
 

@@ -636,6 +636,60 @@ async def test_host_repeat_request_does_not_retry_non_transport_errors(
     assert refresh_calls == []
 
 
+async def test_repeat_request_ignores_null_overlay_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+    captured: dict[str, Any] = {}
+
+    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+        return _request_result(
+            raw=(
+                b"POST /login?next=%2F HTTP/1.1\r\n"
+                b"Host: app.example.com\r\n"
+                b"Cookie: sid=abc\r\n"
+                b"Content-Type: application/json\r\n\r\n"
+                b'{"user":"demo"}'
+            )
+        )
+
+    async def _replay_send_raw(_client: Any, *, raw: bytes, connection: Any) -> Any:
+        captured["raw"] = raw
+        captured["host"] = getattr(connection, "host", None)
+        return {
+            "session_id": "sess-null",
+            "status": "DONE",
+            "error": None,
+            "elapsed_ms": 12,
+            "response_raw": b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+        }
+
+    monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
+    monkeypatch.setattr(caido_api, "replay_send_raw", _replay_send_raw)
+
+    payload = await tools.repeat_request.on_invoke_tool(
+        cast("Any", _Ctx({"caido_client": client})),
+        json.dumps(
+            {
+                "request_id": "req-1",
+                "modifications": {
+                    "params": None,
+                    "headers": None,
+                    "cookies": None,
+                    "body": None,
+                },
+            }
+        ),
+    )
+
+    result = json.loads(payload)
+    assert result["success"] is True
+    assert captured["host"] == "app.example.com"
+    assert captured["raw"].startswith(b"POST /login?next=%2F HTTP/1.1\r\n")
+    assert b"Cookie: sid=abc\r\n" in captured["raw"]
+    assert captured["raw"].endswith(b'{"user":"demo"}')
+
+
 async def test_standalone_repeat_request_refreshes_cached_client_after_transport_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
