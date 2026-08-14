@@ -390,23 +390,26 @@ def apply_modifications(
     body = components["body"]
     final_url = full_url
 
-    if "params" in modifications:
+    params = modifications.get("params")
+    if params is not None:
         parsed = urlparse(final_url)
         existing = {k: v[0] if v else "" for k, v in parse_qs(parsed.query).items()}
-        existing.update(modifications["params"])
+        existing.update(params)
         final_url = urlunparse(parsed._replace(query=urlencode(existing)))
-    if "headers" in modifications:
-        headers.update(modifications["headers"])
-    if "body" in modifications:
+    header_updates = modifications.get("headers")
+    if header_updates is not None:
+        headers.update(header_updates)
+    if "body" in modifications and modifications["body"] is not None:
         body = modifications["body"]
-    if "cookies" in modifications:
+    cookie_updates = modifications.get("cookies")
+    if cookie_updates is not None:
         cookies: dict[str, str] = {}
         if headers.get("Cookie"):
             for cookie in headers["Cookie"].split(";"):
                 if "=" in cookie:
                     k, v = cookie.split("=", 1)
                     cookies[k.strip()] = v.strip()
-        cookies.update(modifications["cookies"])
+        cookies.update(cookie_updates)
         headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
     return {
