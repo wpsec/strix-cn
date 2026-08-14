@@ -10,11 +10,30 @@ from strix.report.usage import LLMUsageLedger
 
 
 def test_resolves_common_bare_model_names() -> None:
-    resolve_litellm_model.cache_clear()
-    assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-    assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
-    assert resolve_litellm_model("MiniMax-M3") == "minimax/MiniMax-M3"
+    original = litellm.model_cost
+    litellm.model_cost = {
+        "deepseek/deepseek-v4-flash": {
+            "input_cost_per_token": 1.0,
+            "output_cost_per_token": 2.0,
+        },
+        "xai/grok-4.5": {
+            "input_cost_per_token": 3.0,
+            "output_cost_per_token": 4.0,
+        },
+        "minimax/MiniMax-M3": {
+            "input_cost_per_token": 5.0,
+            "output_cost_per_token": 6.0,
+        },
+    }
+    try:
+        resolve_litellm_model.cache_clear()
+        assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+        assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+        assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
+        assert resolve_litellm_model("MiniMax-M3") == "minimax/MiniMax-M3"
+    finally:
+        litellm.model_cost = original
+        resolve_litellm_model.cache_clear()
 
 
 def test_resolver_returns_none_for_unresolvable_model() -> None:
