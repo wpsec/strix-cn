@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import litellm
+
 from strix.config import load_settings
 from strix.llm import context_budget
 
@@ -63,3 +65,92 @@ def test_count_tokens_fallback_on_error(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_count_tokens_empty_is_zero() -> None:
     assert context_budget.count_tokens("gpt-4o", "") == 0
+
+
+def test_suffix_match_recovers_provider_prefixed_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Strix rewrites bare names to anthropic/<slug> on Anthropic-protocol
+    # gateways; the map keys the same model under another provider, so the
+    # lookup must follow the slug instead of losing the real window.
+    context_budget._model_info.cache_clear()
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "dashscope/qwen3.8-max": {
+                "max_input_tokens": 991808,
+                "max_output_tokens": 131072,
+            },
+        },
+    )
+    monkeypatch.setattr(context_budget, "_safe_get_model_info", lambda _m: None)
+    try:
+        info = context_budget._model_info("anthropic/qwen3.8-max")
+        assert info["max_input_tokens"] == 991808
+        assert info["max_output_tokens"] == 131072
+    finally:
+        context_budget._model_info.cache_clear()
+
+
+def test_suffix_match_declines_ambiguous_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_budget._model_info.cache_clear()
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "providerA/same-slug": {"max_input_tokens": 100_000, "max_output_tokens": 8192},
+            "providerB/same-slug": {"max_input_tokens": 32_000, "max_output_tokens": 8192},
+        },
+    )
+    monkeypatch.setattr(context_budget, "_safe_get_model_info", lambda _m: None)
+    try:
+        assert context_budget._model_info("anthropic/same-slug") == {
+            "max_input_tokens": 0,
+            "max_output_tokens": 0,
+        }
+    finally:
+        context_budget._model_info.cache_clear()
+
+
+def test_suffix_match_accepts_majority_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_budget._model_info.cache_clear()
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "dashscope/qwen3.8-max": {"max_input_tokens": 991808, "max_output_tokens": 131072},
+            "qwencloud/qwen3.8-max": {"max_input_tokens": 991808, "max_output_tokens": 131072},
+            "novita/qwen/qwen3.8-max": {"max_input_tokens": 1000000, "max_output_tokens": 8192},
+        },
+    )
+    monkeypatch.setattr(context_budget, "_safe_get_model_info", lambda _m: None)
+    try:
+        info = context_budget._model_info("anthropic/qwen3.8-max")
+        assert info == {"max_input_tokens": 991808, "max_output_tokens": 131072}
+    finally:
+        context_budget._model_info.cache_clear()
+
+
+def test_suffix_match_declines_tie(monkeypatch: pytest.MonkeyPatch) -> None:
+    context_budget._model_info.cache_clear()
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "providerA/tied-slug": {"max_input_tokens": 64_000, "max_output_tokens": 4096},
+            "providerB/tied-slug": {"max_input_tokens": 128_000, "max_output_tokens": 8192},
+        },
+    )
+    monkeypatch.setattr(context_budget, "_safe_get_model_info", lambda _m: None)
+    try:
+        assert context_budget._model_info("anthropic/tied-slug") == {
+            "max_input_tokens": 0,
+            "max_output_tokens": 0,
+        }
+    finally:
+        context_budget._model_info.cache_clear()

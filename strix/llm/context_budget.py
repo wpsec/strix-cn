@@ -5,6 +5,7 @@ large configurable fallback for models LiteLLM doesn't map.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from functools import lru_cache
 from typing import Any
 
@@ -43,6 +44,48 @@ def _safe_get_model_info(model: str) -> dict[str, Any] | None:
         return None
 
 
+def _suffix_match(slug: str) -> dict[str, int] | None:
+    """Resolve a bare model slug through any provider's map entry.
+
+    Strix's Anthropic-protocol routing re-prefixes names the map keys under a
+    different provider (``dashscope/qwen3.8-max`` becomes
+    ``anthropic/qwen3.8-max`` at the wire layer), which would otherwise lose
+    real window metadata to the coarse fallback. One slug is often sold by
+    several providers with near-identical windows and one outlier; accept the
+    majority value, and keep the honest fallback when no value clearly wins.
+    """
+    if not slug:
+        return None
+    try:
+        import litellm
+
+        model_cost = litellm.model_cost
+    except Exception:  # noqa: BLE001 - litellm import may fail; caller falls back.
+        return None
+    counts: Counter[tuple[int, int]] = Counter()
+    for key, entry in model_cost.items():
+        if not key.endswith(f"/{slug}") or not isinstance(entry, dict):
+            continue
+        counts[
+            (
+                int(entry.get("max_input_tokens") or entry.get("max_tokens") or 0),
+                int(entry.get("max_output_tokens") or 0),
+            )
+        ] += 1
+    if not counts:
+        return None
+    ranked = counts.most_common(2)
+    best_count = ranked[0][1]
+    runner_count = ranked[1][1] if len(ranked) > 1 else 0
+    if len(ranked) > 1 and (best_count < 2 or best_count <= runner_count):
+        return None
+    max_input_tokens, max_output_tokens = ranked[0][0]
+    return {
+        "max_input_tokens": max_input_tokens,
+        "max_output_tokens": max_output_tokens,
+    }
+
+
 @lru_cache(maxsize=128)
 def _model_info(model: str) -> dict[str, int]:
     lookup_key = _lookup_key(model)
@@ -58,6 +101,9 @@ def _model_info(model: str) -> dict[str, int]:
                 ),
                 "max_output_tokens": int(info.get("max_output_tokens") or 0),
             }
+    resolved = _suffix_match(lookup_key.rsplit("/", 1)[-1])
+    if resolved is not None:
+        return resolved
     logger.debug("No LiteLLM model info for %r; using configured fallbacks", model)
     return {"max_input_tokens": 0, "max_output_tokens": 0}
 
