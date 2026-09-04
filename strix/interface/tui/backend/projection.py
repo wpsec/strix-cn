@@ -178,15 +178,9 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "passive_proxy_phase": state.get("passive_proxy_phase", ""),
         "proxy_recent_request_count": state.get("proxy_recent_request_count", 0),
         "proxy_recent_request_has_more": state.get("proxy_recent_request_has_more", False),
-        "proxy_latest_method": terminal_projection(
-            state.get("proxy_latest_method"), max_string=32
-        ),
-        "proxy_latest_host": terminal_projection(
-            state.get("proxy_latest_host"), max_string=128
-        ),
-        "proxy_latest_path": terminal_projection(
-            state.get("proxy_latest_path"), max_string=128
-        ),
+        "proxy_latest_method": terminal_projection(state.get("proxy_latest_method"), max_string=32),
+        "proxy_latest_host": terminal_projection(state.get("proxy_latest_host"), max_string=128),
+        "proxy_latest_path": terminal_projection(state.get("proxy_latest_path"), max_string=128),
         "proxy_latest_status_code": state.get("proxy_latest_status_code"),
         "proxy_total_request_count": state.get("proxy_total_request_count", 0),
         "proxy_capture_error": terminal_projection(

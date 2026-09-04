@@ -137,10 +137,7 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
         or "unauthorized" in joined
         or "invalid_grant" in joined
     ):
-        return (
-            "当前 ChatGPT 登录态已过期或被撤销，请重新登录：\n"
-            "  strix auth login chatgpt"
-        )
+        return "当前 ChatGPT 登录态已过期或被撤销，请重新登录：\n  strix auth login chatgpt"
     return None
 
 

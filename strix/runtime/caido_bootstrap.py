@@ -270,9 +270,7 @@ async def _select_existing_project(
     return project
 
 
-def _temporary_cleanup_candidates(
-    projects: list[Project], *, project_name: str
-) -> list[Project]:
+def _temporary_cleanup_candidates(projects: list[Project], *, project_name: str) -> list[Project]:
     candidates = [
         project
         for project in projects

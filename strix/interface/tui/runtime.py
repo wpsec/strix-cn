@@ -106,9 +106,7 @@ class GoTuiRuntime:
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
             "workspace_subdir": getattr(self.args, "workspace_subdir", None) or "",
             "credential_auth_available": bool(self.target_credentials),
-            "allow_credential_attacks": bool(
-                getattr(self.args, "allow_credential_attacks", False)
-            ),
+            "allow_credential_attacks": bool(getattr(self.args, "allow_credential_attacks", False)),
         }
         self.report_state = ReportState(self.scan_config["run_name"])
         self.report_state.hydrate_from_run_dir()
@@ -407,7 +405,9 @@ class GoTuiRuntime:
                     changed = await self._sync_agent_state()
                     now = asyncio.get_running_loop().time()
                     if now >= self._next_proxy_capture_poll_at:
-                        self._next_proxy_capture_poll_at = now + _PROXY_CAPTURE_POLL_INTERVAL_SECONDS
+                        self._next_proxy_capture_poll_at = (
+                            now + _PROXY_CAPTURE_POLL_INTERVAL_SECONDS
+                        )
                         changed = await self._sync_proxy_capture_state() or changed
                 except Exception as exc:
                     logger.exception("Go TUI agent-state sync failed")

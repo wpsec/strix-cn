@@ -896,8 +896,7 @@ def _resolve_base_ref(repo_path: Path, diff_base: str | None, env: dict[str, str
         return "refs/remotes/origin/master"
 
     raise ValueError(
-        "无法为 diff-scope 解析基准引用。请显式传入 --diff-base "
-        "（例如：--diff-base origin/main）。"
+        "无法为 diff-scope 解析基准引用。请显式传入 --diff-base （例如：--diff-base origin/main）。"
     )
 
 
@@ -1048,7 +1047,9 @@ def build_diff_scope_instruction(scopes: list[RepoDiffScope]) -> str:
             lines.append("主要关注（需要分析的变更文件）：")
             lines.extend(f"- {path}" for path in focus_files)
             if focus_truncated:
-                lines.append(f"- ...（还有 {len(scope.analyzable_files) - len(focus_files)} 个文件）")
+                lines.append(
+                    f"- ...（还有 {len(scope.analyzable_files) - len(focus_files)} 个文件）"
+                )
         else:
             lines.append("主要关注：未检测到可分析的变更文件。")
 
@@ -1066,7 +1067,9 @@ def build_diff_scope_instruction(scopes: list[RepoDiffScope]) -> str:
             lines.append("修改文件（请重点关注变更区域）：")
             lines.extend(f"- {path}" for path in modified_files)
             if modified_truncated:
-                lines.append(f"- ...（还有 {len(scope.modified_files) - len(modified_files)} 个文件）")
+                lines.append(
+                    f"- ...（还有 {len(scope.modified_files) - len(modified_files)} 个文件）"
+                )
 
         if scope.renamed_files:
             rename_lines = []
@@ -1087,7 +1090,9 @@ def build_diff_scope_instruction(scopes: list[RepoDiffScope]) -> str:
             lines.append("注意：以下文件已删除（仅供上下文参考，不作为分析对象）：")
             lines.extend(f"- {path}" for path in deleted_files)
             if deleted_truncated:
-                lines.append(f"- ...（还有 {len(scope.deleted_files) - len(deleted_files)} 个文件）")
+                lines.append(
+                    f"- ...（还有 {len(scope.deleted_files) - len(deleted_files)} 个文件）"
+                )
 
     return "\n".join(lines).strip()
 
@@ -1129,9 +1134,7 @@ def _resolve_repo_diff_scope(
         raise ValueError(f"源码路径不是 Git 仓库：{source_path}")
 
     if _is_repo_shallow(repo_path):
-        raise ValueError(
-            "diff-scope 需要完整 Git 历史。请在 CI 配置中设置 `fetch-depth: 0`。"
-        )
+        raise ValueError("diff-scope 需要完整 Git 历史。请在 CI 配置中设置 `fetch-depth: 0`。")
 
     base_ref = _resolve_base_ref(repo_path, diff_base, env)
     merge_base_result = _run_git_command(repo_path, ["merge-base", base_ref, "HEAD"], check=False)
@@ -1828,7 +1831,7 @@ def image_exists(client: Any, image_name: str) -> bool:
     try:
         client.images.get(image_name)
     except ImageNotFound:
-            return False
+        return False
     else:
         return True
 

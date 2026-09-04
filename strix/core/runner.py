@@ -272,9 +272,7 @@ async def run_strix_scan(
     # must see the same protocol prefix StrixProvider applies when it resolves
     # the model, so normalize once here instead of per-decision.
     resolved_model = (
-        normalize_model_for_endpoint(
-            resolved_model, getattr(settings.llm, "api_base", None)
-        )
+        normalize_model_for_endpoint(resolved_model, getattr(settings.llm, "api_base", None))
         or resolved_model
     )
     logger.info("LLM model resolved: %s", resolved_model)

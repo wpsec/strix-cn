@@ -943,7 +943,9 @@ async def test_init_run_state_preserves_burp_port_in_scan_config(
     runtime = GoTuiRuntime(runtime_args)
 
     monkeypatch.setattr(go_tui, "ReportState", _FakeReportState)
-    monkeypatch.setattr(go_tui, "set_global_report_state", lambda state: captured_global.setdefault("state", state))
+    monkeypatch.setattr(
+        go_tui, "set_global_report_state", lambda state: captured_global.setdefault("state", state)
+    )
 
     runtime.init_run_state()
 

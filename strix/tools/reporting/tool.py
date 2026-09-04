@@ -105,7 +105,9 @@ def _validate_code_locations(locations: list[dict[str, Any]]) -> list[str]:
         elif not isinstance(end, int) or end < 1:
             errors.append(f"code_locations[{i}]：end_line 必须是正整数")
         elif isinstance(start, int) and end < start:
-            errors.append(f"code_locations[{i}]：end_line ({end}) 必须大于等于 start_line ({start})")
+            errors.append(
+                f"code_locations[{i}]：end_line ({end}) 必须大于等于 start_line ({start})"
+            )
     return errors
 
 
@@ -610,9 +612,7 @@ def _validate_runtime_evidence(
             return [
                 "XSS 必须提供运行时验证证据：浏览器/DOM/回调确认脚本实际执行；仅响应回显不能提交报告"
             ]
-        return [
-            "SQL 注入必须提供可控 oracle 的运行时验证证据；仅特殊字符导致 4xx/5xx 不能提交报告"
-        ]
+        return ["SQL 注入必须提供可控 oracle 的运行时验证证据；仅特殊字符导致 4xx/5xx 不能提交报告"]
 
     lowered = evidence.lower()
     if kind == "xss":
@@ -1696,15 +1696,12 @@ def _build_dependency_evidence(
     reachability_evidence: str | None = None,
 ) -> str:
     evidence = (
-        f"**公告证据：** `{cve}` 影响当前安装的 `{package_name}` "
-        f"版本 `{installed_version}`。"
+        f"**公告证据：** `{cve}` 影响当前安装的 `{package_name}` 版本 `{installed_version}`。"
     )
     if fixed_version and fixed_version.strip():
         evidence += f" 该公告显示可通过升级到 `{fixed_version.strip()}` 修复。"
     if introduced_by and introduced_by.strip():
-        evidence += (
-            f"\n\n**传递依赖：** 该问题由直接依赖 `{introduced_by.strip()}` 引入。"
-        )
+        evidence += f"\n\n**传递依赖：** 该问题由直接依赖 `{introduced_by.strip()}` 引入。"
     if dependency_path and dependency_path.strip():
         evidence += f"\n\n**依赖链：** `{dependency_path.strip()}`"
     label = _REACHABILITY_EVIDENCE_LABELS.get((reachability or "").strip().lower())
@@ -1712,9 +1709,7 @@ def _build_dependency_evidence(
         evidence += f"\n\n**使用分析：** {label}."
         if reachability_evidence and reachability_evidence.strip():
             evidence += f" {reachability_evidence.strip()}"
-        evidence += (
-            " 这是静态分析给出的优先级信号，不等同于可利用性证明，也不等同于安全证明。"
-        )
+        evidence += " 这是静态分析给出的优先级信号，不等同于可利用性证明，也不等同于安全证明。"
     return evidence
 
 
@@ -1865,10 +1860,7 @@ async def _do_create_dependency(  # noqa: PLR0912
             duplicate_id = dedupe.get("duplicate_id", "")
             return {
                 "success": False,
-                "error": (
-                    f"疑似重复项 (id={duplicate_id[:8]}...)，"
-                    "请勿重复报告相同的依赖漏洞"
-                ),
+                "error": (f"疑似重复项 (id={duplicate_id[:8]}...)，请勿重复报告相同的依赖漏洞"),
                 "duplicate_of": duplicate_id,
                 "confidence": dedupe.get("confidence", 0.0),
                 "reason": dedupe.get("reason", ""),

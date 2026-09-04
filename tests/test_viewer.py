@@ -314,6 +314,7 @@ def test_server_serves_preloaded_static_assets_when_disk_reads_fail(
 
     httpd, url, _ = serve(run_dir, open_browser=False)
     try:
+
         def _boom(_self: Path) -> bytes:
             raise OSError(errno.EMFILE, "Too many open files")
 

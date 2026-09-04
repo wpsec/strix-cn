@@ -167,8 +167,7 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         action="append",
         metavar="PATH",
-        help="目标列表文件路径。每个非空、非注释行视为一个目标。"
-        "可重复指定，也可与 --target 混用。",
+        help="目标列表文件路径。每个非空、非注释行视为一个目标。可重复指定，也可与 --target 混用。",
     )
     parser.add_argument(
         "--mount",
@@ -182,8 +181,7 @@ def parse_arguments() -> argparse.Namespace:
         "--burp-port",
         type=_tcp_port,
         metavar="PORT",
-        help="将 Burp 上游代理入口固定绑定到本机端口。"
-        "可单独使用，进入 Burp 被动代理模式。",
+        help="将 Burp 上游代理入口固定绑定到本机端口。可单独使用，进入 Burp 被动代理模式。",
     )
     parser.add_argument(
         "--instruction",

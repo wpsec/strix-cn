@@ -300,9 +300,7 @@ class ReportState:
             self.caido_url = caido_url.strip() if isinstance(caido_url, str) and caido_url else None
             caido_ui_url = data.get("caido_ui_url")
             self.caido_ui_url = (
-                caido_ui_url.strip()
-                if isinstance(caido_ui_url, str) and caido_ui_url
-                else None
+                caido_ui_url.strip() if isinstance(caido_ui_url, str) and caido_ui_url else None
             )
             self.burp_upstream_unavailable_reason = None
             proxy_scope_id = data.get("proxy_scope_id")
@@ -720,12 +718,8 @@ class ReportState:
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
                 "burp_port": config.get("burp_port"),
-                "credential_auth_available": bool(
-                    config.get("credential_auth_available", False)
-                ),
-                "allow_credential_attacks": bool(
-                    config.get("allow_credential_attacks", False)
-                ),
+                "credential_auth_available": bool(config.get("credential_auth_available", False)),
+                "allow_credential_attacks": bool(config.get("allow_credential_attacks", False)),
             }
         )
 

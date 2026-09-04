@@ -165,10 +165,7 @@ def is_replay_transport_error(exc: BaseException) -> bool:
 
 def is_invalid_httpql_error(exc: BaseException) -> bool:
     """Return whether Caido rejected the request filter before execution."""
-    return any(
-        "invalid httpql" in str(current).lower()
-        for current in _iter_exception_chain(exc)
-    )
+    return any("invalid httpql" in str(current).lower() for current in _iter_exception_chain(exc))
 
 
 def classify_proxy_error(exc: BaseException) -> dict[str, Any]:

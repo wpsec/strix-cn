@@ -264,7 +264,12 @@ def test_ctx_scope_patterns_returns_allow_and_deny_lists() -> None:
     allow, deny = tools._ctx_scope_patterns(
         cast(
             "Any",
-            _Ctx({"caido_scope_allowlist": ["app.example.com"], "caido_scope_denylist": ["*.google.com"]}),
+            _Ctx(
+                {
+                    "caido_scope_allowlist": ["app.example.com"],
+                    "caido_scope_denylist": ["*.google.com"],
+                }
+            ),
         )
     )
     assert allow == ["app.example.com"]
@@ -488,8 +493,7 @@ async def test_list_requests_merges_passive_proxy_feature_cutoff(
 
     assert json.loads(payload)["success"] is True
     assert (
-        captured["httpql_filter"]
-        == '(req.host.eq:"app.example.com") '
+        captured["httpql_filter"] == '(req.host.eq:"app.example.com") '
         'AND req.created_at.gt:"2026-08-11T10:35:00+08:00" '
         'AND req.created_at.lte:"2026-08-11T10:36:42+08:00"'
     )
@@ -507,7 +511,7 @@ async def test_list_requests_classifies_invalid_httpql(
 
     payload = await tools.list_requests.on_invoke_tool(
         cast("Any", _Ctx({"caido_client": client})),
-        json.dumps({"httpql_filter": "req.path.cont:\"/api\""}),
+        json.dumps({"httpql_filter": 'req.path.cont:"/api"'}),
     )
 
     result = json.loads(payload)
@@ -522,7 +526,9 @@ async def test_repeat_request_blocks_out_of_scope_host(
 ) -> None:
     client = _FakeClient("host")
 
-    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+    async def _get_request_with_client(
+        _client: Any, _request_id: str, *, part: str = "request"
+    ) -> Any:
         return _request_result(host="api.google.com")
 
     monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
@@ -555,7 +561,9 @@ async def test_host_repeat_request_retries_after_transport_error(
     refresh_calls: list[Any] = []
     client_ref: dict[str, Any] = {}
 
-    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+    async def _get_request_with_client(
+        _client: Any, _request_id: str, *, part: str = "request"
+    ) -> Any:
         return _request_result()
 
     async def _replay_send_raw(client: Any, *, raw: bytes, connection: Any) -> Any:
@@ -605,7 +613,9 @@ async def test_host_repeat_request_does_not_retry_non_transport_errors(
     client = _FakeClient("host")
     refresh_calls: list[Any] = []
 
-    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+    async def _get_request_with_client(
+        _client: Any, _request_id: str, *, part: str = "request"
+    ) -> Any:
         return _request_result()
 
     async def _replay_send_raw(_client: Any, *, raw: bytes, connection: Any) -> Any:
@@ -621,7 +631,12 @@ async def test_host_repeat_request_does_not_retry_non_transport_errors(
     payload = await tools.repeat_request.on_invoke_tool(
         cast(
             "Any",
-            _Ctx({"caido_client": client, "caido_client_ref": {"client": client, "refresh": _refresh_client}}),
+            _Ctx(
+                {
+                    "caido_client": client,
+                    "caido_client_ref": {"client": client, "refresh": _refresh_client},
+                }
+            ),
         ),
         json.dumps({"request_id": "req-1"}),
     )
@@ -638,7 +653,9 @@ async def test_repeat_request_ignores_null_overlay_fields(
     client = _FakeClient("host")
     captured: dict[str, Any] = {}
 
-    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+    async def _get_request_with_client(
+        _client: Any, _request_id: str, *, part: str = "request"
+    ) -> Any:
         return _request_result(
             raw=(
                 b"POST /login?next=%2F HTTP/1.1\r\n"
@@ -697,7 +714,9 @@ async def test_standalone_repeat_request_refreshes_cached_client_after_transport
     async def _new_client() -> Any:
         return fresh
 
-    async def _get_request_with_client(_client: Any, _request_id: str, *, part: str = "request") -> Any:
+    async def _get_request_with_client(
+        _client: Any, _request_id: str, *, part: str = "request"
+    ) -> Any:
         return _request_result()
 
     async def _replay_send_raw(client: Any, *, raw: bytes, connection: Any) -> Any:
@@ -725,6 +744,8 @@ async def test_standalone_repeat_request_refreshes_cached_client_after_transport
     assert replay_calls == ["stale", "fresh"]
     assert caido_api._CLIENT_CACHE["default"] is fresh
     assert stale.closed is True
+
+
 async def test_ctx_client_returns_none_without_client() -> None:
     assert await tools._ctx_client(cast("Any", _Ctx({}))) is None
     assert await tools._ctx_client(cast("Any", _Ctx(None))) is None

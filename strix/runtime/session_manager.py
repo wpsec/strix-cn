@@ -355,6 +355,7 @@ async def _cleanup_partial_session(
             with contextlib.suppress(Exception):
                 docker_client.close()
 
+
 _PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
 
 
@@ -832,7 +833,11 @@ async def refresh_bundle_caido_client(
 ) -> Any:
     """Re-bootstrap a session bundle's Caido client after a transport failure."""
     current_client = bundle.get("caido_client")
-    if expected_client is not None and current_client is not None and current_client is not expected_client:
+    if (
+        expected_client is not None
+        and current_client is not None
+        and current_client is not expected_client
+    ):
         client_ref = bundle.get("caido_client_ref")
         if isinstance(client_ref, dict):
             client_ref["client"] = current_client

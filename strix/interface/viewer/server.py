@@ -389,12 +389,8 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     from strix.report.writer import write_html_report
 
                     summary = self._with_fd_reserve(lambda: read_run_summary(run_dir))
-                    vulnerabilities = self._with_fd_reserve(
-                        lambda: read_vulnerabilities(run_dir)
-                    )
-                    final_markdown = self._with_fd_reserve(
-                        lambda: read_report_markdown(run_dir)
-                    )
+                    vulnerabilities = self._with_fd_reserve(lambda: read_vulnerabilities(run_dir))
+                    final_markdown = self._with_fd_reserve(lambda: read_report_markdown(run_dir))
                     self._with_fd_reserve(
                         lambda: write_html_report(
                             run_dir,

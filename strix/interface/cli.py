@@ -113,9 +113,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "burp_port": getattr(args, "burp_port", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
         "credential_auth_available": bool(target_credentials),
-        "allow_credential_attacks": bool(
-            getattr(args, "allow_credential_attacks", False)
-        ),
+        "allow_credential_attacks": bool(getattr(args, "allow_credential_attacks", False)),
     }
 
     report_state = ReportState(args.run_name)

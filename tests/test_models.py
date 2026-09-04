@@ -214,6 +214,8 @@ def test_explicit_prefix_wins_over_endpoint_protocol(model_name: str) -> None:
 @pytest.mark.parametrize("model_name", [None, ""])
 def test_empty_model_name_passes_through(model_name: str | None) -> None:
     assert normalize_model_for_endpoint(model_name, ALIYUN_ANTHROPIC_BASE) == model_name
+
+
 @pytest.mark.parametrize(
     "model_name",
     [

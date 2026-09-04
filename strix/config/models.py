@@ -61,7 +61,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_ALIYUN_TOKEN_PLAN_OPENAI_BASE = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+_ALIYUN_TOKEN_PLAN_OPENAI_BASE = (
+    "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+)
 _ALIYUN_CODING_PLAN_OPENAI_BASE = "https://coding-intl.dashscope.aliyuncs.com/v1"
 
 
@@ -688,10 +690,10 @@ def _aliyun_endpoint_kind(api_base: str) -> str | None:
         and path.startswith("/compatible-mode/v1")
     ):
         return "token_plan"
-    if (
-        host in {"coding-intl.dashscope.aliyuncs.com", "coding.dashscope.aliyuncs.com"}
-        and path.startswith("/v1")
-    ):
+    if host in {
+        "coding-intl.dashscope.aliyuncs.com",
+        "coding.dashscope.aliyuncs.com",
+    } and path.startswith("/v1"):
         return "coding_plan"
     if host.endswith(".maas.aliyuncs.com") and path.startswith("/compatible-mode/v1"):
         if host.startswith("trial."):

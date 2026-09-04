@@ -189,7 +189,9 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         parts.append(
             "- Treat each observed hostname as individually scoped; do not widen one host into sibling hosts or a whole parent domain unless the operator explicitly listed that broader scope."
         )
-        parts.append("- Prioritize authenticated traffic and operator-driven workflows captured from Burp.")
+        parts.append(
+            "- Prioritize authenticated traffic and operator-driven workflows captured from Burp."
+        )
         if proxy_scope["proxy_scope_denylist"]:
             parts.append(
                 f"- Ignore known proxy/browser noise domains: {', '.join(proxy_scope['proxy_scope_denylist'])}."
@@ -276,9 +278,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
             "target_credentials_available": bool(
                 scan_config.get("credential_auth_available", False)
             ),
-            "allow_credential_attacks": bool(
-                scan_config.get("allow_credential_attacks", False)
-            ),
+            "allow_credential_attacks": bool(scan_config.get("allow_credential_attacks", False)),
             **proxy_scope,
             "user_instructions_do_not_expand_scope": True,
         }
@@ -325,12 +325,8 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": authorized,
         "container_image_targets": container_images,
-        "target_credentials_available": bool(
-            scan_config.get("credential_auth_available", False)
-        ),
-        "allow_credential_attacks": bool(
-            scan_config.get("allow_credential_attacks", False)
-        ),
+        "target_credentials_available": bool(scan_config.get("credential_auth_available", False)),
+        "allow_credential_attacks": bool(scan_config.get("allow_credential_attacks", False)),
         **proxy_scope,
         "user_instructions_do_not_expand_scope": True,
     }

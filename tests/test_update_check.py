@@ -159,7 +159,9 @@ def test_prompt_update_source_checkout_shows_notice_without_prompt(
     monkeypatch.setattr(update_check, "get_version", lambda: "1.3.1")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(update_check.Prompt, "ask", lambda *_args, **_kwargs: pytest.fail("prompt called"))
+    monkeypatch.setattr(
+        update_check.Prompt, "ask", lambda *_args, **_kwargs: pytest.fail("prompt called")
+    )
     buffer = io.StringIO()
 
     assert update_check.prompt_update_if_available(Console(file=buffer)) is False

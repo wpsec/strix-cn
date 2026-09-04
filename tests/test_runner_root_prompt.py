@@ -349,8 +349,6 @@ async def test_resume_recoverable_waiting_root_does_not_restart_parked(
     assert captured["root_session"].items == []
 
 
-
-
 async def test_mcp_available_flag_set_when_a_connection_attaches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,

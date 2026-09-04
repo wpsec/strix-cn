@@ -29,8 +29,7 @@ def _do_finish(
         return {
             "success": False,
             "error": (
-                "该工具只能由 root / 根代理 / 主代理调用。"
-                "如果你是子代理，请改用 agent_finish"
+                "该工具只能由 root / 根代理 / 主代理调用。如果你是子代理，请改用 agent_finish"
             ),
         }
 

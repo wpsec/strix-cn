@@ -425,14 +425,8 @@ async def test_dependency_report_records_transitive_chain(report_state: ReportSt
         report["dependency_metadata"]["dependency_path"]
         == "express@4.18.1 > body-parser@1.20.0 > qs@6.10.2"
     )
-    assert (
-        "**传递依赖：** 该问题由直接依赖 `express@4.18.1` 引入。"
-        in report["evidence"]
-    )
-    assert (
-        "**依赖链：** `express@4.18.1 > body-parser@1.20.0 > qs@6.10.2`"
-        in report["evidence"]
-    )
+    assert "**传递依赖：** 该问题由直接依赖 `express@4.18.1` 引入。" in report["evidence"]
+    assert "**依赖链：** `express@4.18.1 > body-parser@1.20.0 > qs@6.10.2`" in report["evidence"]
 
 
 async def test_dependency_report_omits_blank_chain_fields(report_state: ReportState) -> None:
