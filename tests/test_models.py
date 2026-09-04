@@ -7,7 +7,9 @@ from agents.model_settings import ModelSettings
 
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
+    is_anthropic_protocol_base,
     is_recommended_or_frontier_model,
+    normalize_model_for_endpoint,
     request_timeout_extra_args,
     validate_provider_route_config,
 )
@@ -140,3 +142,59 @@ def test_aliyun_workspace_key_accepts_workspace_endpoint() -> None:
     )
 
     validate_provider_route_config(settings)
+
+
+ALIYUN_ANTHROPIC_BASE = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+ALIYUN_COMPAT_BASE = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+
+
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        ALIYUN_ANTHROPIC_BASE,
+        ALIYUN_ANTHROPIC_BASE + "/",
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages",
+        "https://gateway.example.com/api/Anthropic",
+    ],
+)
+def test_anthropic_protocol_base_is_detected(api_base: str) -> None:
+    assert is_anthropic_protocol_base(api_base)
+
+
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        None,
+        "",
+        ALIYUN_COMPAT_BASE,
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "https://api.v1.example.com",
+    ],
+)
+def test_openai_compatible_base_is_not_flagged_as_anthropic(api_base: str | None) -> None:
+    assert not is_anthropic_protocol_base(api_base)
+
+
+def test_bare_model_follows_anthropic_endpoint_protocol() -> None:
+    assert (
+        normalize_model_for_endpoint("qwen3.8-flash", ALIYUN_ANTHROPIC_BASE)
+        == "anthropic/qwen3.8-flash"
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ["qwen3.8-flash", "openai/qwen3.8-flash", "litellm/anthropic/qwen3.8-flash", "  "],
+)
+def test_bare_model_on_openai_base_keeps_route(model_name: str) -> None:
+    assert normalize_model_for_endpoint(model_name, ALIYUN_COMPAT_BASE) == model_name
+
+
+@pytest.mark.parametrize("model_name", ["openai/qwen3.8-flash", "anthropic/qwen3.8-flash"])
+def test_explicit_prefix_wins_over_endpoint_protocol(model_name: str) -> None:
+    assert normalize_model_for_endpoint(model_name, ALIYUN_ANTHROPIC_BASE) == model_name
+
+
+@pytest.mark.parametrize("model_name", [None, ""])
+def test_empty_model_name_passes_through(model_name: str | None) -> None:
+    assert normalize_model_for_endpoint(model_name, ALIYUN_ANTHROPIC_BASE) == model_name

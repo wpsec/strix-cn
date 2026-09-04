@@ -474,6 +474,10 @@ class StrixProvider(MultiProvider):
 
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
+        routed_model = normalize_model_for_endpoint(model_name, llm.api_base)
+        if routed_model != model_name:
+            logger.debug("Routing bare model %r via %r", model_name, routed_model)
+        model_name = routed_model
         slug = codex.subscription_model(model_name)
         idle_timeout = float(llm.stream_idle_timeout)
         if slug:
@@ -568,7 +572,12 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)
-        _mirror_api_key_to_provider_env(llm.model, llm.api_key)
+        # Mirror against the routed name so dual-protocol gateways get the key
+        # env var their protocol expects (ANTHROPIC_API_KEY vs OPENAI_API_KEY).
+        _mirror_api_key_to_provider_env(
+            normalize_model_for_endpoint(llm.model, llm.api_base),
+            llm.api_key,
+        )
     if llm.api_base:
         os.environ["OPENAI_BASE_URL"] = llm.api_base
         _configure_litellm_default("api_base", llm.api_base)
@@ -662,6 +671,32 @@ def _aliyun_workspace_key_mismatch_message(api_base: str) -> str:
         "- Workspace 专属域名: `https://<workspace-id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`\n\n"
         "如果你就是要使用当前计划专用地址，请把 `LLM_API_KEY` 换成对应计划生成的 `sk-sp-...`。"
     )
+
+
+def is_anthropic_protocol_base(api_base: str | None) -> bool:
+    """Return whether an ``LLM_API_BASE`` serves the Anthropic Messages protocol.
+
+    Gateways like Aliyun token-plan publish the same bare model names under two
+    bases: an OpenAI-compatible one (``/compatible-mode/v1``) and an Anthropic
+    one (``/apps/anthropic``). Claude-Code-style clients only swap the base, so
+    detect the protocol from the URL path and follow it.
+    """
+    path = urlparse((api_base or "").strip()).path.rstrip("/").lower()
+    return path.endswith(("/anthropic", "/v1/messages"))
+
+
+def normalize_model_for_endpoint(model_name: str | None, api_base: str | None) -> str | None:
+    """Prefix a bare model name with the protocol the endpoint actually speaks.
+
+    Only un-prefixed names are rewritten: an explicit prefix (``openai/``,
+    ``litellm/``, …) is the user's routing choice and stays untouched.
+    """
+    if not model_name or not is_anthropic_protocol_base(api_base):
+        return model_name
+    name = model_name.strip()
+    if not name or "/" in name:
+        return model_name
+    return f"anthropic/{name}"
 
 
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:

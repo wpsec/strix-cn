@@ -22,3 +22,21 @@ export LLM_API_KEY="sk-ant-..."
 1. 访问 [console.anthropic.com](https://console.anthropic.com)
 2. 进入 `API Keys`
 3. 创建新的 key
+
+## Anthropic 协议兼容网关
+
+部分国内网关会用同一模型名同时暴露 OpenAI 兼容与 Anthropic 兼容两类端点。以阿里云百炼 token-plan 为例：
+
+```bash
+# 方式一：OpenAI 兼容协议
+export LLM_API_BASE="https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+
+# 方式二：Anthropic 兼容协议
+export LLM_API_BASE="https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+
+# 两种方式模型名写法相同（以你套餐实际开通的模型为准）
+export STRIX_LLM="qwen3.8-flash"
+export LLM_API_KEY="<从安全存储获取，勿写入仓库>"
+```
+
+`LLM_API_BASE` 指向 Anthropic 协议端点（路径以 `/anthropic` 或 `/v1/messages` 结尾）时，裸模型名自动按 `/v1/messages` 路由，无需手写 `anthropic/` 前缀；显式前缀（如 `openai/<model>`）仍以你写的为准。

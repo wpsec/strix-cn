@@ -89,3 +89,7 @@ ollama/qwen3-vl
 <Tip>
   如果你更关心国内可达性与稳定性，优先从 OpenAI-compatible 网关、本地模型和兼容提供商开始接入，通常比直接依赖单一海外上游更容易落地。
 </Tip>
+
+<Tip>
+  裸模型名（不带前缀）会跟随端点协议：`LLM_API_BASE` 路径以 `/anthropic` 或 `/v1/messages` 结尾时，自动按 Anthropic Messages 协议路由（对齐 Claude Code 类工具"只换 Base URL"的习惯）；显式写了任何前缀（`openai/`、`anthropic/` 等）时，以前缀声明的路由为准。
+</Tip>
