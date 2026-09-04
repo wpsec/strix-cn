@@ -10,8 +10,8 @@ from agents.model_settings import ModelSettings
 
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
-    _configure_anthropic_max_tokens_default,
     StrixProvider,
+    _configure_anthropic_max_tokens_default,
     _NonStreamingModel,
     _TurnGuardModel,
     is_anthropic_protocol_base,
@@ -285,3 +285,21 @@ def test_anthropic_max_tokens_default_respects_operator_env(
     monkeypatch.setenv("DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS", "32000")
     _configure_anthropic_max_tokens_default()
     assert os.environ["DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS"] == "32000"
+
+
+def test_turn_guard_scrubs_unparseable_tool_arguments() -> None:
+    broken = {
+        "type": "function_call",
+        "name": "create_note",
+        "arguments": '{"title": "t", "content": "# 截断',
+    }
+    valid = {"type": "function_call", "name": "think", "arguments": '{"thought": "ok"}'}
+    other = {"type": "message", "role": "user", "content": "hi"}
+
+    repaired = _TurnGuardModel._scrub_unparseable_arguments([broken, valid, other])
+
+    assert repaired[0]["arguments"] == "{}"
+    assert broken["arguments"] == '{"title": "t", "content": "# 截断'  # input not mutated
+    assert repaired[1] is valid
+    assert repaired[2] is other
+    assert _TurnGuardModel._scrub_unparseable_arguments("passthrough") == "passthrough"

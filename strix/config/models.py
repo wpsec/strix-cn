@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import os
 import time
@@ -281,6 +282,39 @@ class _TurnGuardModel(Model):
     def _limiter(self) -> TurnToolCallLimiter:
         return TurnToolCallLimiter(self._max_tool_calls_per_turn)
 
+    @staticmethod
+    def _scrub_unparseable_arguments(items: Any) -> Any:
+        """Neutralize tool-call arguments that no longer parse as JSON.
+
+        A gateway that truncates a response mid-stream (Anthropic protocols
+        cap output at ``max_tokens``; reasoning eats into it) can persist an
+        unterminated ``arguments`` string into the session history. Strict
+        providers then reject EVERY later request at conversion time, which
+        wedges the agent past recovery -- a resume replays the same broken
+        turn. Replacing the payload with ``{}`` keeps the call structurally
+        valid: the tool answers with its normal missing-field error and the
+        model can retry (e.g. in smaller pieces) instead of dying to a 400.
+        """
+        if not isinstance(items, list):
+            return items
+        repaired: list[Any] = []
+        for original in items:
+            item = original
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                arguments = item.get("arguments")
+                if isinstance(arguments, str) and arguments.strip():
+                    try:
+                        json.loads(arguments)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "repairing unparseable tool arguments for %r (%d chars)",
+                            item.get("name"),
+                            len(arguments),
+                        )
+                        item = {**item, "arguments": "{}"}
+            repaired.append(item)
+        return repaired
+
     def _log_dropped(self, limiter: TurnToolCallLimiter) -> None:
         if limiter.dropped:
             logger.warning(
@@ -309,7 +343,7 @@ class _TurnGuardModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> ModelResponse:
-        sanitized = dedupe_input(input)
+        sanitized = self._scrub_unparseable_arguments(dedupe_input(input))
         rewriter = TurnCallIdRewriter(sanitized)
         response = await self._inner.get_response(
             system_instructions,
@@ -342,7 +376,7 @@ class _TurnGuardModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> AsyncIterator[TResponseStreamEvent]:
-        sanitized = dedupe_input(input)
+        sanitized = self._scrub_unparseable_arguments(dedupe_input(input))
         rewriter = TurnCallIdRewriter(sanitized)
         limiter = self._limiter()
         stream = self._inner.stream_response(
