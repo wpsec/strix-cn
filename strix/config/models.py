@@ -775,8 +775,23 @@ def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> Non
             os.environ.setdefault(env_key, api_key)
 
 
+def _configure_anthropic_max_tokens_default() -> None:
+    """Raise the Anthropic fallback output cap before LiteLLM freezes it.
+
+    The Messages protocol requires ``max_tokens``; for models missing from
+    LiteLLM's map (domestic gateways' ``qwen3.8-*`` etc.) it falls back to
+    4096, which silently truncates long tool-call payloads into invalid JSON
+    and fails the whole agent turn. The env var is read at ``litellm.constants``
+    import time, so it must be set before the first LiteLLM import. Mapped
+    Claude models keep their real per-model cap: this default is only consulted
+    on map misses. Override by exporting the same variable.
+    """
+    os.environ.setdefault("DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS", "8192")
+
+
 def _configure_litellm_compatibility() -> None:
     """Apply LiteLLM compatibility, privacy, and callback settings."""
+    _configure_anthropic_max_tokens_default()
     import litellm
 
     litellm.drop_params = True

@@ -40,3 +40,7 @@ export LLM_API_KEY="<从安全存储获取，勿写入仓库>"
 ```
 
 `LLM_API_BASE` 指向 Anthropic 协议端点（路径以 `/anthropic` 或 `/v1/messages` 结尾）时，裸模型名自动按 `/v1/messages` 路由，无需手写 `anthropic/` 前缀；显式前缀（如 `openai/<model>`）仍以你写的为准。
+
+<Tip>
+Anthropic Messages 协议强制要求 `max_tokens`。模型名不在 LiteLLM 能力表中时（国内网关模型普遍如此），Strix 会把输出上限回退为 8192，避免长工具调用被截断成非法 JSON。若你的网关模型输出上限更低导致请求报错，可显式设小：`export DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS=4096`；上限更高则设大。
+</Tip>

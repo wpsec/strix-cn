@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
 
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
+    _configure_anthropic_max_tokens_default,
     StrixProvider,
     _NonStreamingModel,
     _TurnGuardModel,
@@ -270,3 +273,15 @@ def test_routes_through_litellm_matches_the_provider(
     while isinstance(model, _NonStreamingModel | _TurnGuardModel):
         model = model._inner
     assert isinstance(model, LitellmModel) is litellm
+
+
+def test_anthropic_max_tokens_default_respects_operator_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS", raising=False)
+    _configure_anthropic_max_tokens_default()
+    assert os.environ["DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS"] == "8192"
+
+    monkeypatch.setenv("DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS", "32000")
+    _configure_anthropic_max_tokens_default()
+    assert os.environ["DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS"] == "32000"
