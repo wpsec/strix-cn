@@ -88,6 +88,19 @@ def _suffix_match(slug: str) -> dict[str, int] | None:
 
 @lru_cache(maxsize=128)
 def _model_info(model: str) -> dict[str, int]:
+    from strix.config import model_profiles
+
+    profile = model_profiles.get_profile(model)
+    resolved = _litellm_model_info(model)
+    if profile is not None:
+        if profile.max_input_tokens:
+            resolved["max_input_tokens"] = profile.max_input_tokens
+        if profile.max_output_tokens:
+            resolved["max_output_tokens"] = profile.max_output_tokens
+    return resolved
+
+
+def _litellm_model_info(model: str) -> dict[str, int]:
     lookup_key = _lookup_key(model)
     # Provider-qualified ChatGPT lookups may start a synchronous device-login
     # poll. LiteLLM keys the metadata by the underlying model slug.

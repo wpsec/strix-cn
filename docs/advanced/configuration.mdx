@@ -43,6 +43,36 @@ description: "Strix 的环境变量与配置文件说明"
   上下文压缩操作的超时时间，单位为秒。
 </ParamField>
 
+## 模型画像（可选）
+
+LiteLLM 的能力表不一定收录国内网关的新模型（如 token-plan 的 `qwen3.8-flash`），此时上下文窗口、
+输出上限与成本只能走兜底值。Strix 支持用本地画像文件声明"你这个网关"的真实参数——数据归用户，
+程序不内置任何供应商数值。
+
+创建 `~/.strix/model-profiles.json`（或用 `STRIX_MODEL_PROFILES` 指定路径），键为模型名（忽略
+provider 前缀，大小写不敏感）：
+
+```json
+{
+  "qwen3.8-flash": {
+    "max_input_tokens": 32768,
+    "max_tokens": 8192,
+    "input_cost_per_mtok": 0.8,
+    "output_cost_per_mtok": 4.8
+  }
+}
+```
+
+| 字段 | 含义 | 来源 |
+|------|------|------|
+| `max_input_tokens`（或 `context_window`） | 上下文窗口 | 供应商模型列表 / 计费页 |
+| `max_tokens`（或 `max_output_tokens`） | 单次响应输出上限；Anthropic 协议必填 `max_tokens` 时用它 | 同上 |
+| `input_cost_per_mtok` / `output_cost_per_mtok` | 每百万 token 单价（美元），用于报告费用统计 | 计费页 |
+
+行为规则：画像字段覆盖对应兜底，但**不改变**请求构造行为（tokenizer 选择、reasoning 支持等仍由
+路由决定）；未识别的字段会被忽略并告警；文件不存在或损坏时一切维持默认。生效点：上下文压缩时机、
+Anthropic 协议输出额度、报告成本估算。
+
 ## 独立去重模型
 
 漏洞去重是一个成本较低、结构化很强的分类任务。默认复用主模型；如需把真正的渗透测试能力和去重判断拆开，可单独指定一个更便宜或更快的模型。

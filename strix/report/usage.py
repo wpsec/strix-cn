@@ -218,6 +218,11 @@ def _estimate_litellm_entry_cost(entry: Any, model: str) -> float | None:
             continue
         if cost > 0:
             return float(cost)
+    from strix.config import model_profiles
+
+    profile_cost = model_profiles.estimate_cost(model, usage_payload)
+    if profile_cost is not None:
+        return profile_cost
     logger.debug("LiteLLM cost estimate unavailable for model %s", model)
     return None
 

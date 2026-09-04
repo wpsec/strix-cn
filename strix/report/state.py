@@ -1198,7 +1198,9 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
             continue
         if isinstance(value, int | float) and value > 0:
             return float(value)
-    return None
+    from strix.config import model_profiles
+
+    return model_profiles.estimate_cost(model, usage_payload)
 
 
 def _usage_payload(completion_response: Any) -> dict[str, Any] | None:

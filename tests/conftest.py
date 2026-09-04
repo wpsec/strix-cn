@@ -59,6 +59,18 @@ def _isolate_cli_config(tmp_path_factory: pytest.TempPathFactory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_model_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a developer's real ``~/.strix/model-profiles.json`` out of the suite.
+
+    Profiles override window and cost lookups, so tests that assert fallback
+    behavior would drift on a machine that has configured them. Point the
+    loader at a nonexistent path; profile tests set their own env afterwards
+    and win.
+    """
+    monkeypatch.setenv("STRIX_MODEL_PROFILES", "/nonexistent/strix-model-profiles.json")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_wallet_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep a developer's real mppx wallet out of the top-up tests.
 

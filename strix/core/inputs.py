@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
+from strix.config import model_profiles
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     OPENROUTER_ATTRIBUTION_HEADERS,
@@ -385,6 +386,10 @@ def make_model_settings(
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
+
+    profile = model_profiles.get_profile(model_name)
+    if profile and profile.max_output_tokens:
+        model_settings = model_settings.resolve(ModelSettings(max_tokens=profile.max_output_tokens))
 
     cache_extra_args = _prompt_cache_extra_args(model_name) if prompt_cache else None
     if cache_extra_args:
