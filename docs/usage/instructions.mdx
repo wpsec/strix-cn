@@ -82,3 +82,37 @@ strix --target https://app.com \
 <Tip>
 说明越具体，Strix 越能优先探索最有价值的攻击路径。对于中文团队，直接用中文描述范围、约束和输出要求通常最省心；敏感凭据请走专门参数或安全注入通道，不要写进说明文件。
 </Tip>
+
+## Workspace 文件
+
+说明内容会进入 Prompt。想让 Strix 拿到一个可供使用的文件（如字典、API 规范或笔记），用 `--workspace-file`；扫描开始前 Strix 会把该文件放入沙箱 workspace。
+
+```bash
+strix --target https://app.com --workspace-file ./wordlist.txt
+```
+
+文件会落在 `/workspace/<文件名>`。想指定目标位置，写 `PATH:DEST`；`DEST` 必须是 `/workspace` 内的路径。
+
+```bash
+strix --target https://app.com \
+  --workspace-file ./openapi.yaml:specs/openapi.yaml \
+  --workspace-file ./notes.md
+```
+
+想放几个文件就重复几次该选项。Strix 会在 agent 任务里列出这些文件，agent 因此知道去哪里读取。
+
+适用于所有 workspace 文件的规则：
+
+- 文件在沙箱内只读。
+- 目标位置必须留在 `/workspace` 内。
+- 目标位置不得落在被扫描目录内部，因为那些文件来自被测目标本身；这样的文件会被跳过并记录警告。
+- 两个文件不能占用同一个目标位置。
+
+<Note>
+workspace 文件是给 agent 使用的数据。它不是扫描目标，其内容也不会改变扫描指令。
+</Note>
+
+<Warning>
+Do not place secrets in a workspace file. The sandbox runs untrusted target
+code, so treat anything you place there as readable by the target.
+</Warning>

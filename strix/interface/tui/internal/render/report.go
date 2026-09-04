@@ -12,15 +12,27 @@ import (
 // ---------------------------------------------------------------------------
 
 func renderVulnerabilityReport(args map[string]any, result any) string {
+	return renderReport(args, result, "漏洞报告", "正在创建漏洞报告...")
+}
+
+// A revision names the report it changes and carries only the fields it
+// replaces, so it renders the same sections with the ones it left alone absent.
+func renderVulnerabilityReportUpdate(args map[string]any, result any) string {
+	return renderReport(args, result, "漏洞报告已更新", "正在更新漏洞报告...")
+}
+
+func renderReport(args map[string]any, result any, heading, pending string) string {
 	resultMap, _ := result.(map[string]any)
 	var b strings.Builder
-	b.WriteString("🐞 " + Bold(ReportHdr).Render("漏洞报告"))
+	b.WriteString("🐞 " + Bold(ReportHdr).Render(heading))
 
 	field := func(label, value string) {
 		if value != "" {
 			b.WriteString("\n\n" + Bold(Field).Render(label+": ") + value)
 		}
 	}
+	reportID := StringValue(args["report_id"])
+	field("Report", reportID)
 	title := StringValue(args["title"])
 	field("标题", title)
 
@@ -50,20 +62,51 @@ func renderVulnerabilityReport(args map[string]any, result any) string {
 			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
 		}
 	}
+	if confidence := StringValue(args["confidence"]); confidence != "" {
+		b.WriteString("\n\n" + Bold(Field).Render("置信度: ") +
+			lipgloss.NewStyle().Bold(true).Foreground(confidenceColor(confidence)).
+				Render(strings.ToUpper(confidence)))
+		if rationale := StringValue(args["confidence_rationale"]); rationale != "" {
+			b.WriteString("\n" + Dim().Render(rationale))
+		}
+	}
+
+	section("变更原因", StringValue(args["update_reason"]))
 	section("漏洞描述", StringValue(args["description"]))
 	section("影响", StringValue(args["impact"]))
 	section("技术分析", StringValue(args["technical_analysis"]))
+	// The case against the finding travels with the case for it: a reader
+	// triaging this needs both to judge whether to act.
+	section("反证", StringValue(args["counterevidence"]))
+	section("严重度变化条件", StringValue(args["severity_change_conditions"]))
 	renderCodeLocations(&b, args["code_locations"])
 	section("概念验证说明", StringValue(args["poc_description"]))
 	if poc := StringValue(args["poc_script_code"]); poc != "" {
 		b.WriteString("\n\n" + Bold(Field).Render("概念验证代码") + "\n" + Col(Text).Render(poc))
 	}
 	section("修复建议", StringValue(args["remediation_steps"]))
+	// Any applyable fix above is one click from the user's codebase, so how it
+	// was verified belongs next to it rather than in the artifact alone.
+	section("修复验证", StringValue(args["fix_verification"]))
 
-	if title == "" {
-		b.WriteString("\n  " + Dim().Render("正在创建漏洞报告..."))
+	if title == "" && reportID == "" {
+		b.WriteString("\n  " + Dim().Render(pending))
 	}
 	return "\n\n" + b.String() + "\n\n"
+}
+
+// confidenceColor grades how firm the agent's own call is. Anything below
+// high is a claim the reader has to check, and should not read as settled.
+func confidenceColor(confidence string) lipgloss.Color {
+	switch strings.ToLower(strings.TrimSpace(confidence)) {
+	case "high":
+		return Green
+	case "medium":
+		return SevMed
+	case "low":
+		return SevHigh
+	}
+	return Gray
 }
 
 var cvssKeys = [][2]string{

@@ -25,6 +25,7 @@ from caido_sdk_client.types import CreateProjectOptions, Project
 
 if TYPE_CHECKING:
     from agents.sandbox.session import BaseSandboxSession
+    from caido_sdk_client import Client
 
 
 logger = logging.getLogger(__name__)
@@ -155,12 +156,14 @@ async def bootstrap_caido(
     access_token = await _login_as_guest(session, container_url=container_url)
 
     client = Client(host_url, auth=TokenAuthOptions(token=access_token))
-    await client.connect()
-
     try:
+        # connect() is inside the guard as well: a cancellation there (scan
+        # teardown while the bootstrap is still in flight) would otherwise
+        # leave the half-connected transport behind.
+        await client.connect()
         project = await _create_or_recover_project(client, project_name=_STRIX_PROJECT_NAME)
     except BaseException:
-        # The connected client never reaches the session bundle if project
+        # The client never reaches the session bundle if connect or project
         # setup fails, so close it here to avoid leaking the transport.
         with contextlib.suppress(Exception):
             await client.aclose()
@@ -267,9 +270,7 @@ async def _select_existing_project(
     return project
 
 
-def _temporary_cleanup_candidates(
-    projects: list[Project], *, project_name: str
-) -> list[Project]:
+def _temporary_cleanup_candidates(projects: list[Project], *, project_name: str) -> list[Project]:
     candidates = [
         project
         for project in projects

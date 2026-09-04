@@ -256,6 +256,8 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "user_instruction": getattr(args, "user_instruction", None),
         "non_interactive": args.non_interactive,
         "local_sources": getattr(args, "local_sources", []),
+        # Persisted so --resume places the same workspace files again.
+        "workspace_files": getattr(args, "workspace_files", []),
         # Persisted so --resume can remount the workspace: it is not a target,
         # so it cannot be rebuilt from targets_info.
         "workspace_mount": getattr(args, "workspace_mount", None),
@@ -263,11 +265,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,
         "burp_port": getattr(args, "burp_port", None),
-        "credential_auth_available": bool(
-            getattr(args, "target_credentials", None)
-        ),
-        "allow_credential_attacks": bool(
-            getattr(args, "allow_credential_attacks", False)
-        ),
+        "credential_auth_available": bool(getattr(args, "target_credentials", None)),
+        "allow_credential_attacks": bool(getattr(args, "allow_credential_attacks", False)),
     }
     write_run_record(run_dir, run_record)

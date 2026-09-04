@@ -4,7 +4,7 @@
 
 # Strix CN
 
-Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.5.3`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
+Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.6.1`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
 
 - 上游项目：[https://github.com/usestrix/strix](https://github.com/usestrix/strix)
 - 当前分支：[https://github.com/wpsec/strix-cn](https://github.com/wpsec/strix-cn)
@@ -18,12 +18,13 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平�
 
 ## 当前版本重点
 
-- 交互界面已迁移到上游 Go / Bubble Tea TUI
-- 支持 API spec / Postman collection 目标类型
+- 吸收上游 MCP server 支持（`~/.strix/mcp-servers.json` 配置，agent 按需调用）
+- 新增 `--workspace-file` 把本地辅助文件注入沙箱 workspace
+- 报告新增情境化 CVSS、反证 / 置信度闭环与 `update_vulnerability_report` 修订通道
+- `LLM_API_BASE` 指向 Anthropic 协议端点时，裸模型名自动按 `/v1/messages` 路由
+- 交互界面为上游 Go / Bubble Tea TUI；本地 Viewer 内置，无需额外前端安装
 - 支持 `LLM_EXTRA_HEADERS`、`LLM_DISABLE_STREAMING`、`STRIX_REASONING_EFFORT=max`
-- 默认沙箱镜像基线升级到 `ghcr.io/usestrix/strix-sandbox:1.3.0`
-- 本地目录统一走挂载模式，不再保留旧的逐文件复制主路径
-- 本地 Viewer 已内置，无需额外前端安装
+- 默认沙箱镜像基线 `ghcr.io/usestrix/strix-sandbox:1.3.0`；本地目录统一走挂载模式
 
 ## 使用注意
 

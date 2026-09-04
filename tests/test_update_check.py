@@ -159,7 +159,9 @@ def test_prompt_update_source_checkout_shows_notice_without_prompt(
     monkeypatch.setattr(update_check, "get_version", lambda: "1.3.1")
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(update_check.Prompt, "ask", lambda *_args, **_kwargs: pytest.fail("prompt called"))
+    monkeypatch.setattr(
+        update_check.Prompt, "ask", lambda *_args, **_kwargs: pytest.fail("prompt called")
+    )
     buffer = io.StringIO()
 
     assert update_check.prompt_update_if_available(Console(file=buffer)) is False
@@ -208,6 +210,33 @@ def test_self_update_already_latest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update_check, "_fetch_latest_version", lambda: "1.0.0")
     monkeypatch.setattr(update_check, "get_version", lambda: "1.0.0")
     assert update_check.self_update() is True
+
+
+def test_restart_env_strips_pyinstaller_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("_MEIPASS2", "/stale/_MEIold")
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "/stale/_MEIold")
+    monkeypatch.setenv("_PYI_ARCHIVE_FILE", "/old/strix")
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    monkeypatch.setenv("SOME_OTHER_VAR", "kept")
+
+    env = update_check.restart_env()
+
+    assert "SOME_OTHER_VAR" in env
+    assert "_MEIPASS2" not in env
+    assert not any(key.startswith("_PYI_") for key in env)
+
+
+def test_restart_env_restores_library_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/stale/_MEIold/lib")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/custom")
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/stale/_MEIold/lib")
+    monkeypatch.delenv("DYLD_LIBRARY_PATH_ORIG", raising=False)
+
+    env = update_check.restart_env()
+
+    assert env["LD_LIBRARY_PATH"] == "/usr/lib/custom"
+    assert "LD_LIBRARY_PATH_ORIG" not in env
+    assert "DYLD_LIBRARY_PATH" not in env
 
 
 def test_sha256_file(tmp_path: Path) -> None:

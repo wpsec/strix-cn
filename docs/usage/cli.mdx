@@ -59,6 +59,12 @@ strix (--target <target> | --target-list <path> | --mount <path> | --burp-port <
   提供已授权的目标登录账户。必须与 `--auth-password-stdin` 一起使用。账户名不会写入报告、Prompt 或运行记录。
 </ParamField>
 
+<ParamField path="--workspace-file" type="string">
+  扫描开始前放入沙箱 workspace 的本地文件路径，可重复传入。写 `PATH:DEST` 指定
+  `/workspace` 内的目标位置，`DEST` 缺省为文件名。见
+  [Workspace files](/usage/instructions#workspace-files)。
+</ParamField>
+
 <ParamField path="--auth-password-stdin" type="boolean">
   从当前终端的隐藏输入，或从标准输入读取一行目标账户密码。密码只会在本次运行中注入沙箱环境变量，不会进入命令行历史、Prompt、运行记录或总报告。
 </ParamField>
@@ -149,6 +155,10 @@ export STRIX_LLM="openai/your-compatible-model"
 export LLM_API_BASE="https://your-gateway.example/v1"
 export LLM_EXTRA_HEADERS='{"X-Tenant":"acme"}'
 strix --target ./app-directory
+
+# 额外文件放入沙箱 workspace
+strix --target ./my-project --workspace-file ./wordlist.txt
+strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
 ```
 
 ## 退出码

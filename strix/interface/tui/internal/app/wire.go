@@ -33,6 +33,8 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		m.stateRevision = update.Revision
 		if m.snapshot.Error != nil {
 			m.errorText = *m.snapshot.Error
+		} else {
+			m.errorText = ""
 		}
 		m.selectedAgent = selectedAgentIndex(m.snapshot.Agents, selectedAgentID)
 		if m.snapshot.SetupMode {
@@ -80,6 +82,10 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 				if collection := m.resyncRequests[envelope.RequestID]; collection != "" {
 					m.resyncRequested[collection] = false
 					delete(m.resyncRequests, envelope.RequestID)
+				} else {
+					for collection := range m.resyncRequested {
+						m.resyncRequested[collection] = false
+					}
 				}
 			}
 			message := "Command failed"
