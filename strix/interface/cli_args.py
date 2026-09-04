@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from strix.interface.update_check import self_update
 from strix.interface.utils import (
     check_mountable_dir,
     collect_local_sources,
+    resolve_workspace_files,
     validate_config_file,
 )
 
@@ -128,6 +130,10 @@ def parse_arguments() -> argparse.Namespace:
 
   # 使用已授权登录账户（密码从终端安全读取，不写入命令行和报告）
   strix --target https://app.com --auth-username '<username>' --auth-password-stdin
+
+  # 额外文件放入沙箱 workspace
+  strix --target ./my-project --workspace-file ./wordlist.txt
+  strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
         """,
     )
 
@@ -213,6 +219,18 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--workspace-file",
+        type=str,
+        action="append",
+        metavar="PATH[:DEST]",
+        help="Place a file from this machine into the sandbox workspace before the scan "
+        "starts, for example a wordlist, an API specification, or notes. Repeat the option "
+        "for more files. DEST is the path inside /workspace and defaults to the file name "
+        "(for example '--workspace-file ./wordlist.txt:lists/wordlist.txt'). The file is "
+        "read-only inside the sandbox and lands outside every target directory.",
+    )
+
+    parser.add_argument(
         "-n",
         "--non-interactive",
         action="store_true",
@@ -252,6 +270,30 @@ def parse_arguments() -> argparse.Namespace:
         "--config",
         type=str,
         help="自定义配置文件（JSON）路径，用于替代 ~/.strix/cli-config.json",
+    )
+
+    parser.add_argument(
+        "--mcp-config",
+        type=str,
+        metavar="PATH",
+        help="Path to an MCP servers JSON file to use instead of ~/.strix/mcp-servers.json.",
+    )
+
+    parser.add_argument(
+        "--mcp-server",
+        dest="mcp_server",
+        action="append",
+        metavar="NAME",
+        help="Use only this MCP connection for the run, by its config name "
+        "(repeatable). Every other configured connection is skipped.",
+    )
+
+    parser.add_argument(
+        "--mcp-exclude",
+        dest="mcp_exclude",
+        action="append",
+        metavar="NAME",
+        help="Skip this MCP connection for the run, by its config name (repeatable).",
     )
 
     parser.add_argument(
@@ -301,6 +343,20 @@ def parse_arguments() -> argparse.Namespace:
     if args.config:
         apply_config_override(validate_config_file(args.config))
 
+    if args.mcp_config:
+        mcp_config_path = Path(args.mcp_config).expanduser()
+        if not mcp_config_path.is_file():
+            parser.error(f"--mcp-config file not found: {args.mcp_config}")
+        # The MCP loader reads this env var as its config-path override, so
+        # setting it here makes the flag win over the default location.
+        os.environ["STRIX_MCP_CONFIG"] = str(mcp_config_path)
+
+    # The MCP loader reads these as its per-run include/exclude selection.
+    if args.mcp_server:
+        os.environ["STRIX_MCP_ONLY"] = ",".join(args.mcp_server)
+    if args.mcp_exclude:
+        os.environ["STRIX_MCP_EXCLUDE"] = ",".join(args.mcp_exclude)
+
     if args.update:
         sys.exit(0 if self_update() else 1)
 
@@ -331,6 +387,11 @@ def parse_arguments() -> argparse.Namespace:
                     parser.error(f"指令文件 '{instruction_path}' 为空")
         except Exception as e:
             parser.error(f"读取指令文件 '{instruction_path}' 失败：{e}")
+
+    try:
+        args.workspace_files = resolve_workspace_files(getattr(args, "workspace_file", None))
+    except ValueError as error:
+        parser.error(f"--workspace-file: {error}")
 
     args.user_explicit_instruction = args.instruction if args.resume else None
     # What the user actually asked for, kept apart from args.instruction because
@@ -386,7 +447,7 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         )
     try:
         state = read_run_record(run_dir)
-    except RuntimeError as exc:
+    except (RuntimeError, TypeError) as exc:
         parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
 
     args.targets_info = state.get("targets_info") or []
@@ -431,6 +492,23 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
     args.workspace_mount = workspace_mount
+
+    # Replace the workspace files the run started with, unless this resume names
+    # its own. The persisted record is revalidated like a fresh flag, so an
+    # edited run.json cannot widen what a resume places. A file deleted between
+    # runs is dropped rather than fatal: it is context for the agent, not scope.
+    if not getattr(args, "workspace_files", None):
+        restored = [
+            f"{source_path}:{workspace_path}"
+            for workspace_file in state.get("workspace_files") or []
+            if isinstance(workspace_file, dict)
+            and (source_path := Path(str(workspace_file.get("source_path") or ""))).is_file()
+            and (workspace_path := str(workspace_file.get("workspace_path") or ""))
+        ]
+        try:
+            args.workspace_files = resolve_workspace_files(restored)
+        except ValueError as error:
+            parser.error(f"--resume {args.resume}: invalid workspace file: {error}")
     if workspace_mount:
         if not Path(workspace_mount).expanduser().is_dir():
             parser.error(

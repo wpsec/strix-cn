@@ -1,0 +1,120 @@
+---
+title: "MCP Servers"
+description: "接入你自己的 MCP server，把它们的工具开放给 agent"
+---
+
+Strix 可以连接你声明的 [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server，并在扫描过程中把它们的工具提供给 agent 使用。这能让 agent 直接了解你的系统真实构建方式，而不是只从外部推测。
+
+典型受益场景：
+
+- **数据库 server。** agent 能读取 schema 与访问策略，发现哪些表在缺少策略时仍然可读，而不是从响应里猜。
+- **托管 / 基础设施 server。** 部署、域名与环境变量名能让 agent 知道实际在跑什么，测试已存在的资产而不是爬出来的资产。
+- **缺陷跟踪系统。** 已知且已接受的风险可以避免 agent 重复上报已定级的发现。
+- **日志 server。** 读取日志能让 agent 确认利用尝试真正命中，而不是靠状态码推断。
+
+## 配置
+
+创建 `~/.strix/mcp-servers.json`，内容是一个 JSON 数组，列出你希望 agent 访问的 server。每个条目要么是 Strix 以子进程启动的本地 `stdio` server，要么是远程 `http` server。
+
+先创建目录，再写入文件：
+
+```bash
+mkdir -p ~/.strix
+```
+
+下面示例各展示一种传输方式：本地 `stdio` 文件系统 server 与带 bearer token 的远程 GitHub `http` server：
+
+```json
+[
+  {
+    "name": "local_fs",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+  },
+  {
+    "name": "github",
+    "transport": "http",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "auth": { "kind": "bearer", "token": "your-token" },
+    "allowed_tools": ["list_issues"]
+  }
+]
+```
+
+Strix 在每次扫描启动时读取该文件。文件没有默认值，不创建就不会加载任何 MCP 工具。请把 `command`、`args`、`url`、`token` 改成你自己的 server 参数；token 请从安全存储获取，不要写入仓库。
+
+## 字段
+
+<ParamField path="name" type="string" required>
+  连接的短标签。每个 server 的工具都按 `name` 做命名空间隔离
+  （例如 `local_fs_read_file`），两个 server 提供同名工具也不会冲突。
+</ParamField>
+
+<ParamField path="transport" type="string">
+  本地子进程 server 用 `stdio`，远程 server 用 `http`。
+</ParamField>
+
+<ParamField path="command" type="string">
+  `stdio` server：Strix 启动的可执行程序（例如 `npx`）。
+</ParamField>
+
+<ParamField path="args" type="array">
+  `stdio` server：传给 `command` 的参数。
+</ParamField>
+
+<ParamField path="url" type="string">
+  `http` server：server 端点 URL。
+</ParamField>
+
+<ParamField path="auth" type="object">
+  需要 bearer token 的 `http` server：
+  `{ "kind": "bearer", "token": "your-token" }`。
+</ParamField>
+
+<ParamField path="allowed_tools" type="array">
+  限制 agent 可调用的工具。省略则暴露 server 全部工具；给出列表则只允许列出的
+  工具。Strix 不会替你判断某个 server 的工具哪些只读、哪些会改动，如果 server
+  支持只读模式，请以只读模式运行它。
+</ParamField>
+
+<ParamField path="notes" type="string">
+  给 agent 的自由文本说明，描述这个连接是什么、希望怎么使用，例如
+  “预发布分析库，只读，优先用聚合查询”。设置后，会在扫描开始时作为连接描述
+  提供给 agent。
+</ParamField>
+
+## 按次选择连接
+
+默认每次运行使用文件里的全部连接。想在不改文件的情况下只用于单次运行，可用两个可重复的 flag：
+
+```bash
+strix --mcp-server github -t ...        # 只用指定连接
+strix --mcp-exclude staging-db -t ...   # 排除指定连接
+```
+
+`--mcp-server` 只保留点名的连接；`--mcp-exclude` 去掉点名的连接。文件内连接名必须唯一；重名时保留第一条，其余忽略。
+
+## 指定其他配置文件
+
+想从别的路径读取配置（而不是 `~/.strix/mcp-servers.json`），可以用命令行 `--mcp-config <path>`：
+
+```bash
+strix --mcp-config ./mcp-servers.json -t ...
+```
+
+或者设置环境变量 `STRIX_MCP_CONFIG` 指向该路径。两者同时给出时以 flag 为准。
+
+## 启动确认
+
+配置了 server 时，Strix 会在扫描启动时打印一行摘要，例如 `MCP: connected 1 server (14 tools): local_fs`，方便确认连接成功。
+
+## 查看调用
+
+agent 对你 server 的每一次调用都会带独立图标并标注所走的连接，终端和运行查看器（`strix view`）里都能看到，便于从整段 transcript 中识别离开 Strix 的请求。终端里展示调用与参数；结果可能很大且内容不定，请在查看器里读可展开的预览。
+
+## 行为
+
+- 配置文件可选。没有它，运行就不带任何 MCP 工具。
+- 连接失败的 server 会被跳过并记录日志，运行继续。
+- 单个格式错误的条目被跳过，不影响其余有效条目。

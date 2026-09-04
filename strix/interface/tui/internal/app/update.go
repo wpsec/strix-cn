@@ -60,6 +60,14 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ensureVulnerabilityVisible()
 			return m, nil
 		}
+		if m.focus == focusMcp && len(m.snapshot.Connections) > 0 {
+			delta := 1
+			if key.String() == "up" {
+				delta = -1
+			}
+			m.mcpOffset = m.clampMcpOffset(m.mcpOffset + delta)
+			return m, nil
+		}
 	case "enter", " ":
 		if m.focus == focusVulnerabilities && len(m.snapshot.Vulnerabilities) > 0 {
 			if key.String() == "enter" {
@@ -95,6 +103,10 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ensureVulnerabilityVisible()
 			return m, nil
 		}
+		if m.focus == focusMcp && len(m.snapshot.Connections) > 0 {
+			m.mcpOffset = m.clampMcpOffset(m.mcpOffset - m.mcpPageSize())
+			return m, nil
+		}
 		m.focus = focusChat
 		m.input.Blur()
 		m.followOutput = false
@@ -104,6 +116,10 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focus == focusVulnerabilities && len(m.snapshot.Vulnerabilities) > 0 {
 			m.moveVulnerabilitySelection(m.vulnerabilityPageItems())
 			m.ensureVulnerabilityVisible()
+			return m, nil
+		}
+		if m.focus == focusMcp && len(m.snapshot.Connections) > 0 {
+			m.mcpOffset = m.clampMcpOffset(m.mcpOffset + m.mcpPageSize())
 			return m, nil
 		}
 		m.focus = focusChat
@@ -163,7 +179,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	showSidebar, _, chatWidth, chatHeight := m.layout()
 	viewerHeight, agentStart, vulnStart := m.sidebarPanelStarts()
-	_, vulnHeight, agentHeight := m.sidebarHeights()
+	_, vulnHeight, _, agentHeight := m.sidebarHeights()
 	x, y := msg.X, msg.Y
 	if m.updateMainScrollbarMouse(
 		msg, showSidebar, chatWidth, chatHeight, viewerHeight, agentStart, agentHeight, vulnStart, vulnHeight,
@@ -195,6 +211,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, m.finishSelection()
 		}
 	}
+	mcpStart, mcpHeight := m.mcpPanelBounds()
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if showSidebar && x >= chatWidth+1 {
@@ -212,6 +229,10 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.input.Blur()
 				m.vulnOffset = max(0, m.vulnOffset-3)
 				m.keepVulnerabilitySelectionInWindow()
+			case mcpHeight > 0 && y >= mcpStart && y < mcpStart+mcpHeight:
+				m.focus = focusMcp
+				m.input.Blur()
+				m.mcpOffset = m.clampMcpOffset(m.mcpOffset - 3)
 			}
 			return m, nil
 		}
@@ -238,6 +259,10 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				totalRows, _ := m.vulnerabilityScrollRows()
 				m.vulnOffset = min(max(0, totalRows-m.vulnerabilityPageSize()), m.vulnOffset+3)
 				m.keepVulnerabilitySelectionInWindow()
+			case mcpHeight > 0 && y >= mcpStart && y < mcpStart+mcpHeight:
+				m.focus = focusMcp
+				m.input.Blur()
+				m.mcpOffset = m.clampMcpOffset(m.mcpOffset + 3)
 			}
 			return m, nil
 		}
@@ -354,6 +379,22 @@ func (m *Model) updateMainScrollbarMouse(
 // in the column beside it.
 const scrollbarGrab = 1
 
+// mcpPanelBounds returns the first row and height of the MCP roster panel,
+// mirroring how sidebarView stacks panels (viewer, agents, findings, roster,
+// stats) so mouse hit-testing follows the fork's fixed-panel layout.
+func (m Model) mcpPanelBounds() (start, height int) {
+	_, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
+	if mcpHeight == 0 {
+		return 0, 0
+	}
+	_, agentStart, vulnStart := m.sidebarPanelStarts()
+	start = agentStart + agentHeight
+	if vulnStart >= 0 {
+		start = vulnStart + vulnHeight
+	}
+	return start, mcpHeight
+}
+
 func nearColumn(x, column int) bool {
 	return x >= column-scrollbarGrab && x <= column+scrollbarGrab
 }
@@ -364,6 +405,7 @@ func (m Model) scrollbarAt(
 	showSidebar bool,
 	chatWidth, chatHeight, agentStart, agentHeight, vulnStart, vulnHeight int,
 ) scrollbarTarget {
+	mcpTop, mcpHeight := m.mcpPanelBounds()
 	switch {
 	case nearColumn(msg.X, chatWidth-2) && msg.Y >= 1 && msg.Y < chatHeight-1 &&
 		m.viewport.TotalLineCount() > m.viewport.VisibleLineCount():
@@ -378,6 +420,13 @@ func (m Model) scrollbarAt(
 		totalRows, _ := m.vulnerabilityScrollRows()
 		if totalRows > m.vulnerabilityPageSize() {
 			return scrollbarFindings
+		}
+	// The roster scrolls below a fixed header, so its bar starts two rows into
+	// the panel (border then header) rather than one.
+	case showSidebar && mcpHeight > 0 && nearColumn(msg.X, m.width-3) &&
+		msg.Y >= mcpTop+2 && msg.Y < mcpTop+mcpHeight-1:
+		if len(m.snapshot.Connections) > m.mcpPageSize() {
+			return scrollbarMcp
 		}
 	}
 	return scrollbarNone
@@ -411,6 +460,14 @@ func (m *Model) scrollFromMouse(
 		// The offset is a row, so dragging moves the list continuously.
 		m.vulnOffset = scrollbarOffset(y-vulnStart-1, height, totalRows, height)
 		m.keepVulnerabilitySelectionInWindow()
+	case scrollbarMcp:
+		height := m.mcpPageSize()
+		total := len(m.snapshot.Connections)
+		mcpTop, _ := m.mcpPanelBounds()
+		m.focus = focusMcp
+		m.input.Blur()
+		// The bar starts two rows into the panel (border then the fixed header).
+		m.mcpOffset = scrollbarOffset(y-mcpTop-2, height, total, height)
 	}
 }
 
@@ -585,6 +642,9 @@ func (m *Model) cycleFocus(delta int) {
 		available = append(available, focusAgents)
 		if len(m.snapshot.Vulnerabilities) > 0 {
 			available = append(available, focusVulnerabilities)
+		}
+		if len(m.snapshot.Connections) > 0 {
+			available = append(available, focusMcp)
 		}
 	}
 	idx := 0

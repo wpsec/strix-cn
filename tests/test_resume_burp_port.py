@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 
 
-cli_main: Any = importlib.import_module("strix.interface.main")
+cli_args: Any = importlib.import_module("strix.interface.cli_args")
+writer: Any = importlib.import_module("strix.report.writer")
 
 
 class _Parser:
@@ -21,9 +22,9 @@ def test_load_resume_state_restores_persisted_burp_port(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
-    monkeypatch.setattr(cli_main, "run_dir_for", lambda _run_name: tmp_path)
+    monkeypatch.setattr(cli_args, "run_dir_for", lambda _run_name: tmp_path)
     monkeypatch.setattr(
-        cli_main,
+        writer,
         "read_run_record",
         lambda _run_dir: {
             "targets_info": [
@@ -49,7 +50,7 @@ def test_load_resume_state_restores_persisted_burp_port(
         burp_port=None,
     )
 
-    cli_main._load_resume_state(args, _Parser())
+    cli_args._load_resume_state(args, _Parser())
 
     assert args.burp_port == 8081
 
@@ -58,9 +59,9 @@ def test_load_resume_state_keeps_explicit_burp_port_override(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
-    monkeypatch.setattr(cli_main, "run_dir_for", lambda _run_name: tmp_path)
+    monkeypatch.setattr(cli_args, "run_dir_for", lambda _run_name: tmp_path)
     monkeypatch.setattr(
-        cli_main,
+        writer,
         "read_run_record",
         lambda _run_dir: {
             "targets_info": [
@@ -86,7 +87,7 @@ def test_load_resume_state_keeps_explicit_burp_port_override(
         burp_port=9091,
     )
 
-    cli_main._load_resume_state(args, _Parser())
+    cli_args._load_resume_state(args, _Parser())
 
     assert args.burp_port == 9091
 
@@ -95,9 +96,9 @@ def test_load_resume_state_allows_empty_targets_for_burp_passive_mode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
-    monkeypatch.setattr(cli_main, "run_dir_for", lambda _run_name: tmp_path)
+    monkeypatch.setattr(cli_args, "run_dir_for", lambda _run_name: tmp_path)
     monkeypatch.setattr(
-        cli_main,
+        writer,
         "read_run_record",
         lambda _run_dir: {
             "targets_info": [],
@@ -117,7 +118,7 @@ def test_load_resume_state_allows_empty_targets_for_burp_passive_mode(
         burp_port=None,
     )
 
-    cli_main._load_resume_state(args, _Parser())
+    cli_args._load_resume_state(args, _Parser())
 
     assert args.targets_info == []
     assert args.burp_port == 8081

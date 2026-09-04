@@ -10,6 +10,9 @@ from strix.report.usage import LLMUsageLedger
 
 
 def test_resolves_common_bare_model_names() -> None:
+    # The live LiteLLM map is fetched over the network (and may fail to, or lag
+    # a release), so price resolution is asserted against a deterministic map
+    # the way ``1ccbae9`` stabilized it; the real map's shape is not the SUT.
     original = litellm.model_cost
     litellm.model_cost = {
         "deepseek/deepseek-v4-flash": {
@@ -30,7 +33,10 @@ def test_resolves_common_bare_model_names() -> None:
         assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
         assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
         assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
-        assert resolve_litellm_model("MiniMax-M3") == "minimax/MiniMax-M3"
+        # MiniMax-M3 is sold by several LiteLLM providers at different prices, so
+        # the resolver must not guess from its bare name. A provider-qualified
+        # model remains deterministic.
+        assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
     finally:
         litellm.model_cost = original
         resolve_litellm_model.cache_clear()

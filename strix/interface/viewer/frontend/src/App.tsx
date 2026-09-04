@@ -22,6 +22,7 @@ import {
   fetchRunSummary,
   fetchTranscript,
   fetchVulnerabilities,
+  parseMcpConnectionStatus,
   type LoadedRun,
 } from "@/data/serverSource";
 import { runTitle } from "@/lib/target-utils";
@@ -131,6 +132,27 @@ export default function App() {
   const selected = run?.vulnerabilities.find((v) => v.id === selectedId) ?? null;
   const agentCount = run?.transcript.agents.length ?? 0;
 
+  // The run's persisted MCP roster (from run.json via /api/run), plus the set of
+  // connections with a tool call currently in flight. "In use" is derived here
+  // from the connection-tagged tool events rather than carried on the roster:
+  // an MCP dispatch event carries its connection name and a status that moves
+  // running -> completed, so a connection is in use while one of its events is
+  // still running. This mirrors the terminal UI's MCP panel exactly.
+  const mcpConnections = useMemo(
+    () => (run ? parseMcpConnectionStatus(run.raw) : []),
+    [run]
+  );
+  const mcpInUse = useMemo(() => {
+    const inUse = new Set<string>();
+    for (const event of run?.transcript.events ?? []) {
+      if (event.type !== "tool") continue;
+      const connection = event.data?.mcp_connection;
+      if (typeof connection !== "string" || !connection) continue;
+      if (event.data?.status === "running") inUse.add(connection);
+    }
+    return inUse;
+  }, [run]);
+
   // Per-run guard for the default view: land on Agents while a scan is live,
   // Overview once it finishes. Applied at most once per run and never once the
   // user has navigated manually (userSetView flips the guard).
@@ -169,6 +191,8 @@ export default function App() {
         }}
         issuesCount={run?.vulnerabilities.length ?? 0}
         agentCount={agentCount}
+        mcpConnections={mcpConnections}
+        mcpInUse={mcpInUse}
       />
 
       <div className="flex-1 min-w-0">
