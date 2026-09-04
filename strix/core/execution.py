@@ -119,6 +119,25 @@ async def _compact_session(
     )
 
 
+def _feature_batch_turned(
+    context: dict[str, Any],
+    seen_epoch: int | None,
+) -> tuple[bool, int | None]:
+    """Detect a passive-proxy batch switch since the previous turn.
+
+    ``report_state.proxy_feature_boundary_ref.epoch`` bumps when the operator
+    freezes a new feature batch; the run loop turns that into a forced
+    compaction so the next batch reasons over the summary of the previous
+    ones instead of every raw transcript, which is what keeps weak-model
+    quality from degrading across a long multi-batch session.
+    """
+    ref = context.get("proxy_feature_boundary_ref")
+    epoch = ref.get("epoch") if isinstance(ref, dict) else None
+    if not isinstance(epoch, int):
+        return False, seen_epoch
+    return (seen_epoch is not None and epoch != seen_epoch), epoch
+
+
 _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
@@ -656,6 +675,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
 ) -> RunResultBase | None:
     image_strips = 0
     compactions = 0
+    boundary_epoch: int | None = None
     model_retries = 0
     while True:
         stream: Any = None
@@ -669,8 +689,13 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         await enforce_image_budget(session, max_images)
                     except Exception:
                         logger.exception("image-budget enforcement failed for %s", agent_id)
+                force_compact, boundary_epoch = _feature_batch_turned(context, boundary_epoch)
+                if force_compact:
+                    logger.info(
+                        "passive-proxy batch advanced; forcing root history compaction",
+                    )
                 try:
-                    await _compact_session(agent, session, run_config, force=False)
+                    await _compact_session(agent, session, run_config, force=force_compact)
                 except Exception:
                     logger.exception("proactive compaction failed for %s", agent_id)
                 with contextlib.suppress(Exception):

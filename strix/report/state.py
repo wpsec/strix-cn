@@ -241,10 +241,14 @@ class ReportState:
         self.proxy_scope_name: str | None = None
         self.proxy_capture_state = ProxyCaptureState()
         self.proxy_capture_error: str | None = None
-        self.proxy_feature_boundary_ref: dict[str, str | bool | None] = {
+        # ``epoch`` counts batch switches; the run loop forces a compaction
+        # when it moves so the next batch starts from the summary, not the
+        # accumulated transcripts of every previous batch.
+        self.proxy_feature_boundary_ref: dict[str, str | bool | int | None] = {
             "active": False,
             "captured_after": None,
             "captured_before": None,
+            "epoch": 0,
         }
         self.proxy_feature_coverage_ref: dict[str, Any] = {
             "active": False,
@@ -780,11 +784,18 @@ class ReportState:
         self.proxy_feature_boundary_ref["captured_after"] = lower_boundary or None
         self.proxy_feature_boundary_ref["captured_before"] = boundary or None
         self.proxy_feature_boundary_ref["active"] = bool(boundary)
+        self.proxy_feature_boundary_ref["epoch"] = self.proxy_batch_epoch + 1
+
+    @property
+    def proxy_batch_epoch(self) -> int:
+        epoch = self.proxy_feature_boundary_ref.get("epoch")
+        return epoch if isinstance(epoch, int) else 0
 
     def clear_proxy_feature_boundary(self) -> None:
         self.proxy_feature_boundary_ref["captured_after"] = None
         self.proxy_feature_boundary_ref["captured_before"] = None
         self.proxy_feature_boundary_ref["active"] = False
+        self.proxy_feature_boundary_ref["epoch"] = self.proxy_batch_epoch + 1
 
     def begin_proxy_feature_coverage(
         self,

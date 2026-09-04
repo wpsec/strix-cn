@@ -111,3 +111,14 @@ def test_set_scan_config_clears_stale_caido_url(
     assert "proxy_scope_id" not in payload
     assert "proxy_scope_name" not in payload
     assert "proxy_capture" not in payload
+
+
+def test_proxy_feature_boundary_epoch_advances_on_switch() -> None:
+    from strix.report.state import ReportState
+
+    state = ReportState()
+    start = state.proxy_batch_epoch
+    state.set_proxy_feature_boundary(captured_before="2026-09-04T10:00:00", captured_after=None)
+    assert state.proxy_batch_epoch == start + 1
+    state.clear_proxy_feature_boundary()
+    assert state.proxy_batch_epoch == start + 2

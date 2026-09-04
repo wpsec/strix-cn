@@ -1331,3 +1331,18 @@ async def test_autonomous_nudge_does_not_offer_the_user() -> None:
     )
 
     assert "respond_to_user" not in items[0]["content"]
+
+
+def test_feature_batch_turned_requires_previous_epoch() -> None:
+    from strix.core.execution import _feature_batch_turned
+
+    ctx: dict = {}
+    assert _feature_batch_turned(ctx, None) == (False, None)
+    ctx = {"proxy_feature_boundary_ref": {"active": True, "epoch": 3}}
+    # first sighting records the epoch without compacting (session may be new)
+    assert _feature_batch_turned(ctx, None) == (False, 3)
+    assert _feature_batch_turned(ctx, 3) == (False, 3)
+    ctx["proxy_feature_boundary_ref"]["epoch"] = 4
+    assert _feature_batch_turned(ctx, 3) == (True, 4)
+    ctx = {"proxy_feature_boundary_ref": {"epoch": "bad"}}
+    assert _feature_batch_turned(ctx, 3) == (False, 3)
