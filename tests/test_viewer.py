@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import http.client
 import json
 import os
 import sqlite3
@@ -448,6 +449,37 @@ def test_server_event_endpoint_forwards_agent_steered(
         with urllib.request.urlopen(req) as resp:  # noqa: S310  # nosec B310
             assert resp.status == 204
         assert seen == [True]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_server_rejects_invalid_and_oversized_post_bodies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(tmp_path, "body-limit", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    try:
+        parsed = urlsplit(url)
+
+        def raw_post(headers: dict[str, str]) -> int:
+            connection = http.client.HTTPConnection(parsed.hostname, parsed.port)
+            try:
+                connection.request("POST", "/api/event", body=b"{}", headers=headers)
+                return connection.getresponse().status
+            finally:
+                connection.close()
+
+        common_headers = {"Content-Type": "application/json"}
+        oversized_status = raw_post(
+            {**common_headers, "Content-Length": str(viewer_server.MAX_POST_BODY_BYTES + 1)}
+        )
+        invalid_status = raw_post({**common_headers, "Content-Length": "not-a-number"})
+
+        assert oversized_status == 413
+        assert invalid_status == 400
     finally:
         httpd.shutdown()
         httpd.server_close()

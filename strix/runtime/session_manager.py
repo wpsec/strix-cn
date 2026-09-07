@@ -632,50 +632,6 @@ async def create_or_reuse(
     backend = get_backend(backend_name)
 
     staging_dir: Path | None = None
-    if backend_supports_bind_mounts(backend_name):
-        bind_mounts = build_bind_mounts(local_sources)
-        entries: dict[str | Path, BaseEntry] = {}
-        if extra_files:
-            staging_dir = extra_file_staging_dir(scan_id)
-            bind_mounts.extend(
-                build_extra_file_bind_mounts(extra_files, staging_dir, local_sources)
-            )
-    else:
-        bind_mounts = []
-        entries = build_manifest_entries(local_sources)
-        if extra_files:
-            entries.update(build_extra_file_entries(extra_files, local_sources))
-
-    # Caido runs as an in-container sidecar; HTTP(S) traffic from any
-    # process started via ``session.exec`` (the SDK's Shell tool, etc.)
-    # picks up these env vars automatically. ``NO_PROXY`` keeps the
-    # agent-browser CDP daemon's localhost traffic from looping back
-    # through Caido.
-    container_caido_proxy_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PROXY_PORT}"
-    container_caido_ui_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_UI_PORT}"
-    manifest = Manifest(
-        entries=entries,
-        environment=Environment(
-            value={
-                "PYTHONUNBUFFERED": "1",
-                "HOST_GATEWAY": "host.docker.internal",
-                **_host_identity_env(),
-                "http_proxy": container_caido_proxy_url,
-                "https_proxy": container_caido_proxy_url,
-                "ALL_PROXY": container_caido_proxy_url,
-                "NO_PROXY": "localhost,127.0.0.1",
-                **credential_environment,
-            },
-        ),
-    )
-
-    _assert_burp_port_available(backend_name=backend_name, burp_port=burp_port)
-    logger.info(
-        "Creating sandbox session for scan %s (backend=%s, image=%s)",
-        scan_id,
-        backend_name,
-        image,
-    )
     client: Any | None = None
     session: Any | None = None
     caido_client: Any | None = None
@@ -687,6 +643,50 @@ async def create_or_reuse(
     burp_upstream_unavailable_reason: str | None = None
     caido_ui_url: str | None = None
     try:
+        if backend_supports_bind_mounts(backend_name):
+            bind_mounts = build_bind_mounts(local_sources)
+            entries: dict[str | Path, BaseEntry] = {}
+            if extra_files:
+                staging_dir = extra_file_staging_dir(scan_id)
+                bind_mounts.extend(
+                    build_extra_file_bind_mounts(extra_files, staging_dir, local_sources)
+                )
+        else:
+            bind_mounts = []
+            entries = build_manifest_entries(local_sources)
+            if extra_files:
+                entries.update(build_extra_file_entries(extra_files, local_sources))
+
+        # Caido runs as an in-container sidecar; HTTP(S) traffic from any
+        # process started via ``session.exec`` (the SDK's Shell tool, etc.)
+        # picks up these env vars automatically. ``NO_PROXY`` keeps the
+        # agent-browser CDP daemon's localhost traffic from looping back
+        # through Caido.
+        container_caido_proxy_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PROXY_PORT}"
+        container_caido_ui_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_UI_PORT}"
+        manifest = Manifest(
+            entries=entries,
+            environment=Environment(
+                value={
+                    "PYTHONUNBUFFERED": "1",
+                    "HOST_GATEWAY": "host.docker.internal",
+                    **_host_identity_env(),
+                    "http_proxy": container_caido_proxy_url,
+                    "https_proxy": container_caido_proxy_url,
+                    "ALL_PROXY": container_caido_proxy_url,
+                    "NO_PROXY": "localhost,127.0.0.1",
+                    **credential_environment,
+                },
+            ),
+        )
+
+        _assert_burp_port_available(backend_name=backend_name, burp_port=burp_port)
+        logger.info(
+            "Creating sandbox session for scan %s (backend=%s, image=%s)",
+            scan_id,
+            backend_name,
+            image,
+        )
         report("Starting sandbox container")
         backend_kwargs: dict[str, Any] = {
             "image": image,

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
 from strix.runtime import session_manager
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_target_credentials_are_mapped_only_to_sandbox_environment() -> None:
@@ -216,6 +220,46 @@ async def test_create_or_reuse_rejects_occupied_burp_port_before_backend(
         )
 
     assert backend_called is False
+
+
+@pytest.mark.asyncio
+async def test_create_or_reuse_removes_staging_when_preflight_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scan_id = "scan-staging-preflight-failure"
+    staging = tmp_path / "staging"
+
+    async def _backend(**_kwargs: object) -> tuple[object, object]:
+        raise AssertionError("backend must not start after preflight failure")
+
+    def _staging_dir(_scan_id: str) -> Path:
+        staging.mkdir()
+        return staging
+
+    monkeypatch.setattr(
+        session_manager,
+        "load_settings",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(backend="docker")),
+    )
+    monkeypatch.setattr(session_manager, "get_backend", lambda _name: _backend)
+    monkeypatch.setattr(session_manager, "extra_file_staging_dir", _staging_dir)
+    monkeypatch.setattr(
+        session_manager,
+        "_assert_burp_port_available",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("preflight failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="preflight failed"):
+        await session_manager.create_or_reuse(
+            scan_id,
+            image="ghcr.io/usestrix/strix-sandbox:1.0.0",
+            local_sources=[],
+            extra_files=[{"workspace_path": "/workspace/notes.txt", "content": b"secret"}],
+            burp_port=8081,
+        )
+
+    assert not staging.exists()
 
 
 @pytest.mark.asyncio

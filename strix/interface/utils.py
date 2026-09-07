@@ -1,6 +1,7 @@
 import ipaddress
 import json
 import logging
+import ntpath
 import os
 import re
 import secrets
@@ -1914,10 +1915,22 @@ def validate_config_file(config_path: str) -> Path:
 # sources, so a large file makes session bring-up slower.
 
 
+def _split_workspace_file_spec(spec: str) -> tuple[str, str | None]:
+    """Split ``PATH[:DEST]`` without treating a Windows drive as a separator."""
+    drive, _ = ntpath.splitdrive(spec)
+    separator = spec.rfind(":")
+    if separator < len(drive):
+        return spec, None
+    source, destination = spec[:separator], spec[separator + 1 :]
+    if not destination.strip():
+        return spec, None
+    return source, destination
+
+
 def _workspace_file_dest(spec: str, source: Path) -> str:
     """Return the workspace-relative destination declared by ``spec``."""
-    _, sep, dest = spec.rpartition(":")
-    candidate = dest.strip() if sep and dest.strip() else source.name
+    _, dest = _split_workspace_file_spec(spec)
+    candidate = dest.strip() if dest is not None else source.name
     if candidate.startswith("/") or Path(candidate).is_absolute():
         if not candidate.startswith("/workspace/"):
             raise ValueError(
@@ -1947,8 +1960,7 @@ def resolve_workspace_files(specs: list[str] | None) -> list[dict[str, str]]:
     resolved: list[dict[str, str]] = []
     seen: dict[str, str] = {}
     for spec in specs or []:
-        raw, sep, dest = spec.rpartition(":")
-        source_text = raw if sep and dest.strip() else spec
+        source_text, _ = _split_workspace_file_spec(spec)
         source = Path(source_text.strip()).expanduser()
         if not source.is_file():
             raise ValueError(f"'{source}' is not an existing file")

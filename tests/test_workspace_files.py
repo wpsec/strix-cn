@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from strix.core.inputs import build_root_task
-from strix.interface.utils import read_workspace_files, resolve_workspace_files
+from strix.interface.utils import (
+    _split_workspace_file_spec,
+    read_workspace_files,
+    resolve_workspace_files,
+)
 
 
 if TYPE_CHECKING:
@@ -23,6 +27,14 @@ def test_a_bare_path_lands_on_the_file_name(tmp_path: Path) -> None:
     assert resolved == [
         {"source_path": str(source.resolve()), "workspace_path": "/workspace/wordlist.txt"}
     ]
+
+
+def test_a_windows_drive_letter_is_not_a_destination_separator() -> None:
+    assert _split_workspace_file_spec(r"C:\wordlist.txt") == (r"C:\wordlist.txt", None)
+    assert _split_workspace_file_spec(r"C:\wordlist.txt:lists/admin.txt") == (
+        r"C:\wordlist.txt",
+        "lists/admin.txt",
+    )
 
 
 @pytest.mark.parametrize(

@@ -49,6 +49,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+MAX_POST_BODY_BYTES = 256 * 1024
+POST_BODY_READ_TIMEOUT_SECONDS = 10.0
+
+
+class _RequestBodyError(Exception):
+    def __init__(self, status: HTTPStatus, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
 
 
 def bundle_dir() -> Path:
@@ -280,14 +289,42 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             except BrokenPipeError:
                 logger.debug("viewer client disconnected during POST %s", path)
+            except _RequestBodyError as exc:
+                self._send_json(exc.status, {"error": exc.message})
             except Exception:
                 # A bad request must never kill the worker thread.
                 logger.exception("viewer request failed: POST %s", path)
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal error"})
 
         def _read_body(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length else b""
+            raw_length = self.headers.get("Content-Length")
+            if raw_length is None:
+                length = 0
+            else:
+                try:
+                    length = int(raw_length)
+                except (TypeError, ValueError) as exc:
+                    raise _RequestBodyError(
+                        HTTPStatus.BAD_REQUEST, "invalid content length"
+                    ) from exc
+                if length < 0:
+                    raise _RequestBodyError(
+                        HTTPStatus.BAD_REQUEST, "invalid content length"
+                    )
+                if length > MAX_POST_BODY_BYTES:
+                    raise _RequestBodyError(
+                        HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request body too large"
+                    )
+
+            self.connection.settimeout(POST_BODY_READ_TIMEOUT_SECONDS)
+            try:
+                raw = self.rfile.read(length) if length else b""
+            except TimeoutError as exc:
+                raise _RequestBodyError(
+                    HTTPStatus.REQUEST_TIMEOUT, "request body read timed out"
+                ) from exc
+            if len(raw) != length:
+                raise _RequestBodyError(HTTPStatus.BAD_REQUEST, "incomplete request body")
             try:
                 body = json.loads(raw or b"{}")
             except json.JSONDecodeError:
