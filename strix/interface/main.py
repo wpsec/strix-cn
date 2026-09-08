@@ -17,7 +17,6 @@ from strix.config import codex, load_settings, persist_current
 from strix.core.paths import run_dir_for
 from strix.interface.cli_args import parse_arguments
 from strix.interface.environment import (
-    _local_sandbox_build_tag,
     check_docker_installed,
     pull_docker_image,
     validate_environment,
@@ -42,6 +41,7 @@ from strix.interface.update_check import (
 from strix.interface.utils import (
     build_final_stats_text,
 )
+from strix.runtime import session_manager
 from strix.telemetry import posthog, scarf
 from strix.telemetry.logging import configure_dependency_logging
 
@@ -471,6 +471,7 @@ def main() -> None:
     check_docker_installed()
     pull_docker_image()
     validate_environment()
+    session_manager.reap_stale_docker_sessions()
 
     if args.non_interactive:
         _bootstrap_scan(args)

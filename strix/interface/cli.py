@@ -159,6 +159,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         signal.signal(signal.SIGHUP, signal_handler)
 
     set_global_report_state(report_state)
+    session_manager.register_process_exit_cleanup(args.run_name)
 
     startup_phase: list[str] = ["Starting up"]
 

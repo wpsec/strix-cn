@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import base64
 import contextlib
 import errno
 import ipaddress
+import json
 import logging
 import os
 import shlex
@@ -22,6 +24,7 @@ from agents.sandbox.entries import BaseEntry, File, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
+from strix.core.paths import run_dir_for, run_record_path, runs_base_dir
 from strix.runtime.backends import backend_supports_bind_mounts, get_backend
 from strix.runtime.caido_bootstrap import UpstreamProxyHttpConfig, bootstrap_caido
 from strix.runtime.host_bridge_proxy import (
@@ -29,6 +32,7 @@ from strix.runtime.host_bridge_proxy import (
     acquire_shared_host_bridge_proxy,
     release_shared_host_bridge_proxy,
 )
+
 
 if TYPE_CHECKING:
     from strix.runtime.status import StatusSink
@@ -47,6 +51,11 @@ _CONTAINER_CAIDO_PROXY_PORT = 48081
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 _STRIX_MANAGED_LABEL = "com.strix.managed"
 _STRIX_SCAN_LABEL = "com.strix.scan_id"
+_TERMINAL_RUN_STATUSES = frozenset(
+    {"completed", "failed", "stopped", "interrupted", "crashed", "token_limit_exhausted"}
+)
+_PROCESS_EXIT_SCAN_IDS: set[str] = set()
+_PROCESS_EXIT_HOOK_REGISTERED = False
 _CONTAINER_PROXY_COMPAT_LOG = "/tmp/strix-caido-proxy-compat.log"
 _CONTAINER_PROXY_COMPAT_PID = "/tmp/strix-caido-proxy-compat.pid"
 
@@ -125,6 +134,59 @@ def _docker_client_for_cleanup() -> Any:
     import docker
 
     return docker.from_env()
+
+
+def _pid_is_alive(pid: object) -> bool:
+    if isinstance(pid, bool) or not isinstance(pid, (int, str)):
+        return False
+    try:
+        value = int(pid)
+    except ValueError:
+        return False
+    if value <= 0:
+        return False
+    try:
+        os.kill(value, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _read_run_record_for_cleanup(scan_id: str, *, cwd: Path | None = None) -> dict[str, Any] | None:
+    base = runs_base_dir(cwd=cwd).resolve()
+    run_dir = run_dir_for(scan_id, cwd=cwd).resolve()
+    if base not in run_dir.parents:
+        logger.warning("拒绝读取越界的 Strix run 目录：scan_id=%s", scan_id)
+        return None
+
+    path = run_record_path(run_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError):
+        logger.warning("无法读取 Strix run 状态，保留容器：scan_id=%s", scan_id, exc_info=True)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _should_reap_container(scan_id: str, *, cwd: Path | None = None) -> bool:
+    record = _read_run_record_for_cleanup(scan_id, cwd=cwd)
+    if record is None:
+        return False
+
+    status = record.get("status")
+    if status in _TERMINAL_RUN_STATUSES:
+        return True
+    if status != "running":
+        return False
+
+    process_id = record.get("process_id")
+    return process_id is not None and not _pid_is_alive(process_id)
 
 
 def _result_stream_text(stream: Any) -> str:
@@ -259,7 +321,8 @@ async def _ensure_container_proxy_listener(
         )
 
     logger.warning(
-        "Caido sandbox image is using legacy single-port mode; enabling proxy compatibility shim %s -> %s",
+        "Caido sandbox image uses legacy single-port mode; enabling proxy compatibility "
+        "shim %s -> %s",
         proxy_port,
         ui_port,
     )
@@ -320,6 +383,113 @@ async def _cleanup_persisted_docker_sessions(scan_id: str) -> None:
     finally:
         with contextlib.suppress(Exception):
             docker_client.close()
+
+
+def cleanup_persisted_docker_session_sync(scan_id: str) -> None:
+    """Synchronously remove one scan's labeled Docker containers.
+
+    This is intentionally separate from the async session cleanup because an
+    ``atexit`` hook may run after the event loop has already been closed.
+    """
+    try:
+        docker_client = _docker_client_for_cleanup()
+    except Exception:  # noqa: BLE001
+        logger.debug("sync cleanup(%s): Docker client unavailable", scan_id, exc_info=True)
+        return
+
+    try:
+        containers = docker_client.containers.list(
+            all=True,
+            filters={
+                "label": [
+                    f"{_STRIX_MANAGED_LABEL}=true",
+                    f"{_STRIX_SCAN_LABEL}={scan_id}",
+                ]
+            },
+        )
+        for container in containers:
+            try:
+                container.remove(force=True)
+                logger.info(
+                    "Removed Strix sandbox during process-exit cleanup "
+                    "for scan %s (container=%s)",
+                    scan_id,
+                    getattr(container, "short_id", "?"),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "sync cleanup(%s): persisted container removal failed",
+                    scan_id,
+                )
+    except Exception:  # noqa: BLE001
+        logger.debug("sync cleanup(%s): persisted container lookup failed", scan_id, exc_info=True)
+    finally:
+        with contextlib.suppress(Exception):
+            docker_client.close()
+
+
+def _cleanup_registered_process_exit_sessions() -> None:
+    for scan_id in tuple(_PROCESS_EXIT_SCAN_IDS):
+        cleanup_persisted_docker_session_sync(scan_id)
+
+
+def register_process_exit_cleanup(scan_id: str | None) -> None:
+    """Register a synchronous Docker cleanup fallback for a running scan."""
+    global _PROCESS_EXIT_HOOK_REGISTERED
+
+    if not scan_id:
+        return
+    _PROCESS_EXIT_SCAN_IDS.add(scan_id)
+    if not _PROCESS_EXIT_HOOK_REGISTERED:
+        atexit.register(_cleanup_registered_process_exit_sessions)
+        _PROCESS_EXIT_HOOK_REGISTERED = True
+
+
+def reap_stale_docker_sessions(*, cwd: Path | None = None) -> int:
+    """Remove containers whose persisted scan owner is no longer running.
+
+    Terminal run states are safe to reap. A ``running`` run is reaped only
+    when its recorded owner PID is no longer alive; records without a PID are
+    retained for safety and can be inspected manually.
+    """
+    try:
+        docker_client = _docker_client_for_cleanup()
+    except Exception:  # noqa: BLE001
+        logger.debug("stale session reaper: Docker client unavailable", exc_info=True)
+        return 0
+
+    removed = 0
+    try:
+        containers = docker_client.containers.list(
+            all=True,
+            filters={"label": f"{_STRIX_MANAGED_LABEL}=true"},
+        )
+        for container in containers:
+            labels = getattr(container, "labels", {}) or {}
+            scan_id = labels.get(_STRIX_SCAN_LABEL)
+            if not isinstance(scan_id, str) or not scan_id:
+                continue
+            if not _should_reap_container(scan_id, cwd=cwd):
+                continue
+            try:
+                container.remove(force=True)
+                removed += 1
+                logger.info(
+                    "Removed stale Strix sandbox for scan %s (container=%s)",
+                    scan_id,
+                    getattr(container, "short_id", "?"),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "stale session reaper: container removal failed for scan %s",
+                    scan_id,
+                )
+    except Exception:  # noqa: BLE001
+        logger.debug("stale session reaper: container lookup failed", exc_info=True)
+    finally:
+        with contextlib.suppress(Exception):
+            docker_client.close()
+    return removed
 
 
 async def _cleanup_partial_session(
@@ -814,9 +984,10 @@ async def cleanup(scan_id: str) -> None:
         logger.info("Cleaned up sandbox session for scan %s", scan_id)
     except Exception:
         logger.exception(
-            "cleanup(%s): client.delete raised; container may need manual reaping",
+            "cleanup(%s): client.delete raised; falling back to label-based removal",
             scan_id,
         )
+        await _cleanup_persisted_docker_sessions(scan_id)
 
     docker_client = getattr(client, "docker_client", None)
     if docker_client is not None:

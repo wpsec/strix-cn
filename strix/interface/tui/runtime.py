@@ -37,6 +37,7 @@ from strix.interface.tui.sidecar import (
 )
 from strix.interface.utils import read_workspace_files
 from strix.report.state import ReportState, set_global_report_state
+from strix.runtime import session_manager
 from strix.runtime.proxy_capture import ProxyCapturePoller
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -115,6 +116,7 @@ class GoTuiRuntime:
         self.report_state.set_scan_config(self.scan_config)
         self.report_state.save_run_data()
         set_global_report_state(self.report_state)
+        session_manager.register_process_exit_cleanup(self.scan_config["run_name"])
         self.live_view.hydrate_from_run_dir(self.report_state.get_run_dir())
         self.controller.set_runtime(
             report_state=self.report_state,

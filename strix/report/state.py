@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import subprocess
 import threading
@@ -246,6 +247,7 @@ class ReportState:
             "start_time": self.start_time,
             "end_time": None,
             "status": "running",
+            "process_id": os.getpid(),
             "auth_mode": auth_mode,
             "mode": "normal",
             "policy_version": None,
@@ -932,6 +934,7 @@ class ReportState:
         self.run_record.update(
             {
                 "targets_info": config.get("targets", []),
+                "process_id": os.getpid(),
                 "mode": mode,
                 "policy_version": POLICY_VERSION if mode == "redteam" else None,
                 "instruction": config.get("user_instructions", ""),
