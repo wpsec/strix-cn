@@ -142,6 +142,38 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 .venv/bin/strix --burp-port 8081
 ```
 
+### 红队专项模式
+
+红队专项模式只对已授权目标执行高风险、无害且可审计的安全验证。它使用白名单策略拦截未知和不在专项范围内的测试意图，并将最终 Markdown 报告整理为结构化攻击链和漏洞验证章节。
+
+```bash
+# 使用 --red 启动红队专项模式
+strix --red --target https://staging.example.com
+
+# 使用显式模式参数
+strix --mode redteam --target https://staging.example.com
+
+# 使用环境变量
+STRIX_MODE=redteam strix --target https://staging.example.com
+```
+
+模式选择优先级为：CLI 参数 > `STRIX_MODE` > 持久化配置 > `normal`。扫描开始后模式不可切换，使用 `--resume` 时必须沿用原运行记录中的模式。
+
+红队专项模式只允许 RCE、可写文件上传、堆叠查询 SQL 注入、反序列化、受控 SSRF 元数据验证以及有实际权限影响证明的漏洞类型；XSS、CSRF、点击劫持、弱 SSL/TLS、敏感信息泄露、缺少安全头和未知类型会在请求发出前被拦截。
+
+验证深度限定为身份确认、随机 marker 文件上传并清理、只读 SQL 查询和受控 Canary。不会生成或投递 Webshell、反弹 Shell、凭据窃取、持久化或真实自动提权流程。
+
+运行产物位于 `strix_runs/<run-name>/`，其中 `penetration_test_report.md` 和 `vulnerabilities/*.md` 使用红队专项结构化 Markdown 格式，`run.json` 会记录：
+
+```json
+{
+  "mode": "redteam",
+  "policy_version": "redteam-v1"
+}
+```
+
+完整设计和报告章节说明见 [`docs/plan/100-红队专项模式设计与实现方案.md`](docs/plan/100-红队专项模式设计与实现方案.md)。
+
 ## 常见用法
 
 ### 基础扫描
