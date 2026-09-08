@@ -356,6 +356,16 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
     )
     response_fence = safe_fence(response)
     lines.extend(["", f"{response_fence}http", response, response_fence, ""])
+    provenance = report.get("credential_provenance")
+    if isinstance(provenance, dict) and provenance:
+        lines.extend(
+            [
+                "- 凭据材料获取过程：",
+                "",
+                *(f"  - {key}：{_redteam_text(value)}" for key, value in provenance.items()),
+                "",
+            ]
+        )
     lines.extend(
         [
             f"- 证明的安全影响：{permission_impact}",
@@ -868,6 +878,12 @@ def render_vulnerability_md(
     if report.get("evidence"):
         lines.append("## 证据\n")
         lines.append(str(report["evidence"]))
+        lines.append("")
+
+    provenance = report.get("credential_provenance")
+    if isinstance(provenance, dict) and provenance:
+        lines.append("## 凭据材料获取过程\n")
+        lines.extend(f"- {key}：{value}" for key, value in provenance.items())
         lines.append("")
 
     if dep_meta.get("reachability_evidence"):

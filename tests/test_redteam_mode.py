@@ -129,6 +129,7 @@ def test_redteam_prompt_is_versioned_and_safe() -> None:
     assert "redteam-v2" in prompt
     assert "Never create or deploy Webshells" in prompt
     assert "reverse-shell" in prompt
+    assert "exact field or file location" in prompt
 
 
 @pytest.mark.asyncio
@@ -222,6 +223,56 @@ def test_report_state_filters_and_builds_redteam_chain(monkeypatch: pytest.Monke
     assert report_id == "vuln-0001"
     assert len(state.vulnerability_reports) == 1
     assert "placeholder-value" not in json.dumps(state.vulnerability_reports)
+
+
+def test_credential_provenance_records_acquisition_without_secret_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = ReportState(run_name="credential-provenance")
+    state.set_scan_config({"mode": "redteam", "targets": [], "scan_mode": "quick"})
+    monkeypatch.setattr(state, "save_run_data", lambda: None)
+
+    report_id = state.add_vulnerability_report(
+        "Credential material observed",
+        "high",
+        vulnerability_type="credential_exposure_observed",
+        impact="材料已脱敏，仅记录 sha256 指纹",
+        evidence="response field contained credential-shaped material",
+        validation_evidence="observed, not validated",
+        credential_provenance={
+            "material_type": "Bearer token",
+            "source": "HTTP response",
+            "source_location": "GET /api/config -> data.access_token",
+            "acquisition_method": "从响应 JSON 字段读取并计算指纹",
+            "validation_status": "observed_unverified",
+            "fingerprint": "sha256:" + "b" * 64,
+            "length": "384",
+            "raw_value": "must-not-be-stored",
+        },
+    )
+
+    assert report_id == "vuln-0001"
+    report = state.vulnerability_reports[0]
+    provenance = report["credential_provenance"]
+    assert provenance["source_location"] == "GET /api/config -> data.access_token"
+    assert provenance["validation_status"] == "observed_unverified"
+    assert "raw_value" not in provenance
+
+    markdown = render_complete_report(
+        "# 执行摘要\n\n已观察",
+        run_record={"mode": "redteam", "policy_version": "redteam-v2"},
+        vulnerability_reports=state.vulnerability_reports,
+    )
+    html = render_html_report(
+        final_scan_result="# 执行摘要\n\n已观察",
+        run_record={"mode": "redteam", "policy_version": "redteam-v2"},
+        vulnerability_reports=state.vulnerability_reports,
+    )
+    assert "凭据材料获取过程" in markdown
+    assert "GET /api/config -> data.access_token" in markdown
+    assert "observed_unverified" in html
+    assert "must-not-be-stored" not in markdown
+    assert "must-not-be-stored" not in html
 
 
 def test_attack_chain_and_delivery_renderers_filter_and_redact() -> None:

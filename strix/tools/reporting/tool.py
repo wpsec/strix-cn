@@ -749,6 +749,7 @@ async def _do_create(  # noqa: PLR0912
     permission_proof: str | None = None,
     request: str | None = None,
     response: str | None = None,
+    credential_provenance: dict[str, str] | None = None,
     cvss_4_vector: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
@@ -870,6 +871,7 @@ async def _do_create(  # noqa: PLR0912
             "permission_proof": permission_proof,
             "request": request,
             "response": response,
+            "credential_provenance": credential_provenance,
             "cvss_4_vector": cvss_4_vector,
             "cvss_4_score": cvss_4_score,
             "cvss_4_severity": cvss_4_severity,
@@ -972,6 +974,7 @@ async def create_vulnerability_report(
     permission_proof: str | None = None,
     request: str | None = None,
     response: str | None = None,
+    credential_provenance: dict[str, str] | None = None,
     cvss_4_vector: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
@@ -1335,6 +1338,11 @@ async def create_vulnerability_report(
             black-box findings.
         cvss_4_vector: Optional validated CVSS 4.0 base vector. If omitted,
             the Markdown report explicitly marks CVSS 4.0 as unavailable.
+        credential_provenance: Optional structured metadata describing where
+            credential material was observed and how its impact was validated.
+            Use only provenance fields such as source, response location,
+            validation status, identity, scope, fingerprint, and length; do
+            not place raw credential values in this field.
 
     Example (abbreviated — mirror this structure)::
 
@@ -1412,6 +1420,7 @@ async def create_vulnerability_report(
         permission_proof=permission_proof,
         request=request,
         response=response,
+        credential_provenance=credential_provenance,
         cvss_4_vector=cvss_4_vector,
         agent_id=agent_id,
         agent_name=agent_name,
@@ -1448,6 +1457,7 @@ async def update_vulnerability_report(
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     contextual_cvss_reasoning: str | None = None,
+    credential_provenance: dict[str, str] | None = None,
 ) -> str:
     """Revise a vulnerability report that is already filed, keeping its id.
 
@@ -1522,6 +1532,9 @@ async def update_vulnerability_report(
         contextual_cvss_reasoning: Dependency findings only. What you
             observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
+        credential_provenance: Replacement source, location and validation
+            metadata for observed credential material; raw values are not
+            accepted into the report.
     """
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
@@ -1553,6 +1566,7 @@ async def update_vulnerability_report(
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "contextual_cvss_reasoning": contextual_cvss_reasoning,
+            "credential_provenance": credential_provenance,
         },
         agent_id=agent_id,
         agent_name=agent_name,

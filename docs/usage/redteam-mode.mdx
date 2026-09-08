@@ -138,6 +138,20 @@ asyncio.run(main())
 
 红队报告使用 Markdown 格式，正文包含固定章节：漏洞名称、漏洞等级与 CVSS 4.0、漏洞位置、漏洞描述、漏洞定位过程、安全验证过程、漏洞根因、漏洞影响、修复建议、复测方案、证据限制与待确认事项。结论必须引用请求、响应、前端代码和服务端行为，不使用“AI 黑盒测试发现”“通过利用”“绕过”或“最终确认利用”等模糊表述。
 
+对于 Token、Key 或其他凭据材料，报告必须说明获取过程：材料类型、来源（例如 HTTP Response、前端配置或日志）、具体字段/文件位置、获取动作、验证状态、指纹和长度。`validation_status` 应明确区分 `observed_unverified` 与 `validated`；没有受控验证接口时不能声称凭据可用。凭据原文不进入报告，未知字段也不会被持久化。
+
+示例：
+
+```text
+material_type: Bearer token
+source: HTTP response
+source_location: GET /api/config -> data.access_token
+acquisition_method: 从响应 JSON 字段读取并计算指纹
+validation_status: observed_unverified
+fingerprint: sha256:<fingerprint>
+length: 384
+```
+
 攻击链报告只包含成功验证的 High/Critical 节点：
 
 ```markdown

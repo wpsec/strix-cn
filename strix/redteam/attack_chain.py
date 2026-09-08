@@ -20,6 +20,24 @@ _SENSITIVE_QUERY = re.compile(
     r"(?i)([?&](?:token|secret|password|passwd|api[_-]?key|access_token)=)([^&#\s]+)"
 )
 _MAX_EVIDENCE_CHARS = 16_000
+_MAX_PROVENANCE_CHARS = 2_000
+_CREDENTIAL_PROVENANCE_FIELDS = frozenset(
+    {
+        "material_type",
+        "source",
+        "source_location",
+        "acquisition_method",
+        "authentication_context",
+        "validation_status",
+        "validation_endpoint",
+        "validation_result",
+        "identity",
+        "privilege_scope",
+        "fingerprint",
+        "length",
+        "evidence_reference",
+    }
+)
 
 
 def redact_sensitive_text(value: object, *, max_chars: int = _MAX_EVIDENCE_CHARS) -> str:
@@ -31,6 +49,21 @@ def redact_sensitive_text(value: object, *, max_chars: int = _MAX_EVIDENCE_CHARS
     if len(text) > max_chars:
         text = f"{text[:max_chars]}\n[证据已截断]"
     return text
+
+
+def redact_credential_provenance(value: object) -> dict[str, str]:
+    """Keep provenance metadata while excluding raw credential fields."""
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key).strip()
+        if key not in _CREDENTIAL_PROVENANCE_FIELDS:
+            continue
+        if raw_value in (None, ""):
+            continue
+        result[key] = redact_sensitive_text(raw_value, max_chars=_MAX_PROVENANCE_CHARS)
+    return result
 
 
 def build_attack_chain(reports: list[dict[str, Any]]) -> dict[str, Any]:
@@ -70,6 +103,9 @@ def build_attack_chain(reports: list[dict[str, Any]]) -> dict[str, Any]:
                 "permission_proof": redact_sensitive_text(report.get("permission_proof")),
                 "request": redact_sensitive_text(report.get("request")),
                 "response": redact_sensitive_text(report.get("response")),
+                "credential_provenance": redact_credential_provenance(
+                    report.get("credential_provenance")
+                ),
             }
         )
         if index > 1:
@@ -96,4 +132,8 @@ def redact_report_evidence(report: dict[str, Any]) -> dict[str, Any]:
     ):
         if field in sanitized and sanitized[field] not in (None, ""):
             sanitized[field] = redact_sensitive_text(sanitized[field])
+    if sanitized.get("credential_provenance"):
+        sanitized["credential_provenance"] = redact_credential_provenance(
+            sanitized["credential_provenance"]
+        )
     return sanitized

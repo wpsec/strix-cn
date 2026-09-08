@@ -12,6 +12,7 @@ from markdown_it import MarkdownIt
 from strix.redteam.attack_chain import build_attack_chain, redact_report_evidence
 from strix.redteam.policy import normalize_vulnerability_type, should_ignore
 
+
 _MARKDOWN = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": False})
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _SEVERITY_LABELS = {
@@ -35,6 +36,12 @@ def _html(value: Any, fallback: str = "未提供") -> str:
 def _markdown(value: Any, fallback: str = "未提供。") -> str:
     source = _text(value, fallback)
     return _MARKDOWN.render(source)
+
+
+def _finding_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return "\n".join(f"- **{key}**：{item}" for key, item in value.items())
+    return value
 
 
 def _section(final_scan_result: str | None, title: str, fallback: str) -> str:
@@ -98,6 +105,7 @@ def _finding_sections(report: dict[str, Any]) -> str:
         ("权限证明", report.get("permission_proof")),
         ("Request", report.get("request")),
         ("Response", report.get("response")),
+        ("凭据材料获取过程", report.get("credential_provenance")),
         ("复现说明", report.get("poc_description")),
         ("概念验证", report.get("poc_script_code")),
         ("如何修复", report.get("remediation_steps")),
@@ -105,7 +113,7 @@ def _finding_sections(report: dict[str, Any]) -> str:
     ]
     sections = [
         f'<section class="finding-section"><h4>{escape(title)}</h4>'
-        f'<div class="prose">{_markdown(value)}</div></section>'
+        f'<div class="prose">{_markdown(_finding_value(value))}</div></section>'
         for title, value in fields
         if value not in (None, "", [])
     ]

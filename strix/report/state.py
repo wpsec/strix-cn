@@ -19,7 +19,11 @@ from strix.core.token_budget import (
     TokenBudgetPlan,
     normalize_token_limit,
 )
-from strix.redteam.attack_chain import build_attack_chain, redact_report_evidence
+from strix.redteam.attack_chain import (
+    build_attack_chain,
+    redact_credential_provenance,
+    redact_report_evidence,
+)
 from strix.redteam.policy import (
     POLICY_VERSION,
     normalize_mode,
@@ -104,6 +108,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "code_locations",
         "fix_verification",
         "fix_pr_body",
+        "credential_provenance",
     }
 )
 
@@ -446,6 +451,7 @@ class ReportState:
         permission_proof: str | None = None,
         request: str | None = None,
         response: str | None = None,
+        credential_provenance: dict[str, str] | None = None,
         cvss_4_vector: str | None = None,
         cvss_4_score: float | None = None,
         cvss_4_severity: str | None = None,
@@ -478,6 +484,9 @@ class ReportState:
             report["request"] = request.strip()
         if response:
             report["response"] = response.strip()
+        safe_credential_provenance = redact_credential_provenance(credential_provenance)
+        if safe_credential_provenance:
+            report["credential_provenance"] = safe_credential_provenance
         if cvss_4_vector:
             report["cvss_4_vector"] = cvss_4_vector.strip()
         if cvss_4_score is not None:
@@ -582,6 +591,10 @@ class ReportState:
             if key not in UPDATABLE_REPORT_FIELDS or raw_value is None:
                 continue
             value = raw_value
+            if key == "credential_provenance":
+                value = redact_credential_provenance(value)
+                if not value:
+                    continue
             if isinstance(value, str):
                 value = _clean_title(value) if key == "title" else value.strip()
                 if key in _LOWERCASE_REPORT_FIELDS:
