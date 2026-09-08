@@ -169,6 +169,7 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "instruction": terminal_projection(state["instruction"], max_string=128),
         "scan_mode": state["scan_mode"],
         "max_budget_usd": state["max_budget_usd"],
+        "token_limit": state.get("token_limit"),
         "max_turns": state["max_turns"],
         "scope_mode": state["scope_mode"],
         "diff_base": state["diff_base"],

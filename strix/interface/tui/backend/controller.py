@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.token_budget import normalize_token_limit
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.backend.projection import (
     MAX_TERMINAL_EVENTS,
@@ -87,6 +88,8 @@ class TuiController:
             and raw_budget > 0
             else None
         )
+        raw_token_limit = getattr(args, "token_limit", None)
+        self.token_limit = normalize_token_limit(raw_token_limit)
         raw_turns = args.max_turns
         self.max_turns = (
             raw_turns
@@ -227,6 +230,7 @@ class TuiController:
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "max_budget_usd": self.max_budget_usd,
+            "token_limit": self.token_limit,
             "max_turns": self.max_turns,
             "scope_mode": self.scope_mode,
             "diff_base": terminal_projection(self.diff_base, max_string=256),

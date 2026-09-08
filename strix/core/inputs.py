@@ -269,6 +269,11 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     targets = scan_config.get("targets", []) or []
     proxy_scope = build_proxy_scope_constraints(scan_config)
+    token_limit = scan_config.get("token_limit")
+    token_context = {
+        "token_limit": token_limit,
+        "token_budget_policy": bool(token_limit),
+    }
     if not targets and scan_config.get("burp_port") is not None:
         return {
             "scope_source": "burp_upstream_proxy",
@@ -280,6 +285,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
                 scan_config.get("credential_auth_available", False)
             ),
             "allow_credential_attacks": bool(scan_config.get("allow_credential_attacks", False)),
+            **token_context,
             **proxy_scope,
             "user_instructions_do_not_expand_scope": True,
         }
@@ -328,6 +334,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "container_image_targets": container_images,
         "target_credentials_available": bool(scan_config.get("credential_auth_available", False)),
         "allow_credential_attacks": bool(scan_config.get("allow_credential_attacks", False)),
+        **token_context,
         **proxy_scope,
         "user_instructions_do_not_expand_scope": True,
     }

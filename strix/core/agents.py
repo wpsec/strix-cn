@@ -152,8 +152,12 @@ class AgentCoordinator:
         name: str,
         parent_id: str | None,
         *,
+        task_id: str | None = None,
         task: str | None = None,
         skills: list[str] | None = None,
+        priority: str = "P2",
+        estimated_tokens: int | None = None,
+        mandatory: bool = False,
     ) -> None:
         async with self._lock:
             self.statuses[agent_id] = "running"
@@ -161,8 +165,12 @@ class AgentCoordinator:
             self.names[agent_id] = name
             self.pending_counts.setdefault(agent_id, 0)
             self.metadata[agent_id] = {
+                "task_id": task_id,
                 "task": task or "",
                 "skills": list(skills or []),
+                "priority": priority,
+                "estimated_tokens": estimated_tokens,
+                "mandatory": bool(mandatory),
             }
             self.runtimes.setdefault(agent_id, AgentRuntime())
         logger.info("agent.register %s (%s) parent=%s", agent_id, name, parent_id or "-")

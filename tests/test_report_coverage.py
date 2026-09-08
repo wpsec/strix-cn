@@ -71,6 +71,23 @@ def test_ledger_entries_are_labelled_as_agent_reported() -> None:
     assert doc["machine_observed"]["skills_exercised"] == ["idor"]
 
 
+def test_machine_observed_includes_token_budget_and_severity_coverage() -> None:
+    doc = _document(
+        run_record={
+            "run_id": "r1",
+            "status": "token_limit_exhausted",
+            "token_limit": 1000,
+            "tokens_used": 1000,
+            "tokens_remaining": 0,
+            "token_limit_status": "exhausted",
+            "coverage_by_severity": {"critical": 1, "high": 2},
+        }
+    )
+
+    assert doc["machine_observed"]["token_budget"]["tokens_remaining"] == 0
+    assert doc["machine_observed"]["coverage_by_severity"]["high"] == 2
+
+
 def test_assigned_risk_skill_without_coverage_becomes_a_gap() -> None:
     """An agent carrying the sql_injection skill that records nothing about it
     leaves the class unexamined, not clean."""

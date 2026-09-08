@@ -7,6 +7,7 @@ from typing import Any
 
 from agents.usage import Usage, deserialize_usage, serialize_usage
 
+from strix.core.token_budget import DEFAULT_TOKEN_ESTIMATE_PER_REQUEST
 from strix.report.pricing import resolve_litellm_model
 
 
@@ -23,6 +24,9 @@ class LLMUsageLedger:
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        self._effective_tokens = 0
+        self._estimated_tokens = 0
+        self._last_record_was_estimated = False
         # When True, tokens are still tracked but cost stays $0 — the run is on a
         # model subscription, so there is no metered per-token charge to report.
         self.zero_cost = False
@@ -34,13 +38,33 @@ class LLMUsageLedger:
         usage: Usage | None,
         agent_name: str | None = None,
         model: str | None = None,
-    ) -> bool:
+        fallback_tokens: int = 0,
+    ) -> int:
+        self._last_record_was_estimated = False
+        actual_tokens = _resolve_total_tokens(usage) if usage is not None else 0
         if usage is None or not _usage_has_activity(usage):
-            return False
+            if fallback_tokens <= 0:
+                return 0
+            synthetic_usage = Usage()
+            synthetic_usage.requests = 1
+            usage = synthetic_usage
+            actual_tokens = 0
+
+        if actual_tokens > 0:
+            effective_tokens = actual_tokens
+        else:
+            requests = _int_or_zero(getattr(usage, "requests", 0))
+            effective_tokens = max(
+                int(fallback_tokens or 0),
+                requests * DEFAULT_TOKEN_ESTIMATE_PER_REQUEST,
+            )
+            self._estimated_tokens += effective_tokens
+            self._last_record_was_estimated = True
 
         normalized_agent_id = str(agent_id or "unknown")
         self._total_usage.add(usage)
         self._agent_usage.setdefault(normalized_agent_id, Usage()).add(usage)
+        self._effective_tokens += effective_tokens
 
         metadata = self._agent_metadata.setdefault(normalized_agent_id, {})
         if agent_name:
@@ -53,7 +77,19 @@ class LLMUsageLedger:
             if estimated:
                 self._estimated_cost += estimated
 
-        return True
+        return effective_tokens
+
+    @property
+    def effective_tokens(self) -> int:
+        return self._effective_tokens
+
+    @property
+    def estimated_tokens(self) -> int:
+        return self._estimated_tokens
+
+    @property
+    def last_record_was_estimated(self) -> bool:
+        return self._last_record_was_estimated
 
     def record_observed_cost(self, cost: float) -> None:
         if self.zero_cost:
@@ -71,6 +107,8 @@ class LLMUsageLedger:
     def to_record(self) -> dict[str, Any]:
         record = serialize_usage(self._total_usage)
         record["cost"] = self.total_cost
+        record["effective_total_tokens"] = self._effective_tokens
+        record["estimated_tokens"] = self._estimated_tokens
         record["agents"] = []
 
         agent_tokens = {aid: _resolve_total_tokens(u) for aid, u in self._agent_usage.items()}
@@ -102,6 +140,9 @@ class LLMUsageLedger:
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        self._effective_tokens = 0
+        self._estimated_tokens = 0
+        self._last_record_was_estimated = False
 
         if not isinstance(raw_usage, dict):
             return
@@ -115,6 +156,14 @@ class LLMUsageLedger:
         persisted_cost = _float_or_zero(raw_usage.get("cost"))
         self._observed_cost = persisted_cost
         self._estimated_cost = persisted_cost
+        persisted_effective_tokens = raw_usage.get("effective_total_tokens")
+        if isinstance(persisted_effective_tokens, int | float) and persisted_effective_tokens >= 0:
+            self._effective_tokens = int(persisted_effective_tokens)
+        else:
+            self._effective_tokens = _resolve_total_tokens(self._total_usage)
+        persisted_estimated_tokens = raw_usage.get("estimated_tokens")
+        if isinstance(persisted_estimated_tokens, int | float) and persisted_estimated_tokens >= 0:
+            self._estimated_tokens = int(persisted_estimated_tokens)
 
         for raw_agent in raw_usage.get("agents") or []:
             if not isinstance(raw_agent, dict):
@@ -139,12 +188,21 @@ class LLMUsageLedger:
 
 
 def _resolve_total_tokens(usage: Usage) -> int:
+    prompt = _int_or_zero(getattr(usage, "input_tokens", 0))
+    completion = _int_or_zero(getattr(usage, "output_tokens", 0))
+    if prompt or completion:
+        return prompt + completion
     total = max(0, int(usage.total_tokens or 0))
     if total > 0:
         return total
-    prompt = _int_or_zero(getattr(usage, "input_tokens", 0))
-    completion = _int_or_zero(getattr(usage, "output_tokens", 0))
-    return prompt + completion
+    entries_total = 0
+    for entry in getattr(usage, "request_usage_entries", ()) or ():
+        entry_prompt = _int_or_zero(getattr(entry, "input_tokens", 0))
+        entry_completion = _int_or_zero(getattr(entry, "output_tokens", 0))
+        entries_total += entry_prompt + entry_completion
+        if entry_prompt == 0 and entry_completion == 0:
+            entries_total += _int_or_zero(getattr(entry, "total_tokens", 0))
+    return entries_total
 
 
 def _usage_has_activity(usage: Usage) -> bool:

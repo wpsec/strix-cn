@@ -308,6 +308,18 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--token-limit",
+        dest="token_limit",
+        metavar="N",
+        type=_positive_int,
+        default=None,
+        help=(
+            "扫描级有效 Token 上限（需大于 0）。配置后优先测试严重/高危漏洞；"
+            "未配置表示不限制扫描 Token。"
+        ),
+    )
+
+    parser.add_argument(
         "--max-turns",
         dest="max_turns",
         metavar="N",
@@ -447,6 +459,21 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         state = read_run_record(run_dir)
     except (RuntimeError, TypeError) as exc:
         parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
+
+    from strix.core.token_budget import normalize_token_limit
+
+    try:
+        persisted_token_limit = normalize_token_limit(state.get("token_limit"))
+    except ValueError as exc:
+        parser.error(f"--resume {args.resume}：历史 token_limit 无效：{exc}")
+    requested_token_limit = getattr(args, "token_limit", None)
+    if requested_token_limit is None:
+        args.token_limit = persisted_token_limit
+    elif persisted_token_limit is not None and requested_token_limit < persisted_token_limit:
+        parser.error(
+            "--resume 不允许降低历史 token_limit；"
+            "如需追加额度，请显式提供更大的 --token-limit。"
+        )
 
     args.targets_info = state.get("targets_info") or []
     # A target-less run has no targets_info at all. It is driven by its

@@ -329,10 +329,14 @@ async def spawn_child_agent(
     max_turns: int,
     interactive: bool,
     parent_ctx: dict[str, Any],
+    task_id: str | None = None,
     name: str,
     task: str,
     skills: list[str],
     parent_history: list[Any],
+    priority: str = "P2",
+    estimated_tokens: int | None = None,
+    mandatory: bool = False,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -346,8 +350,12 @@ async def spawn_child_agent(
         child_id,
         name,
         parent_id,
+        task_id=task_id,
         task=task,
         skills=skills,
+        priority=priority,
+        estimated_tokens=estimated_tokens,
+        mandatory=mandatory,
     )
 
     await _start_child_runner(
@@ -370,6 +378,7 @@ async def spawn_child_agent(
             task=task,
             parent_history=parent_history,
         ),
+        task_priority=priority,
         event_sink=event_sink,
         hooks=hooks,
     )
@@ -447,6 +456,7 @@ async def respawn_subagents(
                 parent_id=parent_id,
                 task=str(md.get("task", "")),
                 initial_input=[],
+                task_priority=str(md.get("priority") or "P2"),
                 start_parked=start_parked,
                 event_sink=event_sink,
                 hooks=hooks,
@@ -965,6 +975,7 @@ async def notify_parent_on_terminal(
     agent_id: str,
     status: str,
 ) -> None:
+    await _settle_token_task(coordinator, agent_id, status)
     template = _TERMINAL_NOTICE.get(status)
     if template is None:
         return
@@ -991,6 +1002,35 @@ async def notify_parent_on_terminal(
         interrupt=False,
         persist_to_session=True,
     )
+
+
+async def _settle_token_task(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    status: str,
+) -> None:
+    """Release a child task estimate on every terminal path, including crashes."""
+    if status not in {"completed", "failed", "stopped", "crashed"}:
+        return
+    async with coordinator._lock:
+        metadata = dict(coordinator.metadata.get(agent_id, {}))
+    task_id = metadata.get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        return
+
+    try:
+        from strix.report.state import get_global_report_state
+
+        report_state = get_global_report_state()
+        if report_state is None:
+            return
+        if status == "completed":
+            report_state.mark_token_task_completed(task_id)
+            report_state.mark_priority_completed(metadata.get("priority", "P2"))
+        else:
+            report_state.mark_token_task_failed(task_id, f"agent_{status}")
+    except Exception:
+        logger.exception("failed to settle Token task %s after agent %s", task_id, status)
 
 
 def _reserve_notice() -> dict[str, Any]:
@@ -1045,6 +1085,7 @@ async def _start_child_runner(
     parent_id: str | None,
     task: str,
     initial_input: Any,
+    task_priority: str = "P2",
     start_parked: bool = False,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
@@ -1057,6 +1098,7 @@ async def _start_child_runner(
     child_ctx["agent_id"] = child_id
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
+    child_ctx["task_priority"] = task_priority
 
     async def _child_loop() -> None:
         # A budget stop is a clean scan-wide shutdown, not a child failure: the

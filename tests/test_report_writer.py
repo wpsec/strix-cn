@@ -82,6 +82,50 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
     assert "**接口：** /api/login" in md
 
 
+def test_token_boundary_reports_completed_and_uncovered_tasks() -> None:
+    record = {
+        "run_name": "token-run",
+        "status": "token_limit_exhausted",
+        "token_limit": 100,
+        "tokens_used": 100,
+        "tokens_remaining": 0,
+        "token_limit_status": "exhausted",
+        "stop_reason": "token_limit_exhausted",
+        "completed_priorities": ["P0", "P1"],
+        "planned_tasks": [
+            {
+                "task_id": "task-done",
+                "priority": "P0",
+                "status": "completed",
+                "task": "认证与授权检查",
+            },
+            {
+                "task_id": "task-open",
+                "priority": "P2",
+                "status": "failed",
+                "task": "中危业务逻辑扩展测试",
+            },
+        ],
+        "skipped_tasks": [
+            {"task_id": "task-skipped", "priority": "P3", "task": "低危边缘场景"}
+        ],
+        "coverage_by_severity": {"critical": 0, "high": 1, "medium": 0, "low": 0},
+    }
+    markdown = render_complete_report("# 执行摘要\n\n摘要", run_record=record)
+    html = render_html_report(
+        final_scan_result="# 执行摘要\n\n摘要",
+        run_record=record,
+        vulnerability_reports=[],
+    )
+
+    assert "认证与授权检查" in markdown
+    assert "中危业务逻辑扩展测试" in markdown
+    assert "低危边缘场景" in markdown
+    assert "认证与授权检查" in html
+    assert "中危业务逻辑扩展测试" in html
+    assert "低危边缘场景" in html
+
+
 def test_render_vulnerability_md_includes_dependency_fields() -> None:
     md = render_vulnerability_md(
         _sample_report(
@@ -294,6 +338,30 @@ def test_complete_report_contains_cover_toc_risk_table_and_findings() -> None:
     assert "### vuln-0001" in report
     assert "#### 漏洞描述" in report
     assert "## 6. 附录：交付物说明" in report
+
+
+def test_token_exhaustion_is_explicit_in_delivery_report() -> None:
+    report = render_complete_report(
+        "# 执行摘要\n\n测试因 Token 限制停止。",
+        run_record={
+            "run_name": "受限测试",
+            "status": "token_limit_exhausted",
+            "token_limit": 1000,
+            "tokens_used": 1000,
+            "tokens_remaining": 0,
+            "token_limit_status": "exhausted",
+            "stop_reason": "token_limit_exhausted",
+            "completed_priorities": ["P0", "P1"],
+            "skipped_tasks": [{"task_id": "task-low", "priority": "P3"}],
+            "planned_tasks": [{"task_id": "task-medium", "priority": "P2", "status": "admitted"}],
+            "coverage_by_severity": {"critical": 1, "high": 2, "medium": 0, "low": 0},
+        },
+    )
+
+    assert "Token 限制与覆盖边界" in report
+    assert "task\\-low \\(P3\\)" in report
+    assert "task\\-medium \\(P2\\)" in report
+    assert "报告不完整" in report
 
 
 def test_html_report_is_viewer_style_and_escapes_target_content() -> None:

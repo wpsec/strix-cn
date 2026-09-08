@@ -58,7 +58,9 @@ OUTCOME_LABELS: dict[str, str] = {
 _INCOMPLETE_AGENT_STATUSES = frozenset({"crashed", "stopped", "running", "waiting"})
 
 #: Run statuses that mean the scan itself did not run to completion.
-_INCOMPLETE_RUN_STATUSES = frozenset({"failed", "interrupted", "stopped", "running"})
+_INCOMPLETE_RUN_STATUSES = frozenset(
+    {"failed", "interrupted", "stopped", "running", "token_limit_exhausted"}
+)
 
 #: Only this skill category names a vulnerability class. ``tooling`` and
 #: ``reconnaissance`` skills describe how an agent works, not what it hunts,
@@ -422,6 +424,20 @@ def build_coverage_document(
             "agents": agents,
             "skills_exercised": skills_exercised,
             "findings_filed": len(vulnerability_reports),
+            "token_budget": {
+                key: run_record.get(key)
+                for key in (
+                    "token_limit",
+                    "tokens_used",
+                    "tokens_remaining",
+                    "token_limit_status",
+                    "completed_priorities",
+                    "skipped_tasks",
+                    "planned_tasks",
+                    "stop_reason",
+                )
+            },
+            "coverage_by_severity": run_record.get("coverage_by_severity") or {},
             "source": "runtime",
         },
         "completeness": _completeness(run_record, agents, exit_reason),

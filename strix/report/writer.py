@@ -44,6 +44,7 @@ _STATUS_LABELS_ZH = {
     "stopped": "已停止",
     "failed": "失败",
     "interrupted": "已中断",
+    "token_limit_exhausted": "Token 限制耗尽（报告不完整）",
 }
 
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
@@ -207,6 +208,7 @@ def render_complete_report(
     methodology = _extract_final_section(final_scan_result, "测试方法")
     technical_analysis = _extract_final_section(final_scan_result, "技术分析")
     recommendations = _extract_final_section(final_scan_result, "修复建议")
+    token_budget_section = _token_budget_report_section(record)
 
     sorted_reports = sorted(
         reports,
@@ -238,6 +240,7 @@ def render_complete_report(
         f"| 报告状态 | {status} |",
         f"| 生成时间 | {_escape_inline(generated_at)} |",
         "",
+        *token_budget_section,
         "---",
         "",
         "## 目录",
@@ -338,6 +341,71 @@ def render_complete_report(
         ]
     )
     return "\n".join(lines)
+
+
+def _token_budget_report_section(record: dict[str, Any]) -> list[str]:
+    """Render the finite Token boundary so a partial run cannot look clean."""
+    token_limit = record.get("token_limit")
+    status = str(record.get("status") or "").lower()
+    if token_limit is None and status != "token_limit_exhausted":
+        return []
+
+    used = record.get("tokens_used", 0)
+    remaining = record.get("tokens_remaining")
+    limit_status = record.get("token_limit_status") or "unlimited"
+    completed = record.get("completed_priorities") or []
+    skipped = record.get("skipped_tasks") or []
+    planned = record.get("planned_tasks") or []
+    completed_tasks = [
+        task
+        for task in planned
+        if isinstance(task, dict) and task.get("status") == "completed"
+    ]
+    unfinished = [
+        task
+        for task in planned
+        if isinstance(task, dict) and task.get("status") in {"admitted", "running", "failed"}
+    ]
+    coverage = record.get("coverage_by_severity") or {}
+
+    def task_summary(tasks: list[Any]) -> str:
+        summaries: list[str] = []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            task_id = str(task.get("task_id") or "unknown")
+            priority = str(task.get("priority") or "P2")
+            description = " ".join(str(task.get("task") or "").split())[:240]
+            label = f"{task_id} ({priority})"
+            if description:
+                label += f": {description}"
+            summaries.append(_escape_inline(label))
+        return "; ".join(summaries) or "无"
+
+    skipped_summary = task_summary(skipped)
+    completed_tasks_summary = task_summary(completed_tasks)
+    unfinished_summary = task_summary(unfinished)
+    completed_summary = ", ".join(str(priority) for priority in completed) or "无"
+    coverage_summary = ", ".join(
+        f"{severity} {coverage.get(severity, 0)}"
+        for severity in ("critical", "high", "medium", "low")
+    )
+    limit_text = "不限制" if token_limit is None else str(token_limit)
+    remaining_text = "未知" if remaining is None else str(remaining)
+    return [
+        "## Token 限制与覆盖边界",
+        "",
+        f"- Token 上限：{_escape_inline(limit_text)}；有效用量：{_escape_inline(used)}；"
+        f"剩余：{_escape_inline(remaining_text)}。",
+        f"- Token 状态：{_escape_inline(limit_status)}；"
+        f"停止原因：{_escape_inline(record.get('stop_reason') or '无')}。",
+        f"- 已完成优先级：{_escape_inline(completed_summary)}。",
+        f"- 已完成测试：{completed_tasks_summary}。",
+        f"- 未完成阶段：{unfinished_summary}。",
+        f"- 跳过任务：{skipped_summary}。",
+        f"- 严重度覆盖：{_escape_inline(coverage_summary)}。",
+        "",
+    ]
 
 
 def write_executive_report(

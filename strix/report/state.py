@@ -14,6 +14,11 @@ from uuid import uuid4
 from strix.config import codex
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.core.token_budget import (
+    DEFAULT_TOKEN_ESTIMATE_PER_REQUEST,
+    TokenBudgetPlan,
+    normalize_token_limit,
+)
 from strix.report.coverage import write_coverage
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
@@ -218,6 +223,8 @@ class ReportState:
         from strix.report.usage import LLMUsageLedger
 
         self._llm_usage = LLMUsageLedger()
+        self._token_budget = TokenBudgetPlan()
+        self._hydrated_from_disk = False
         self._telemetry_llm_usage_baseline: dict[str, Any] = {}
         auth_mode = codex.auth_mode(load_settings().llm.model)
         self._llm_usage.zero_cost = auth_mode == "subscription"
@@ -230,6 +237,13 @@ class ReportState:
             "auth_mode": auth_mode,
             "targets_info": [],
             "llm_usage": self._build_llm_usage_record(),
+            **self._token_budget.to_record(),
+            "coverage_by_severity": {
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+            },
         }
         self._run_dir: Path | None = None
         self._saved_vuln_ids: set[str] = set()
@@ -296,6 +310,8 @@ class ReportState:
         data = read_run_record(run_dir)
         if data:
             self.run_record.update(data)
+            self._token_budget = TokenBudgetPlan.from_record(self.run_record)
+            self._hydrated_from_disk = True
             if isinstance(data.get("start_time"), str):
                 self.start_time = data["start_time"]
             if isinstance(data.get("end_time"), str):
@@ -598,14 +614,21 @@ class ReportState:
         usage: "Usage | None",
         agent_name: str | None = None,
         model: str | None = None,
+        fallback_tokens: int = DEFAULT_TOKEN_ESTIMATE_PER_REQUEST,
     ) -> None:
         """Record SDK-native token usage for one completed model run/cycle."""
-        if self._llm_usage.record(
+        recorded_tokens = self._llm_usage.record(
             agent_id=agent_id,
             agent_name=agent_name,
             model=model,
             usage=usage,
-        ):
+            fallback_tokens=fallback_tokens,
+        )
+        if recorded_tokens:
+            self._token_budget.record_usage(
+                recorded_tokens,
+                estimated=self._llm_usage.last_record_was_estimated,
+            )
             self.save_run_data()
 
     def record_observed_llm_cost(self, cost: float) -> None:
@@ -637,29 +660,113 @@ class ReportState:
         """Live accumulated LLM cost, independent of the persisted run-record snapshot."""
         return self._llm_usage.total_cost
 
+    def get_total_llm_tokens(self) -> int:
+        """Return effective scan-wide tokens, including conservative estimates."""
+        return self._token_budget.tokens_used
+
+    def admit_token_task(
+        self,
+        *,
+        task_id: str,
+        priority: Any,
+        estimated_tokens: Any = None,
+        mandatory: bool = False,
+        details: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        """Admit a child task without allowing normal work to consume the reserve."""
+        admission = self._token_budget.admit_task(
+            task_id=task_id,
+            priority=priority,
+            estimated_tokens=estimated_tokens,
+            mandatory=mandatory,
+            details=details,
+        )
+        self.save_run_data()
+        return admission
+
+    def mark_priority_completed(self, priority: Any) -> None:
+        self._token_budget.mark_priority_completed(priority)
+        self.save_run_data()
+
+    def mark_token_task_completed(self, task_id: str) -> None:
+        self._token_budget.mark_task_completed(task_id)
+        self.save_run_data()
+
+    def mark_token_task_failed(self, task_id: str, reason: str = "task_failed") -> None:
+        self._token_budget.mark_task_failed(task_id, reason)
+        self.save_run_data()
+
+    def mark_token_limit_exhausted(self) -> None:
+        self._token_budget.mark_exhausted()
+        self.scan_ended_exit_reason = "token_limit_exhausted"
+        self.save_run_data(status="token_limit_exhausted")
+
+    def finalize_token_limit_report(self) -> None:
+        """Persist an explicit incomplete report when the lifecycle tool was skipped."""
+        if not self._token_budget.is_exhausted:
+            return
+        if self.final_scan_result:
+            self.save_run_data(status="token_limit_exhausted")
+            return
+
+        coverage = self._coverage_by_severity()
+        self.update_scan_final_fields(
+            executive_summary=(
+                "扫描因配置的 Token 限制耗尽而提前停止。报告仅反映已执行和已落盘的测试，"
+                "未覆盖范围不能据此判断为安全。"
+            ),
+            methodology=(
+                "本次运行按 P0/P1 优先级执行授权、攻击面、认证授权、严重/高危路径及其验证；"
+                "Token 限制耗尽后停止创建新任务，并在报告中保留未完成和跳过任务。"
+            ),
+            technical_analysis=(
+                f"当前已落盘漏洞：严重 {coverage['critical']} 个、高危 {coverage['high']} 个、"
+                f"中危 {coverage['medium']} 个、低危 {coverage['low']} 个。"
+                "严重度统计不代表未覆盖区域不存在漏洞。"
+            ),
+            recommendations=(
+                "优先处理并复测已确认的严重和高危问题；如需继续测试，请在恢复扫描时显式提供"
+                "更大的 --token-limit，总上限会在原有已用 Token 基础上累计。"
+            ),
+        )
+
+    @property
+    def token_limit_exhausted(self) -> bool:
+        return self._token_budget.is_exhausted
+
     def update_scan_final_fields(
         self,
         executive_summary: str,
         methodology: str,
         technical_analysis: str,
         recommendations: str,
-    ) -> None:
+    ) -> bool:
+        scan_completed = not self._token_budget.is_exhausted
         self.scan_results = {
-            "scan_completed": True,
+            "scan_completed": scan_completed,
             "executive_summary": executive_summary.strip(),
             "methodology": methodology.strip(),
             "technical_analysis": technical_analysis.strip(),
             "recommendations": recommendations.strip(),
-            "success": True,
+            "success": scan_completed,
         }
+        if not scan_completed:
+            self.scan_results["incomplete_reason"] = "token_limit_exhausted"
 
         self.final_scan_result = self._format_final_scan_result(self.scan_results)
         self.run_record["scan_results"] = self.scan_results
 
         logger.info("Updated scan final fields")
-        self.save_run_data(mark_complete=True)
-        posthog.end(self, exit_reason="finished_by_tool")
-        scarf.end(self, exit_reason="finished_by_tool")
+        if scan_completed:
+            self.save_run_data(mark_complete=True)
+            posthog.end(self, exit_reason="finished_by_tool")
+            scarf.end(self, exit_reason="finished_by_tool")
+        else:
+            self.scan_ended_exit_reason = "token_limit_exhausted"
+            self.save_run_data(status="token_limit_exhausted")
+            posthog.end(self, exit_reason="token_limit_exhausted")
+            scarf.end(self, exit_reason="token_limit_exhausted")
+        return scan_completed
 
     def record_mcp_connections(self, names: list[str]) -> None:
         """Note the MCP servers this run connected, and persist it.
@@ -690,6 +797,25 @@ class ReportState:
         self.save_run_data()
 
     def set_scan_config(self, config: dict[str, Any]) -> None:
+        token_limit = normalize_token_limit(config.get("token_limit"))
+        if self._hydrated_from_disk:
+            persisted_limit = normalize_token_limit(self.run_record.get("token_limit"))
+            if persisted_limit is not None and (
+                token_limit is not None and token_limit < persisted_limit
+            ):
+                raise ValueError(
+                    "恢复扫描时 token_limit 不能低于历史运行配置；"
+                    "如需追加额度，请显式提供更大的总上限。"
+                )
+            self._token_budget = TokenBudgetPlan.from_record(self.run_record)
+            if persisted_limit is not None and token_limit is None:
+                token_limit = persisted_limit
+            if token_limit is not None and token_limit != persisted_limit:
+                self._token_budget.limit = token_limit
+                self._token_budget.stop_reason = None
+                self._token_budget._refresh_status()
+        else:
+            self._token_budget = TokenBudgetPlan(limit=token_limit)
         self.scan_config = config
         self.caido_url = None
         self.caido_ui_url = None
@@ -724,8 +850,10 @@ class ReportState:
                 "burp_port": config.get("burp_port"),
                 "credential_auth_available": bool(config.get("credential_auth_available", False)),
                 "allow_credential_attacks": bool(config.get("allow_credential_attacks", False)),
+                "token_limit": token_limit,
             }
         )
+        self.run_record.update(self._token_budget.to_record())
 
     def set_proxy_scope(
         self,
@@ -828,13 +956,21 @@ class ReportState:
             self.save_run_data()
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
+        if mark_complete and self._token_budget.is_exhausted:
+            mark_complete = False
+            status = "token_limit_exhausted"
         if mark_complete:
+            self._token_budget.mark_completed()
             self.end_time = datetime.now(UTC).isoformat()
             self.run_record["end_time"] = self.end_time
             self.run_record["status"] = "completed"
         elif status and self.run_record.get("status") != "completed":
             current_status = self.run_record.get("status")
-            if status == "stopped" and current_status in {"failed", "interrupted"}:
+            if status == "stopped" and current_status in {
+                "failed",
+                "interrupted",
+                "token_limit_exhausted",
+            }:
                 status = str(current_status)
             if self.end_time is None:
                 self.end_time = datetime.now(UTC).isoformat()
@@ -991,9 +1127,19 @@ class ReportState:
 
     def _sync_llm_usage_record(self) -> None:
         self.run_record["llm_usage"] = self._build_llm_usage_record()
+        self.run_record.update(self._token_budget.to_record())
+        self.run_record["coverage_by_severity"] = self._coverage_by_severity()
 
     def _build_llm_usage_record(self) -> dict[str, Any]:
         return self._llm_usage.to_record()
+
+    def _coverage_by_severity(self) -> dict[str, int]:
+        counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for report in self.vulnerability_reports:
+            severity = str(report.get("severity") or "").lower()
+            if severity in counts:
+                counts[severity] += 1
+        return counts
 
     def _hydrate_llm_usage(self, raw_usage: Any) -> None:
         self._llm_usage.hydrate(raw_usage)

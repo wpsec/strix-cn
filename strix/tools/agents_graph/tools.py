@@ -16,6 +16,8 @@ from strix.core.agent_naming import normalize_agent_name
 from strix.core.agents import Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
+from strix.core.token_budget import normalize_task_estimate, normalize_token_priority
+from strix.report.state import get_global_report_state
 from strix.runtime.proxy_coverage import assign_proxy_coverage, unresolved_proxy_endpoints
 from strix.skills import validate_requested_skills
 
@@ -443,12 +445,15 @@ async def wait_for_agents(  # noqa: PLR0911
 
 
 @function_tool(timeout=120)
-async def create_agent(
+async def create_agent(  # noqa: PLR0911
     ctx: RunContextWrapper,
     name: str,
     task: str,
     inherit_context: bool = True,
     skills: list[str] | None = None,
+    priority: Literal["P0", "P1", "P2", "P3"] = "P2",
+    estimated_tokens: int | None = None,
+    mandatory: bool = False,
 ) -> str:
     """Spawn a specialist child agent to run in parallel.
 
@@ -497,6 +502,13 @@ async def create_agent(
             when starting a clean-slate task.
         skills: List of skill names (e.g. ``["xss", "sql_injection"]``).
             Max 5; prefer 1-3.
+        priority: ``P0`` for scope/authentication/authorization and critical/high-risk
+            paths, ``P1`` for validation/retesting/reporting, ``P2`` for medium-risk
+            work, and ``P3`` for low-risk or edge-case breadth.
+        estimated_tokens: Conservative Token estimate for the child task. The scan-wide
+            scheduler uses it before admitting the task.
+        mandatory: Allow a task to use the reporting reserve when it is required to
+            preserve a high-risk path.
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
@@ -529,17 +541,82 @@ async def create_agent(
             default=str,
         )
 
+    try:
+        normalized_priority = normalize_token_priority(priority)
+        normalized_estimate = normalize_task_estimate(estimated_tokens)
+    except ValueError as exc:
+        return json.dumps(
+            {"success": False, "error": str(exc), "agent_id": None},
+            ensure_ascii=False,
+            default=str,
+        )
+
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    report_state = get_global_report_state()
+    if report_state is not None:
+        try:
+            admitted, reason = report_state.admit_token_task(
+                task_id=task_id,
+                priority=normalized_priority,
+                estimated_tokens=normalized_estimate,
+                mandatory=mandatory,
+                details={"task": task, "skills": skill_list},
+            )
+        except Exception as exc:
+            logger.exception("create_agent: token admission failed")
+            return json.dumps(
+                {"success": False, "error": f"token admission failed: {exc!s}"},
+                ensure_ascii=False,
+                default=str,
+            )
+        if not admitted:
+            logger.info(
+                "create_agent: skipped task %s priority=%s estimate=%d reason=%s",
+                task_id,
+                normalized_priority,
+                normalized_estimate,
+                reason,
+            )
+            return json.dumps(
+                {
+                    "success": False,
+                    "skipped": True,
+                    "task_id": task_id,
+                    "priority": normalized_priority,
+                    "estimated_tokens": normalized_estimate,
+                    "reason": reason,
+                    "error": (
+                        "Token 预算不足，已跳过该低优先级任务；请优先完成严重/高危漏洞"
+                        "验证与报告。"
+                    ),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+
     parent_history = list(ctx.turn_input) if inherit_context and ctx.turn_input else []
     try:
         result = await spawner(
             parent_ctx=inner,
+            task_id=task_id,
             name=normalized_name,
             task=task,
             skills=skill_list,
             parent_history=parent_history,
+            priority=normalized_priority,
+            estimated_tokens=normalized_estimate,
+            mandatory=mandatory,
         )
     except Exception as e:
         logger.exception("create_agent: scan runner failed to spawn child '%s'", normalized_name)
+        if report_state is not None:
+            try:
+                report_state.mark_token_task_failed(task_id, f"child_spawn_failed: {e!s}")
+            except Exception:
+                logger.exception(
+                    "create_agent: failed to release Token reservation for %s",
+                    task_id,
+                )
         return json.dumps(
             {"success": False, "error": f"child spawn failed: {e!s}"},
             ensure_ascii=False,
@@ -695,6 +772,18 @@ async def agent_finish(
         parent_notified = True
 
     await coordinator.set_status(me, "completed")
+    report_state = get_global_report_state()
+    if report_state is not None:
+        try:
+            async with coordinator._lock:
+                metadata = coordinator.metadata.get(me, {})
+                priority = metadata.get("priority", "P2")
+                task_id = metadata.get("task_id")
+            if isinstance(task_id, str) and task_id:
+                report_state.mark_token_task_completed(task_id)
+            report_state.mark_priority_completed(priority)
+        except Exception:
+            logger.exception("agent_finish: failed to record completed token priority")
     if not parent_notified:
         # Silence here would leave a parent waiting on a report that is never coming.
         await notify_parent_on_terminal(coordinator, me, "completed")

@@ -160,6 +160,8 @@ def render_html_report(
     status = str(run_record.get("status") or "running").lower()
     finished = status == "completed" and bool(final_scan_result)
     status_label = "最终报告" if finished else "进行中 · 草稿"
+    if status == "token_limit_exhausted":
+        status_label = "Token 限制耗尽 · 报告不完整"
     targets = _targets(run_record)
     target_label = "、".join(targets) if targets else "Burp 被动代理采集范围"
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -188,6 +190,68 @@ def render_html_report(
     )
     if not cards:
         cards = '<div class="empty">当前尚未落盘任何安全问题。</div>'
+
+    token_budget = ""
+    token_limit = run_record.get("token_limit")
+    if token_limit is not None or status == "token_limit_exhausted":
+        skipped = run_record.get("skipped_tasks") or []
+        planned = run_record.get("planned_tasks") or []
+        completed_tasks = [
+            task
+            for task in planned
+            if isinstance(task, dict) and task.get("status") == "completed"
+        ]
+        unfinished_tasks = [
+            task
+            for task in planned
+            if isinstance(task, dict) and task.get("status") in {"admitted", "running", "failed"}
+        ]
+        coverage = run_record.get("coverage_by_severity") or {}
+
+        def task_summary(tasks: list[Any]) -> str:
+            labels: list[str] = []
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                task_id = str(task.get("task_id") or "unknown")
+                priority = str(task.get("priority") or "P2")
+                description = " ".join(str(task.get("task") or "").split())[:240]
+                label = f"{task_id} ({priority})"
+                if description:
+                    label += f": {description}"
+                labels.append(_html(label))
+            return "<br>".join(labels) or "无"
+
+        token_usage = (
+            f"上限：{_html(token_limit, '不限制')}；"
+            f"有效用量：{_html(run_record.get('tokens_used'), '0')}；"
+            f"剩余：{_html(run_record.get('tokens_remaining'), '未知')}；"
+            f"状态：{_html(run_record.get('token_limit_status'), '未知')}。"
+        )
+        token_stop = (
+            f"停止原因：{_html(run_record.get('stop_reason'), '无')}；"
+            f"跳过任务：{_html(len(skipped), '0')}。"
+        )
+        task_coverage = (
+            f"已完成测试：{task_summary(completed_tasks)}；"
+            f"未完成阶段：{task_summary(unfinished_tasks)}；"
+            f"跳过任务：{task_summary(skipped)}。"
+        )
+        severity_coverage = (
+            f"严重 {_html(coverage.get('critical'), '0')}、"
+            f"高危 {_html(coverage.get('high'), '0')}、"
+            f"中危 {_html(coverage.get('medium'), '0')}、"
+            f"低危 {_html(coverage.get('low'), '0')}。"
+        )
+        token_budget = (
+            '<section class="section"><h2>Token 限制与覆盖边界</h2>'
+            '<div class="narrative prose">'
+            f"<p>{token_usage}</p>"
+            f"<p>{token_stop}</p>"
+            f"<p>{task_coverage}</p>"
+            f"<p>严重度覆盖：{severity_coverage}</p>"
+            "</div></section>"
+        )
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -218,6 +282,7 @@ h1{{max-width:850px;margin:12px 0 18px;font-size:clamp(34px,5vw,64px);line-heigh
   <aside class="rail"><div class="brand"><span class="mark">S</span>Strix<span class="local">本地报告</span></div><p>授权安全测试交付物</p><nav><a href="#overview">测试总览</a><a href="#analysis">技术分析</a><a href="#findings">问题详情 · {len(reports)}</a><a href="#remediation">修复建议</a></nav><div class="confidential">Confidential · Local only</div></aside>
   <main class="content">
     <header id="overview"><div class="eyebrow">{status_label}</div><h1>安全渗透测试报告</h1><p class="subtitle">{escape(target_label)}</p><div class="meta"><span class="chip">运行：{_html(run_record.get('run_name'), '未命名')}</span><span class="chip">模式：{_html(run_record.get('scan_mode'))}</span><span class="chip">生成：{generated_at}</span></div></header>
+    {token_budget}
     <div class="metrics"><div class="metric"><strong>{len(reports)}</strong><span>问题总数</span></div><div class="metric critical"><strong>{counts['critical']}</strong><span>严重</span></div><div class="metric high"><strong>{counts['high']}</strong><span>高危</span></div><div class="metric medium"><strong>{counts['medium']}</strong><span>中危</span></div><div class="metric low"><strong>{counts['low'] + counts['info']}</strong><span>低危 / 信息</span></div></div>
     <section class="section"><h2>执行摘要</h2><div class="narrative prose">{_markdown(summary)}</div></section>
     <section class="section"><h2>测试范围与方法</h2><div class="narrative prose">{_markdown(methodology)}</div></section>

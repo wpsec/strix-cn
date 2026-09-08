@@ -97,6 +97,18 @@ strix (--target <target> | --target-list <path> | --mount <path> | --burp-port <
   整次扫描的 LLM 总预算上限（美元）。系统会在模型响应完成后检查预算，并在接近阈值时向代理发送渐进式收尾提醒。
 </ParamField>
 
+<ParamField path="--token-limit" type="integer">
+  整次扫描的有效 Token 上限，必须是正整数。有效用量按模型调用的
+  `input_tokens + output_tokens` 统计；供应商未返回用量时采用保守估算。配置后优先执行
+  P0/P1 的授权、攻击面、严重/高危漏洞发现、验证、复测和报告，再扩展 P2/P3 测试。
+  未配置时不限制 Token，但仍记录实际用量。Token 耗尽后运行状态为
+  `token_limit_exhausted`，报告会标记为不完整并列出未覆盖范围。
+
+  `--max-budget-usd` 仍负责费用限制；两者同时配置时，任一限制先达到都会停止继续扩展测试。
+  恢复扫描默认沿用历史 Token 上限，只有显式提供更大的 `--token-limit` 才会追加总额度，已消耗
+  Token 不会重置。
+</ParamField>
+
 <ParamField path="--max-turns" type="integer" default="500">
   每个代理允许的最大 turns 数。达到上限后，该代理会被强制停止。
 </ParamField>
@@ -147,8 +159,14 @@ strix --target https://app.example.com --auth-username '<username>' --auth-passw
 # 针对指定基线强制启用 diff-scope
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
+# 限制扫描级有效 Token，优先高风险路径
+strix -n --target ./ --token-limit 50000
+
 # 恢复之前中断的运行
 strix --resume pentest_abc123
+
+# 恢复并显式追加总 Token 上限
+strix --resume pentest_abc123 --token-limit 80000
 
 # 使用兼容网关
 export STRIX_LLM="openai/your-compatible-model"

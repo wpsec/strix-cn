@@ -8,6 +8,12 @@ from typing import TYPE_CHECKING, Any
 
 from agents.lifecycle import RunHooks
 
+from strix.core.token_budget import (
+    DEFAULT_TOKEN_ESTIMATE_PER_REQUEST,
+    TOKEN_RESERVE_RATIO,
+    normalize_token_limit,
+    normalize_token_priority,
+)
 from strix.report.state import get_global_report_state
 
 
@@ -27,14 +33,23 @@ _TURN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 _ROOT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 _SUBAGENT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.75, 0.80, 0.85)
 _SUBAGENT_BUDGET_RESERVE = 0.90
+_TOKEN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 
 
 class BudgetExceededError(RuntimeError):
     """Raised when the accumulated LLM cost reaches the configured budget."""
 
 
+class TokenLimitExceededError(BudgetExceededError):
+    """Raised when effective scan-wide Tokens reach the configured limit."""
+
+
 class SubagentBudgetReservedError(RuntimeError):
     """Raised to stop a single sub-agent once the reserve threshold is crossed."""
+
+
+class TokenReserveExceededError(SubagentBudgetReservedError):
+    """Raised when ordinary sub-agent work would consume the reporting reserve."""
 
 
 class BudgetPausedError(RuntimeError):
@@ -119,6 +134,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         *,
         model: str,
         max_budget_usd: float | None = None,
+        token_limit: int | None = None,
         max_turns: int | None = None,
         interactive: bool = False,
     ) -> None:
@@ -131,6 +147,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         self._model = model
         self._max_budget_usd = max_budget_usd
         self._budget_increment = max_budget_usd
+        self._token_limit = normalize_token_limit(token_limit)
         self._max_turns = max_turns
         self._interactive = interactive
 
@@ -150,8 +167,71 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         try:
             self._maybe_warn_turns(context, input_items)
             self._maybe_warn_budget(context, input_items)
+            self._maybe_warn_token_budget(context, input_items)
+            self._check_token_budget_before_llm(context)
+        except (TokenLimitExceededError, TokenReserveExceededError):
+            raise
         except Exception:
             logger.exception("budget/turn warning injection failed")
+
+    def _task_priority(self, context: RunContextWrapper[dict[str, Any]]) -> str:
+        try:
+            return normalize_token_priority(context.context.get("task_priority", "P2"))
+        except (TypeError, ValueError):
+            return "P2"
+
+    def _check_token_budget_before_llm(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+    ) -> None:
+        if self._token_limit is None:
+            return
+        report_state = get_global_report_state()
+        if report_state is None:
+            return
+        used = report_state.get_total_llm_tokens()
+        if used >= self._token_limit:
+            raise TokenLimitExceededError(
+                f"Scan Token limit of {self._token_limit} reached (used {used})"
+            )
+        is_root = context.context.get("parent_id") is None
+        if is_root or self._task_priority(context) in {"P0", "P1"}:
+            return
+        reserve_limit = int(self._token_limit * (1 - TOKEN_RESERVE_RATIO))
+        if used >= reserve_limit:
+            raise TokenReserveExceededError(
+                f"Ordinary sub-agent work reached the Token discovery limit: used {used} "
+                f"of {self._token_limit}; the final 20% is reserved for high-risk "
+                "validation and reporting"
+            )
+
+    def _maybe_warn_token_budget(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+        input_items: list[TResponseInputItem],
+    ) -> None:
+        if self._token_limit is None:
+            return
+        report_state = get_global_report_state()
+        if report_state is None:
+            return
+        used = report_state.get_total_llm_tokens()
+        stage = _crossed_stage(used / self._token_limit, _TOKEN_WARN_BANDS)
+        if stage is None:
+            return
+        remaining = max(self._token_limit - used, 0)
+        pct = round(100 * used / self._token_limit)
+        input_items.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[{_urgency(stage)}] Scan Token budget: {used}/{self._token_limit} "
+                    f"used ({pct}%), about {remaining} remain. Current task priority is "
+                    f"{self._task_priority(context)}. Finish serious/high-risk discovery, "
+                    "validation and reporting before starting medium/low-risk breadth work."
+                ),
+            }
+        )
 
     def _maybe_warn_turns(
         self,
@@ -222,7 +302,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             )
         input_items.append({"role": "user", "content": content})
 
-    async def on_llm_end(
+    async def on_llm_end(  # noqa: PLR0912
         self,
         context: RunContextWrapper[dict[str, Any]],
         agent: Agent[dict[str, Any]],
@@ -246,9 +326,26 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
                 agent_name=agent_name,
                 model=self._model,
                 usage=response.usage,
+                fallback_tokens=DEFAULT_TOKEN_ESTIMATE_PER_REQUEST,
             )
         except Exception:
             logger.exception("failed to record SDK usage for agent %s", agent_id)
+
+        if self._token_limit is not None:
+            tokens = report_state.get_total_llm_tokens()
+            if tokens >= self._token_limit:
+                raise TokenLimitExceededError(
+                    f"Scan Token limit of {self._token_limit} reached (used {tokens})"
+                )
+            is_root = ctx.get("parent_id") is None
+            if not is_root and self._task_priority(context) not in {"P0", "P1"}:
+                reserve_limit = int(self._token_limit * (1 - TOKEN_RESERVE_RATIO))
+                if tokens >= reserve_limit:
+                    raise TokenReserveExceededError(
+                        f"Ordinary sub-agent work reached the Token discovery limit: "
+                        f"used {tokens} of {self._token_limit}; the final 20% is reserved "
+                        "for high-risk validation and reporting"
+                    )
 
         if self._max_budget_usd is not None:
             cost = report_state.get_total_llm_cost()

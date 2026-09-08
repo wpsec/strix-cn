@@ -35,7 +35,12 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
+from strix.core.hooks import (
+    BudgetExceededError,
+    ReportUsageHooks,
+    TokenLimitExceededError,
+    recomputed_budget_flags,
+)
 from strix.core.inputs import (
     build_root_task,
     build_scan_targets,
@@ -206,6 +211,7 @@ async def run_strix_scan(
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,
     max_budget_usd: float | None = None,
+    token_limit: int | None = None,
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
@@ -250,13 +256,17 @@ async def run_strix_scan(
     agents_path = state_dir / "agents.json"
     agents_db = state_dir / "agents.db"
     is_resume = agents_path.exists()
+    configured_token_limit = token_limit
+    if configured_token_limit is None:
+        configured_token_limit = scan_config.get("token_limit")
 
     logger.info(
-        "%s Strix scan %s (image=%s, max_turns=%d, interactive=%s, run_dir=%s)",
+        "%s Strix scan %s (image=%s, max_turns=%d, token_limit=%s, interactive=%s, run_dir=%s)",
         "Resuming" if is_resume else "Starting",
         scan_id,
         image,
         max_turns,
+        configured_token_limit,
         interactive,
         run_dir,
     )
@@ -320,6 +330,8 @@ async def run_strix_scan(
                 reserve_stopped=reserve_stopped,
                 budget_paused=interactive and coordinator.budget_paused,
             )
+            if report_state.token_limit_exhausted is True:
+                await coordinator.trigger_budget_stop()
         for aid, parent in coordinator.parent_of.items():
             if parent is None:
                 root_id = aid
@@ -413,6 +425,7 @@ async def run_strix_scan(
         hooks = ReportUsageHooks(
             model=resolved_model,
             max_budget_usd=max_budget_usd,
+            token_limit=configured_token_limit,
             max_turns=max_turns,
             interactive=interactive,
         )
@@ -616,6 +629,7 @@ async def run_strix_scan(
             "mcp_registry": mcp_registry,
             "agent_id": root_id,
             "parent_id": None,
+            "task_priority": "P0",
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
             "scan_targets": build_scan_targets(scan_config),
@@ -722,9 +736,32 @@ async def run_strix_scan(
                     scan_id,
                     str(final)[:300],
                 )
+            report_state = get_global_report_state()
+            if report_state is not None and report_state.token_limit_exhausted:
+                with contextlib.suppress(Exception):
+                    report_state.mark_token_limit_exhausted()
+                    report_state.finalize_token_limit_report()
         return result  # noqa: TRY300
+    except TokenLimitExceededError as exc:
+        logger.info("Scan %s stopped at the Token limit: %s", scan_id, exc)
+        report_state = get_global_report_state()
+        if report_state is not None:
+            with contextlib.suppress(Exception):
+                report_state.mark_token_limit_exhausted()
+                report_state.finalize_token_limit_report()
+        if root_id is not None:
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "stopped")
+        return None
     except BudgetExceededError as exc:
-        logger.info("Scan %s stopped: %s", scan_id, exc)
+        report_state = get_global_report_state()
+        if report_state is not None and report_state.token_limit_exhausted:
+            with contextlib.suppress(Exception):
+                report_state.mark_token_limit_exhausted()
+                report_state.finalize_token_limit_report()
+            logger.info("Scan %s stopped at the Token limit: %s", scan_id, exc)
+        else:
+            logger.info("Scan %s stopped: %s", scan_id, exc)
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")

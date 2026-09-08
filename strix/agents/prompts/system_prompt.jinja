@@ -133,6 +133,17 @@ SYSTEM-VERIFIED AUTHENTICATION CONTEXT:
 {% endif %}
 {% endif %}
 
+{% if system_prompt_context and system_prompt_context.token_budget_policy %}
+SCAN TOKEN PRIORITY POLICY:
+- This scan has a global effective Token limit of {{ system_prompt_context.token_limit }}.
+- Do not distribute Tokens evenly across vulnerability classes. Prioritize critical and high-risk discovery, validation, retesting, and reporting before medium- or low-risk breadth work.
+- Every child created with `create_agent` must declare `priority`: use `P0` for scope/authentication/authorization and critical/high-risk paths, `P1` for validation/retesting/reporting, `P2` for medium-risk work, and `P3` for low-risk or edge-case breadth.
+- The scheduler enforces the phase gate: finish all admitted P0 work before P1, and finish P0/P1 before creating P2; finish P2 before P3. If a lower-priority creation is rejected, do not retry it — create the missing higher-priority task or record the gap.
+- Always create a P1 validation/reporting task after the P0 phase, even when no finding has been confirmed yet, so the scan does not enter medium-risk breadth without closing the high-risk lane.
+- Estimate the child task's Token requirement with `estimated_tokens`; do not create a lower-priority child when its estimate would consume the reserved reporting remainder.
+- If the Token limit is reached, stop creating new work, preserve confirmed findings, record unfinished coverage, and finish the report as incomplete rather than claiming a clean or complete scan.
+{% endif %}
+
 {% if not is_whitebox %}
 WORKSPACE FILE EDITING CONSTRAINTS:
 - This run is not a source-aware whitebox audit

@@ -57,12 +57,14 @@ def _do_finish(
                 "message": "扫描已完成（未持久化）",
                 "warning": "结果未能持久化：报告状态不可用",
             }
-        report_state.update_scan_final_fields(
+        scan_completed = report_state.update_scan_final_fields(
             executive_summary=executive_summary.strip(),
             methodology=methodology.strip(),
             technical_analysis=technical_analysis.strip(),
             recommendations=recommendations.strip(),
         )
+        if not isinstance(scan_completed, bool):
+            scan_completed = not bool(getattr(report_state, "token_limit_exhausted", False))
         vuln_count = len(report_state.vulnerability_reports)
         coverage_summary = _coverage_summary(agent_graph)
     except (ImportError, AttributeError) as e:
@@ -75,8 +77,12 @@ def _do_finish(
         )
         result: dict[str, Any] = {
             "success": True,
-            "scan_completed": True,
-            "message": "扫描已成功完成",
+            "scan_completed": scan_completed,
+            "message": (
+                "扫描已成功完成"
+                if scan_completed
+                else "扫描已生成不完整报告（Token 限制已耗尽）"
+            ),
             "vulnerabilities_found": vuln_count,
         }
         result.update(coverage_summary)

@@ -102,6 +102,7 @@ class GoTuiRuntime:
             "scope_mode": self.args.scope_mode,
             "diff_base": self.args.diff_base,
             "burp_port": getattr(self.args, "burp_port", None),
+            "token_limit": getattr(self.args, "token_limit", None),
             "resume_instruction": self.args.user_explicit_instruction or "",
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
             "workspace_subdir": getattr(self.args, "workspace_subdir", None) or "",
@@ -179,6 +180,7 @@ class GoTuiRuntime:
         # diff-scope preamble, so the transcript can show what was typed.
         candidate.user_instruction = self.controller.instruction or None
         candidate.max_budget_usd = self.controller.max_budget_usd
+        candidate.token_limit = self.controller.token_limit
         candidate.max_turns = self.controller.max_turns
         candidate.scope_mode = self.controller.scope_mode
         candidate.diff_base = self.controller.diff_base
@@ -242,6 +244,7 @@ class GoTuiRuntime:
                 interactive=True,
                 max_turns=self.args.max_turns,
                 max_budget_usd=self.args.max_budget_usd,
+                token_limit=getattr(self.args, "token_limit", None),
                 event_sink=self.capture_event,
                 target_credentials=self.target_credentials,
                 mcp_status_sink=self.capture_mcp_status,
