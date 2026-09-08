@@ -19,6 +19,13 @@ from strix.core.token_budget import (
     TokenBudgetPlan,
     normalize_token_limit,
 )
+from strix.redteam.attack_chain import build_attack_chain, redact_report_evidence
+from strix.redteam.policy import (
+    POLICY_VERSION,
+    normalize_mode,
+    normalize_vulnerability_type,
+    should_ignore,
+)
 from strix.report.coverage import write_coverage
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
@@ -235,6 +242,8 @@ class ReportState:
             "end_time": None,
             "status": "running",
             "auth_mode": auth_mode,
+            "mode": "normal",
+            "policy_version": None,
             "targets_info": [],
             "llm_usage": self._build_llm_usage_record(),
             **self._token_budget.to_record(),
@@ -433,7 +442,26 @@ class ReportState:
         dependency_metadata: dict[str, str] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
+        vulnerability_type: str | None = None,
+        permission_proof: str | None = None,
+        request: str | None = None,
+        response: str | None = None,
+        cvss_4_vector: str | None = None,
+        cvss_4_score: float | None = None,
+        cvss_4_severity: str | None = None,
     ) -> str:
+        mode = normalize_mode(self.run_record.get("mode", "normal"))
+        if should_ignore(vulnerability_type or "", mode=mode, impact=impact):
+            return ""
+        if mode == "redteam" and str(severity).strip().lower() not in {"critical", "high"}:
+            return ""
+        if mode == "redteam" and not any(
+            str(value or "").strip()
+            for value in (evidence, validation_evidence, permission_proof)
+        ):
+            return ""
+
+        normalized_type = normalize_vulnerability_type(vulnerability_type)
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
         report: dict[str, Any] = {
@@ -442,6 +470,20 @@ class ReportState:
             "severity": severity.lower().strip(),
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
+        if normalized_type:
+            report["vulnerability_type"] = normalized_type
+        if permission_proof:
+            report["permission_proof"] = permission_proof.strip()
+        if request:
+            report["request"] = request.strip()
+        if response:
+            report["response"] = response.strip()
+        if cvss_4_vector:
+            report["cvss_4_vector"] = cvss_4_vector.strip()
+        if cvss_4_score is not None:
+            report["cvss_4_score"] = cvss_4_score
+        if cvss_4_severity:
+            report["cvss_4_severity"] = cvss_4_severity.strip().lower()
 
         if description:
             report["description"] = description.strip()
@@ -498,6 +540,8 @@ class ReportState:
             report["agent_id"] = agent_id
         if agent_name:
             report["agent_name"] = agent_name
+
+        report = redact_report_evidence(report)
 
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
@@ -605,7 +649,29 @@ class ReportState:
         return report
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
-        return list(self.vulnerability_reports)
+        return self._artifact_reports()
+
+    def _artifact_reports(self) -> list[dict[str, Any]]:
+        """Return reports allowed to leave the current run's artifact boundary."""
+        if normalize_mode(self.run_record.get("mode", "normal")) != "redteam":
+            return list(self.vulnerability_reports)
+        eligible: list[dict[str, Any]] = []
+        for report in self.vulnerability_reports:
+            if str(report.get("severity") or "").lower() not in {"critical", "high"}:
+                continue
+            if should_ignore(
+                str(report.get("vulnerability_type") or ""),
+                mode="redteam",
+                impact=report.get("impact"),
+            ):
+                continue
+            if not any(
+                str(report.get(field) or "").strip()
+                for field in ("evidence", "validation_evidence", "permission_proof")
+            ):
+                continue
+            eligible.append(redact_report_evidence(report))
+        return eligible
 
     def record_sdk_usage(
         self,
@@ -798,7 +864,13 @@ class ReportState:
 
     def set_scan_config(self, config: dict[str, Any]) -> None:
         token_limit = normalize_token_limit(config.get("token_limit"))
+        mode = normalize_mode(config.get("mode", "normal"))
         if self._hydrated_from_disk:
+            persisted_mode = normalize_mode(self.run_record.get("mode", "normal"))
+            if persisted_mode != mode:
+                raise ValueError(
+                    "恢复扫描时不能修改安全策略模式；必须沿用历史运行模式。"
+                )
             persisted_limit = normalize_token_limit(self.run_record.get("token_limit"))
             if persisted_limit is not None and (
                 token_limit is not None and token_limit < persisted_limit
@@ -840,6 +912,8 @@ class ReportState:
         self.run_record.update(
             {
                 "targets_info": config.get("targets", []),
+                "mode": mode,
+                "policy_version": POLICY_VERSION if mode == "redteam" else None,
                 "instruction": config.get("user_instructions", ""),
                 "scan_mode": config.get("scan_mode", "deep"),
                 "diff_scope": config.get("diff_scope", {"active": False}),
@@ -1001,7 +1075,10 @@ class ReportState:
 {str(scan_results.get("recommendations", "")).strip()}
 """
 
-    def _coverage_document(self) -> dict[str, Any] | None:
+    def _coverage_document(
+        self,
+        vulnerability_reports: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
         """Assemble the coverage record, or None when it can't be built.
 
         Coverage is a secondary artifact: a failure here must not cost the
@@ -1016,7 +1093,11 @@ class ReportState:
                 run_record=self.run_record,
                 entries=get_coverage_entries(),
                 agent_graph=read_agent_graph(runtime_state_dir(self.get_run_dir())),
-                vulnerability_reports=self.vulnerability_reports,
+                vulnerability_reports=(
+                    self.vulnerability_reports
+                    if vulnerability_reports is None
+                    else vulnerability_reports
+                ),
                 exit_reason=self.scan_ended_exit_reason,
             )
         except Exception:
@@ -1028,31 +1109,43 @@ class ReportState:
         run_dir = self.get_run_dir()
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
+            artifact_reports = self._artifact_reports()
 
-            coverage = self._coverage_document()
+            coverage = self._coverage_document(artifact_reports)
             if coverage is not None:
                 try:
                     write_coverage(run_dir, coverage)
                 except OSError:
                     logger.exception("coverage.json write failed (non-fatal)")
 
+            if normalize_mode(self.run_record.get("mode", "normal")) == "redteam":
+                self.run_record["attack_chain"] = build_attack_chain(artifact_reports)
+            else:
+                self.run_record.pop("attack_chain", None)
+
             if self.final_scan_result:
                 write_executive_report(
                     run_dir,
                     self.final_scan_result,
                     run_record=self.run_record,
-                    vulnerability_reports=self.vulnerability_reports,
+                    vulnerability_reports=artifact_reports,
                 )
 
             write_html_report(
                 run_dir,
                 final_scan_result=self.final_scan_result,
                 run_record=self.run_record,
-                vulnerability_reports=self.vulnerability_reports,
+                vulnerability_reports=artifact_reports,
             )
 
-            if self.vulnerability_reports:
-                write_vulnerabilities(run_dir, self.vulnerability_reports, self._saved_vuln_ids)
+            if self.vulnerability_reports or normalize_mode(self.run_record.get("mode", "normal")) == "redteam":
+                write_vulnerabilities(
+                    run_dir,
+                    artifact_reports,
+                    self._saved_vuln_ids,
+                    redteam=normalize_mode(self.run_record.get("mode", "normal"))
+                    == "redteam",
+                )
 
             # SARIF 2.1.0 emitter for CI / ASPM integration. Always emit (even
             # empty) so a clean run overwrites a prior findings.sarif rather than
@@ -1063,7 +1156,7 @@ class ReportState:
             try:
                 write_sarif(
                     run_dir,
-                    self.vulnerability_reports,
+                    artifact_reports,
                     tool_version=_strix_version(),
                     repository_context=self._sarif_repository_context(),
                     coverage=coverage,

@@ -333,6 +333,10 @@ function SummaryHeader({ summary }: { summary: ParsedRunSummary }) {
           <span className="font-mono text-[#aaa]">{summary.targets.join(", ")}</span>
         )}
         {summary.scanMode && <Meta label={formatScanModeLabel(summary.scanMode) ?? summary.scanMode} />}
+        {summary.securityMode === "redteam" && <Meta label="红队专项" />}
+        {summary.securityMode === "redteam" && summary.policyVersion && (
+          <Meta label={`策略 ${summary.policyVersion}`} />
+        )}
         {duration && <Meta label={duration} />}
         {summary.status && <Meta label={formatRunStatusLabel(summary.status) ?? summary.status} />}
       </div>

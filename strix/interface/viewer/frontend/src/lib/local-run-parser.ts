@@ -25,6 +25,8 @@ export interface ParsedRunSummary {
   runName: string | null;
   targets: string[];
   scanMode: string | null;
+  securityMode: string | null;
+  policyVersion: string | null;
   status: string | null;
   startTime: string | null;
   endTime: string | null;
@@ -122,6 +124,8 @@ export function parseRunJson(text: string): ParsedRunSummary {
     runName: asStringOrNull(record.run_name),
     targets,
     scanMode: asStringOrNull(record.scan_mode),
+    securityMode: asStringOrNull(record.mode),
+    policyVersion: asStringOrNull(record.policy_version),
     status: asStringOrNull(record.status),
     startTime,
     endTime,

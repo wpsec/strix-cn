@@ -8,9 +8,10 @@ import os
 import sys
 from pathlib import Path
 
-from strix.config import apply_config_override
+from strix.config import apply_config_override, load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.redteam.policy import normalize_mode
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
@@ -247,6 +248,20 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
 
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--red",
+        dest="redteam",
+        action="store_true",
+        help="启用红队专项模式：仅验证白名单高风险类型，并生成攻击链报告。",
+    )
+    mode_group.add_argument(
+        "--mode",
+        choices=["normal", "redteam"],
+        default=None,
+        help="安全策略模式：normal 或 redteam。默认读取 STRIX_MODE 或配置文件。",
+    )
+
     parser.add_argument(
         "--scope-mode",
         type=str,
@@ -349,9 +364,16 @@ def parse_arguments() -> argparse.Namespace:
     args.workspace_mount = None
     args.workspace_subdir = None
     args.target_credentials = None
+    args.mode_explicit = "redteam" if args.redteam else args.mode
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+
+    try:
+        configured_mode = normalize_mode(load_settings().security.mode)
+    except (AttributeError, ValueError) as exc:
+        parser.error(f"安全策略模式配置无效：{exc}")
+    args.mode = normalize_mode(args.mode_explicit or configured_mode)
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()
@@ -459,6 +481,18 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         state = read_run_record(run_dir)
     except (RuntimeError, TypeError) as exc:
         parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
+
+    try:
+        persisted_mode = normalize_mode(state.get("mode", "normal"))
+    except ValueError as exc:
+        parser.error(f"--resume {args.resume}：历史安全策略模式无效：{exc}")
+    explicit_mode = getattr(args, "mode_explicit", None)
+    if explicit_mode is not None and explicit_mode != persisted_mode:
+        parser.error(
+            f"--resume {args.resume}：不能将模式从 {persisted_mode} 改为 {explicit_mode}。"
+            "恢复扫描必须沿用历史运行模式。"
+        )
+    args.mode = persisted_mode
 
     from strix.core.token_budget import normalize_token_limit
 

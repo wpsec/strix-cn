@@ -155,6 +155,19 @@ def _calculate_cvss(breakdown: dict[str, str]) -> tuple[float, str, str]:
     return score, severity, vector
 
 
+def _calculate_cvss4(vector: str) -> tuple[float, str]:
+    from cvss import CVSS4
+
+    normalized = vector.strip()
+    try:
+        cvss = CVSS4(normalized)
+        score = cvss.scores()[0]
+        severity = cvss.severities()[0].lower()
+    except Exception as exc:
+        raise ValueError(f"无效的 CVSS 4.0 向量：{normalized}") from exc
+    return score, severity
+
+
 _REQUIRED_FIELDS = {
     "title": "标题不能为空",
     "description": "漏洞描述不能为空",
@@ -732,6 +745,11 @@ async def _do_create(  # noqa: PLR0912
     agent_id: str | None = None,
     agent_name: str | None = None,
     validation_evidence: str | None = None,
+    vulnerability_type: str | None = None,
+    permission_proof: str | None = None,
+    request: str | None = None,
+    response: str | None = None,
+    cvss_4_vector: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
         {
@@ -788,6 +806,13 @@ async def _do_create(  # noqa: PLR0912
         cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
     except ValueError as exc:
         return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
+    cvss_4_score: float | None = None
+    cvss_4_severity: str | None = None
+    if cvss_4_vector:
+        try:
+            cvss_4_score, cvss_4_severity = _calculate_cvss4(cvss_4_vector)
+        except ValueError as exc:
+            return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
 
     try:
         from strix.report.state import get_global_report_state
@@ -841,6 +866,13 @@ async def _do_create(  # noqa: PLR0912
             "code_locations": parsed_locations,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
+            "vulnerability_type": vulnerability_type,
+            "permission_proof": permission_proof,
+            "request": request,
+            "response": response,
+            "cvss_4_vector": cvss_4_vector,
+            "cvss_4_score": cvss_4_score,
+            "cvss_4_severity": cvss_4_severity,
         }
 
         dedupe = await check_duplicate(candidate, existing)
@@ -872,6 +904,12 @@ async def _do_create(  # noqa: PLR0912
         logger.exception("create_vulnerability_report persistence failed")
         return {"success": False, "error": f"创建漏洞报告失败：{e!s}"}
     else:
+        if not report_id:
+            return {
+                "success": True,
+                "skipped": True,
+                "message": "该结果不符合当前安全策略，已静默跳过",
+            }
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
             report_id,
@@ -930,6 +968,11 @@ async def create_vulnerability_report(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    vulnerability_type: str | None = None,
+    permission_proof: str | None = None,
+    request: str | None = None,
+    response: str | None = None,
+    cvss_4_vector: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -1290,6 +1333,8 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
+        cvss_4_vector: Optional validated CVSS 4.0 base vector. If omitted,
+            the Markdown report explicitly marks CVSS 4.0 as unavailable.
 
     Example (abbreviated — mirror this structure)::
 
@@ -1363,6 +1408,11 @@ async def create_vulnerability_report(
         code_locations=code_locations,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
+        vulnerability_type=vulnerability_type,
+        permission_proof=permission_proof,
+        request=request,
+        response=response,
+        cvss_4_vector=cvss_4_vector,
         agent_id=agent_id,
         agent_name=agent_name,
     )

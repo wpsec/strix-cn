@@ -738,6 +738,20 @@ func (m Model) statsView() string {
 		}
 		b.WriteString(lipgloss.NewStyle().Foreground(green).Render("ChatGPT subscription"))
 	}
+	if mode := strings.TrimSpace(m.snapshot.SecurityMode); mode != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		modeLabel := "普通模式"
+		if mode == "redteam" {
+			modeLabel = "红队专项"
+		}
+		b.WriteString(label.Render("安全策略: ") + w.Render(modeLabel))
+		if policy := strings.TrimSpace(m.snapshot.RedTeamPolicyVersion); policy != "" {
+			b.WriteString("\n")
+			b.WriteString(label.Render("策略版本: ") + w.Render(policy))
+		}
+	}
 	total := numberValue(m.snapshot.Usage["total_tokens"])
 	if total > 0 {
 		if b.Len() > 0 {

@@ -61,6 +61,17 @@ export function RunDetails({
   });
   const instruction = str(raw.instruction);
   const scanMode = formatScanModeLabel(str(raw.scan_mode));
+  const securityMode = str(raw.mode);
+  const policyVersion = str(raw.policy_version);
+  const attackChain = rec(raw.attack_chain);
+  const attackNodes = arr(attackChain.nodes).map((node) => {
+    const item = rec(node);
+    return {
+      title: str(item.title) ?? "未命名节点",
+      type: str(item.vulnerability_type) ?? "unknown",
+      severity: str(item.severity) ?? "unknown",
+    };
+  });
   const scopeMode = str(raw.scope_mode);
   const diff = rec(raw.diff_scope);
   const diffActive = diff.active === true;
@@ -149,6 +160,26 @@ export function RunDetails({
               )}
             </Field>
             {scanMode && <Field label="测试模式">{scanMode}</Field>}
+            {securityMode === "redteam" && (
+              <Field label="安全策略">
+                红队专项{policyVersion ? `（${policyVersion}）` : ""}
+              </Field>
+            )}
+            {securityMode === "redteam" && (
+              <Field label="攻击链">
+                {attackNodes.length > 0 ? (
+                  <div className="space-y-1">
+                    {attackNodes.map((node, index) => (
+                      <div key={`${node.type}-${index}`}>
+                        {index + 1}. {node.title} · {node.type} · {node.severity.toUpperCase()}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[#666]">暂无已验证节点</span>
+                )}
+              </Field>
+            )}
             <Field label="范围">{scope}</Field>
             <Field label="交互模式">{nonInteractive ? "非交互式" : "交互式"}</Field>
             {localSources.length > 0 && (

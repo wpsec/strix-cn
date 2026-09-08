@@ -168,6 +168,8 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "pending_mount": terminal_projection(state.get("pending_mount", ""), max_string=256),
         "instruction": terminal_projection(state["instruction"], max_string=128),
         "scan_mode": state["scan_mode"],
+        "security_mode": state.get("security_mode", "normal"),
+        "redteam_policy_version": state.get("redteam_policy_version"),
         "max_budget_usd": state["max_budget_usd"],
         "token_limit": state.get("token_limit"),
         "max_turns": state["max_turns"],

@@ -9,6 +9,8 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
+from strix.redteam.attack_chain import build_attack_chain, redact_report_evidence
+from strix.redteam.policy import normalize_vulnerability_type, should_ignore
 
 _MARKDOWN = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": False})
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -87,11 +89,15 @@ def _metadata(report: dict[str, Any]) -> str:
 
 def _finding_sections(report: dict[str, Any]) -> str:
     fields = [
+        ("漏洞类型", report.get("vulnerability_type")),
         ("结论速览", report.get("description")),
         ("影响", report.get("impact")),
         ("技术细节", report.get("technical_analysis")),
         ("证据", report.get("evidence")),
         ("运行时验证", report.get("validation_evidence")),
+        ("权限证明", report.get("permission_proof")),
+        ("Request", report.get("request")),
+        ("Response", report.get("response")),
         ("复现说明", report.get("poc_description")),
         ("概念验证", report.get("poc_script_code")),
         ("如何修复", report.get("remediation_steps")),
@@ -145,8 +151,26 @@ def render_html_report(
     vulnerability_reports: list[dict[str, Any]],
 ) -> str:
     """Render a portable, offline report. All target-authored content is escaped."""
+    is_redteam = str(run_record.get("mode") or "normal").strip().lower() == "redteam"
     reports = sorted(
-        vulnerability_reports,
+        [
+            redact_report_evidence(report)
+            for report in vulnerability_reports
+            if not is_redteam
+            or (
+                str(report.get("severity") or "").lower() in {"critical", "high"}
+                and normalize_vulnerability_type(report.get("vulnerability_type")) is not None
+                and not should_ignore(
+                    str(report.get("vulnerability_type") or ""),
+                    mode="redteam",
+                    impact=report.get("impact"),
+                )
+                and any(
+                    str(report.get(field) or "").strip()
+                    for field in ("evidence", "validation_evidence", "permission_proof")
+                )
+            )
+        ],
         key=lambda item: (
             _SEVERITY_ORDER.get(str(item.get("severity") or "info").lower(), 5),
             str(item.get("id") or ""),
@@ -185,11 +209,50 @@ def render_html_report(
         "修复建议",
         "优先处理已确认的高风险问题，并在修复后执行针对性复测。",
     )
+    if is_redteam:
+        summary = (
+            "红队专项仅展示已成功验证的 High/Critical 攻击链节点；"
+            "被拦截、未知或未完成验证的测试意图不属于本报告。"
+        )
+        methodology = (
+            "本次运行使用 redteam 策略，仅允许白名单类型和无害、可清理、"
+            "可审计的验证动作。"
+        )
+        technical = "技术细节、脱敏 Request/Response 和权限证明请查看攻击链节点。"
+        recommendations = "请根据攻击链节点修复问题，并在授权范围内执行定向复测。"
     cards = "".join(
         _finding_card(report, initially_open=index == 0) for index, report in enumerate(reports)
     )
     if not cards:
-        cards = '<div class="empty">当前尚未落盘任何安全问题。</div>'
+        cards = (
+            '<div class="empty">本次运行没有成功验证的 High/Critical 红队专项漏洞。</div>'
+            if is_redteam
+            else '<div class="empty">当前尚未落盘任何安全问题。</div>'
+        )
+
+    attack_chain = build_attack_chain(reports) if is_redteam else {"nodes": [], "edges": []}
+    if is_redteam:
+        chain_items = "".join(
+            f'<li><strong>{_html(node.get("title"), "未命名节点")}</strong>'
+            f' <code>{_html(node.get("vulnerability_type"), "unknown")}</code>'
+            f' <span>{_html(str(node.get("severity") or "").upper())}</span>'
+            f'<br><small>证据节点：{_html(node.get("id"))}</small></li>'
+            for node in attack_chain["nodes"]
+        )
+        chain_edges = "".join(
+            f'<li><code>{_html(edge.get("source"))}</code> → '
+            f'<code>{_html(edge.get("target"))}</code>：{_html(edge.get("relationship"))}</li>'
+            for edge in attack_chain["edges"]
+        ) or "<li>暂无节点关系。</li>"
+        attack_chain_html = (
+            '<section class="section" id="attack-chain"><h2>攻击链路图</h2>'
+            '<div class="narrative prose">'
+            f'<ol>{chain_items or "<li>暂无已验证节点。</li>"}</ol>'
+            f'<h3>节点关系</h3><ul>{chain_edges}</ul>'
+            '</div></section>'
+        )
+    else:
+        attack_chain_html = ""
 
     token_budget = ""
     token_limit = run_record.get("token_limit")
@@ -259,7 +322,7 @@ def render_html_report(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">
-<title>Strix 安全测试报告 · {_html(run_record.get('run_name'), '未命名运行')}</title>
+<title>Strix {'红队专项攻击链报告' if is_redteam else '安全测试报告'} · {_html(run_record.get('run_name'), '未命名运行')}</title>
 <style>
 :root{{--bg:#050505;--panel:#0b0b0b;--panel2:#111;--line:#252525;--text:#f5f5f4;--muted:#8b8b88;--green:#34d399;--red:#ef4444;--orange:#f97316;--yellow:#eab308;--blue:#60a5fa;--gray:#a3a3a3}}
 *{{box-sizing:border-box}}html{{scroll-behavior:smooth}}body{{margin:0;background:radial-gradient(circle at 80% -10%,#173a2d55,transparent 32rem),var(--bg);color:var(--text);font:14px/1.65 "Avenir Next","PingFang SC","Microsoft YaHei",sans-serif}}
@@ -279,15 +342,16 @@ h1{{max-width:850px;margin:12px 0 18px;font-size:clamp(34px,5vw,64px);line-heigh
 </head>
 <body>
 <div class="layout">
-  <aside class="rail"><div class="brand"><span class="mark">S</span>Strix<span class="local">本地报告</span></div><p>授权安全测试交付物</p><nav><a href="#overview">测试总览</a><a href="#analysis">技术分析</a><a href="#findings">问题详情 · {len(reports)}</a><a href="#remediation">修复建议</a></nav><div class="confidential">Confidential · Local only</div></aside>
+  <aside class="rail"><div class="brand"><span class="mark">S</span>Strix<span class="local">本地报告</span></div><p>授权安全测试交付物</p><nav><a href="#overview">测试总览</a>{'<a href="#attack-chain">攻击链路图</a>' if is_redteam else ''}<a href="#analysis">技术分析</a><a href="#findings">{'攻击链节点' if is_redteam else '问题详情'} · {len(reports)}</a><a href="#remediation">修复建议</a></nav><div class="confidential">Confidential · Local only</div></aside>
   <main class="content">
-    <header id="overview"><div class="eyebrow">{status_label}</div><h1>安全渗透测试报告</h1><p class="subtitle">{escape(target_label)}</p><div class="meta"><span class="chip">运行：{_html(run_record.get('run_name'), '未命名')}</span><span class="chip">模式：{_html(run_record.get('scan_mode'))}</span><span class="chip">生成：{generated_at}</span></div></header>
+    <header id="overview"><div class="eyebrow">{status_label}</div><h1>{'红队专项攻击链报告' if is_redteam else '安全渗透测试报告'}</h1><p class="subtitle">{escape(target_label)}</p><div class="meta"><span class="chip">运行：{_html(run_record.get('run_name'), '未命名')}</span><span class="chip">模式：{_html('redteam' if is_redteam else run_record.get('scan_mode'))}</span>{f'<span class="chip">策略：{_html(run_record.get("policy_version"), "redteam-v1")}</span>' if is_redteam else ''}<span class="chip">生成：{generated_at}</span></div></header>
     {token_budget}
     <div class="metrics"><div class="metric"><strong>{len(reports)}</strong><span>问题总数</span></div><div class="metric critical"><strong>{counts['critical']}</strong><span>严重</span></div><div class="metric high"><strong>{counts['high']}</strong><span>高危</span></div><div class="metric medium"><strong>{counts['medium']}</strong><span>中危</span></div><div class="metric low"><strong>{counts['low'] + counts['info']}</strong><span>低危 / 信息</span></div></div>
     <section class="section"><h2>执行摘要</h2><div class="narrative prose">{_markdown(summary)}</div></section>
     <section class="section"><h2>测试范围与方法</h2><div class="narrative prose">{_markdown(methodology)}</div></section>
+    {attack_chain_html}
     <section class="section" id="analysis"><h2>技术分析</h2><div class="narrative prose">{_markdown(technical)}</div></section>
-    <section class="section" id="findings"><h2>问题详情</h2>{cards}</section>
+    <section class="section" id="findings"><h2>{'攻击链节点' if is_redteam else '问题详情'}</h2>{cards}</section>
     <section class="section" id="remediation"><h2>分级修复建议</h2><div class="narrative prose">{_markdown(recommendations)}</div></section>
     <footer>本报告由 Strix 本地运行生成。单漏洞 Markdown、JSON、CSV 与 SARIF 文件保留在同一运行目录中，供复核和系统导入。</footer>
   </main>

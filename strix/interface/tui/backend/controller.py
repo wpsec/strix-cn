@@ -27,6 +27,7 @@ from strix.interface.tui.backend.projection import (
     terminal_projection,
 )
 from strix.interface.utils import is_subscription_run
+from strix.redteam.policy import POLICY_VERSION, normalize_mode
 
 
 if TYPE_CHECKING:
@@ -79,6 +80,7 @@ class TuiController:
         self.instruction = instruction.strip() if isinstance(instruction, str) else ""
         requested_scan_mode = str(args.scan_mode)
         self.scan_mode = requested_scan_mode if requested_scan_mode in SCAN_MODES else "deep"
+        self.security_mode = normalize_mode(getattr(args, "mode", "normal"))
         raw_budget = args.max_budget_usd
         self.max_budget_usd = (
             float(raw_budget)
@@ -229,6 +231,10 @@ class TuiController:
             "pending_mount": self.pending_workspace_mount or "",
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
+            "security_mode": self.security_mode,
+            "redteam_policy_version": (
+                POLICY_VERSION if self.security_mode == "redteam" else None
+            ),
             "max_budget_usd": self.max_budget_usd,
             "token_limit": self.token_limit,
             "max_turns": self.max_turns,

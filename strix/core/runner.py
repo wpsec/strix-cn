@@ -51,6 +51,7 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.proxy_scope import ensure_caido_proxy_scope
 from strix.core.sessions import open_agent_session
 from strix.report.state import get_global_report_state
+from strix.redteam.policy import POLICY_VERSION, normalize_mode
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
@@ -175,6 +176,7 @@ def _compose_root_instructions_override(
     is_whitebox: bool,
     is_diff_scoped: bool,
     interactive: bool,
+    mode: str,
     system_prompt_context: dict[str, Any],
 ) -> str | None:
     if root_instructions_override is None:
@@ -187,6 +189,7 @@ def _compose_root_instructions_override(
         is_root=True,
         is_diff_scoped=is_diff_scoped,
         interactive=interactive,
+        mode=mode,
         system_prompt_context=system_prompt_context,
     )
     return (
@@ -272,6 +275,9 @@ async def run_strix_scan(
     )
 
     settings = load_settings()
+    configured_mode = getattr(getattr(settings, "security", None), "mode", "normal")
+    security_mode = normalize_mode(scan_config.get("mode", configured_mode))
+    scan_config = {**scan_config, "mode": security_mode}
     configure_sdk_model_defaults(settings)
     resolved_model = (model or settings.llm.model or "").strip()
     if not resolved_model:
@@ -532,6 +538,14 @@ async def run_strix_scan(
         except Exception:
             logger.exception("Failed to connect user MCP servers; continuing without them")
 
+        if security_mode == "redteam":
+            scope_context.update(
+                {
+                    "security_mode": security_mode,
+                    "redteam_policy_version": POLICY_VERSION,
+                    "redteam_fail_closed": True,
+                }
+            )
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,
@@ -540,6 +554,7 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            mode=security_mode,
             system_prompt_context=root_context,
         )
 
@@ -553,6 +568,7 @@ async def run_strix_scan(
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
+            mode=security_mode,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
         )
@@ -573,6 +589,7 @@ async def run_strix_scan(
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
+            mode=security_mode,
             system_prompt_context=scope_context,
         )
 
@@ -607,6 +624,15 @@ async def run_strix_scan(
             )
 
         context: dict[str, Any] = {
+            **(
+                {
+                    "security_mode": security_mode,
+                    "redteam_policy_version": POLICY_VERSION,
+                    "redteam_fail_closed": True,
+                }
+                if security_mode == "redteam"
+                else {}
+            ),
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
             "caido_client_ref": caido_client_ref,

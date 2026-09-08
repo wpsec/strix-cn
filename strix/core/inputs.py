@@ -23,6 +23,7 @@ from strix.config.models import (
 )
 from strix.core.proxy_scope import build_proxy_scope_constraints
 from strix.core.sessions import scrub_images_from_items
+from strix.redteam.policy import POLICY_VERSION, normalize_mode
 
 
 if TYPE_CHECKING:
@@ -128,6 +129,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     diff_scope = scan_config.get("diff_scope") or {}
     user_instructions = scan_config.get("user_instructions", "") or ""
     proxy_scope = build_proxy_scope_constraints(scan_config)
+    security_mode = normalize_mode(scan_config.get("mode", "normal"))
 
     sections: dict[str, list[str]] = {
         "Container Images": [],
@@ -263,6 +265,11 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     task = " ".join(parts)
     if user_instructions:
         task = f"{task}\n\nSpecial instructions: {user_instructions}"
+    if security_mode == "redteam":
+        task = (
+            f"{task}\n\nSecurity policy mode: redteam ({POLICY_VERSION}). "
+            "Use only the built-in red-team allowlist and fail closed for unknown test types."
+        )
     return task
 
 
@@ -274,6 +281,16 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "token_limit": token_limit,
         "token_budget_policy": bool(token_limit),
     }
+    security_mode = normalize_mode(scan_config.get("mode", "normal"))
+    security_context = (
+        {
+            "security_mode": security_mode,
+            "redteam_policy_version": POLICY_VERSION,
+            "redteam_fail_closed": True,
+        }
+        if security_mode == "redteam"
+        else {}
+    )
     if not targets and scan_config.get("burp_port") is not None:
         return {
             "scope_source": "burp_upstream_proxy",
@@ -286,6 +303,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
             ),
             "allow_credential_attacks": bool(scan_config.get("allow_credential_attacks", False)),
             **token_context,
+            **security_context,
             **proxy_scope,
             "user_instructions_do_not_expand_scope": True,
         }
@@ -335,6 +353,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "target_credentials_available": bool(scan_config.get("credential_auth_available", False)),
         "allow_credential_attacks": bool(scan_config.get("allow_credential_attacks", False)),
         **token_context,
+        **security_context,
         **proxy_scope,
         "user_instructions_do_not_expand_scope": True,
     }

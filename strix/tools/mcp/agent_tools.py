@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.redteam.policy import normalize_mode, should_ignore
 from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import MCP_REGISTRY_CONTEXT_KEY, McpRegistry
@@ -122,6 +123,8 @@ async def call_mcp(
     connection: str,
     tool: str,
     arguments: Any = None,
+    vulnerability_type: str | None = None,
+    impact: str | None = None,
 ) -> Any:
     """Call one tool on one MCP connection and return its result.
 
@@ -138,7 +141,27 @@ async def call_mcp(
             takes none. Pass an object, not a stringified one. Its shape is
             whatever ``describe_mcp`` showed for the tool rather than a shape this
             tool fixes in advance.
+        vulnerability_type: Canonical red-team vulnerability type for a target-side
+            action. Required in red-team mode; unknown and denied types are skipped.
+        impact: Concrete identity or privilege proof when the type is privilege
+            acquisition.
     """
+    context = ctx.context if isinstance(ctx.context, dict) else {}
+    try:
+        mode = normalize_mode(context.get("security_mode", "normal"))
+    except ValueError:
+        mode = "redteam"
+    if mode == "redteam" and should_ignore(
+        vulnerability_type or "",
+        mode=mode,
+        impact=impact,
+    ):
+        return {
+            "success": False,
+            "skipped": True,
+            "error": "红队专项策略已拒绝该 MCP 测试意图，未发送请求",
+        }
+
     registry = _registry_from_ctx(ctx)
     if registry is None or not registry:
         return _NO_CONNECTIONS

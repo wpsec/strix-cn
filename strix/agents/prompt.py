@@ -7,6 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from strix.redteam.policy import POLICY_VERSION, normalize_mode
 from strix.skills import get_available_skills, load_skills, skill_search_dirs
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -79,6 +80,7 @@ def render_system_prompt(
     is_root: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
+    mode: str = "normal",
     system_prompt_context: dict[str, Any] | None = None,
 ) -> str:
     """Render the system prompt. Returns empty string on template failure."""
@@ -103,12 +105,15 @@ def render_system_prompt(
         skill_content = load_skills(skills_to_load)
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
+        security_mode = normalize_mode(mode)
         rendered = env.get_template("system_prompt.jinja").render(
             loaded_skill_names=list(skill_content.keys()),
             available_skills=get_available_skills(),
             interactive=interactive,
             is_root=is_root,
             is_whitebox=is_whitebox,
+            security_mode=security_mode,
+            redteam_policy_version=POLICY_VERSION if security_mode == "redteam" else None,
             system_prompt_context=system_prompt_context or {},
             **skill_content,
         )
@@ -117,8 +122,10 @@ def render_system_prompt(
         return ""
     else:
         logger.debug(
-            "render_system_prompt: scan_mode=%s root=%s whitebox=%s skills=%d prompt_len=%d",
+            "render_system_prompt: scan_mode=%s mode=%s root=%s whitebox=%s "
+            "skills=%d prompt_len=%d",
             scan_mode,
+            security_mode,
             is_root,
             is_whitebox,
             len(skill_content),

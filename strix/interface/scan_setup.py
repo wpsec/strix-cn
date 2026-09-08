@@ -31,6 +31,7 @@ from strix.interface.utils import (
     stage_api_specs,
     write_fetched_collection,
 )
+from strix.redteam.policy import POLICY_VERSION, normalize_mode
 from strix.telemetry import posthog, scarf
 from strix.utils.api_spec import (
     SpecParseError,
@@ -241,6 +242,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
 
     run_dir = run_dir_for(args.run_name)
     run_dir.mkdir(parents=True, exist_ok=True)
+    mode = normalize_mode(getattr(args, "mode", "normal"))
     run_record = {
         "run_id": args.run_name,
         "run_name": args.run_name,
@@ -250,6 +252,10 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "auth_mode": codex.auth_mode(load_settings().llm.model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
+        "mode": mode,
+        "policy_version": POLICY_VERSION
+        if mode == "redteam"
+        else None,
         "instruction": args.instruction,
         # Kept apart from instruction, which carries the diff-scope preamble: the
         # transcript replays this as the user's opening message.

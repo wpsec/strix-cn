@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+SecurityMode = Literal["normal", "redteam"]
 
 DEFAULT_MAX_TURNS = 500
 
@@ -144,6 +145,14 @@ class ViewerSettings(BaseSettings):
     app_url: str = Field(default="https://app.strix.ai", alias="STRIX_APP_URL")
 
 
+class SecuritySettings(BaseSettings):
+    """Run-level security policy selection."""
+
+    model_config = _BASE_CONFIG
+
+    mode: SecurityMode = Field(default="normal", alias="STRIX_MODE")
+
+
 class Settings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -154,3 +163,4 @@ class Settings(BaseSettings):
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
     viewer: ViewerSettings = Field(default_factory=ViewerSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
