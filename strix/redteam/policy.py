@@ -15,7 +15,7 @@ SecurityMode = Literal["normal", "redteam"]
 
 NORMAL_MODE: SecurityMode = "normal"
 REDTEAM_MODE: SecurityMode = "redteam"
-POLICY_VERSION = "redteam-v1"
+POLICY_VERSION = "redteam-v2"
 
 _PRIVILEGE_IMPACT_MARKERS = (
     "未授权身份",
@@ -28,6 +28,41 @@ _PRIVILEGE_IMPACT_MARKERS = (
     "authorization bypass",
     "whoami",
     "id command",
+)
+_SPECULATIVE_IMPACT_MARKERS = (
+    "可能",
+    "推测",
+    "猜测",
+    "potential",
+    "possibly",
+    "suspected",
+    "could be",
+)
+_ACCESS_IMPACT_MARKERS = (
+    "未授权访问",
+    "未授权读取",
+    "未授权写入",
+    "未授权业务操作",
+    "越权",
+    "对象级授权",
+    "unauthorized access",
+    "unauthorized read",
+    "unauthorized write",
+    "unauthorized business action",
+    "admin access",
+    "authenticated session",
+    "获取管理员权限",
+)
+_CREDENTIAL_REDACTION_MARKERS = (
+    "已脱敏",
+    "[redacted]",
+    "redacted",
+)
+_CREDENTIAL_FINGERPRINT_MARKERS = (
+    "仅记录指纹",
+    "fingerprint",
+    "sha256:",
+    "sha256",
 )
 
 _TYPE_ALIASES: dict[str, str] = {
@@ -55,16 +90,45 @@ _TYPE_ALIASES: dict[str, str] = {
     "可窃取元数据的ssrf": "ssrf_metadata",
     "可窃取元数据的 ssrf": "ssrf_metadata",
     "metadata capable ssrf": "ssrf_metadata",
+    "authentication bypass": "authentication_bypass",
+    "认证绕过": "authentication_bypass",
+    "authorization bypass": "authorization_bypass",
+    "access control bypass": "authorization_bypass",
+    "越权": "authorization_bypass",
+    "未授权访问": "authorization_bypass",
+    "idor": "idor_bola",
+    "bola": "idor_bola",
+    "idor bola": "idor_bola",
+    "broken object level authorization": "idor_bola",
+    "对象级授权": "idor_bola",
+    "object level authorization": "idor_bola",
+    "exposed admin function": "exposed_admin_function",
+    "admin function exposure": "exposed_admin_function",
+    "管理功能暴露": "exposed_admin_function",
+    "cloud storage unauthorized access": "cloud_storage_unauthorized_access",
+    "bucket unauthorized access": "cloud_storage_unauthorized_access",
+    "云存储未授权访问": "cloud_storage_unauthorized_access",
+    "存储桶未授权访问": "cloud_storage_unauthorized_access",
+    "对象存储未授权访问": "cloud_storage_unauthorized_access",
+    "cloud storage writable": "cloud_storage_writable",
+    "writable bucket": "cloud_storage_writable",
+    "云存储可写": "cloud_storage_writable",
+    "存储桶可写": "cloud_storage_writable",
+    "business logic unauthorized action": "business_logic_unauthorized_action",
+    "高影响业务逻辑": "business_logic_unauthorized_action",
+    "未授权业务操作": "business_logic_unauthorized_action",
+    "credential exposure observed": "credential_exposure_observed",
+    "credential material exposure": "credential_exposure_observed",
+    "凭据材料可访问": "credential_exposure_observed",
+    "凭据暴露已脱敏": "credential_exposure_observed",
     "privilege acquisition": "privilege_acquisition",
     "privilege escalation": "privilege_acquisition",
-    "authorization bypass": "privilege_acquisition",
-    "unauthorized access": "privilege_acquisition",
+    "unauthorized access": "authorization_bypass",
     "privilege acquisition vulnerability": "privilege_acquisition",
     "权限获取": "privilege_acquisition",
     "可获取到权限的漏洞": "privilege_acquisition",
     "可获取权限": "privilege_acquisition",
     "权限提升": "privilege_acquisition",
-    "未授权访问": "privilege_acquisition",
 }
 
 _BLACKLISTED_TYPES = frozenset(
@@ -176,7 +240,29 @@ def normalize_vulnerability_type(value: object) -> str | None:
 def has_verified_privilege_impact(impact: object) -> bool:
     """Whether a report describes a concrete identity or privilege result."""
     text = str(impact or "").strip().lower()
-    return bool(text) and any(marker in text for marker in _PRIVILEGE_IMPACT_MARKERS)
+    return (
+        bool(text)
+        and not any(marker in text for marker in _SPECULATIVE_IMPACT_MARKERS)
+        and any(marker in text for marker in _PRIVILEGE_IMPACT_MARKERS)
+    )
+
+
+def has_verified_access_impact(impact: object) -> bool:
+    """Whether access-control or resource-access impact is concretely shown."""
+    text = str(impact or "").strip().lower()
+    return (
+        bool(text)
+        and not any(marker in text for marker in _SPECULATIVE_IMPACT_MARKERS)
+        and any(marker in text for marker in _ACCESS_IMPACT_MARKERS)
+    )
+
+
+def has_redacted_credential_observation(impact: object) -> bool:
+    """Whether credential access is described without retaining the secret."""
+    text = str(impact or "").strip().lower()
+    has_redaction = any(marker in text for marker in _CREDENTIAL_REDACTION_MARKERS)
+    has_fingerprint = any(marker in text for marker in _CREDENTIAL_FINGERPRINT_MARKERS)
+    return bool(text) and has_redaction and has_fingerprint
 
 
 def should_ignore(
@@ -200,6 +286,20 @@ def should_ignore(
         return True
     if normalized == "privilege_acquisition" and not has_verified_privilege_impact(impact):
         return True
+    if normalized in {
+        "authentication_bypass",
+        "authorization_bypass",
+        "idor_bola",
+        "exposed_admin_function",
+        "cloud_storage_unauthorized_access",
+        "cloud_storage_writable",
+        "business_logic_unauthorized_action",
+    } and not has_verified_access_impact(impact):
+        return True
+    if normalized == "credential_exposure_observed" and not has_redacted_credential_observation(
+        impact
+    ):
+        return True
     return normalized not in {
         "rce",
         "writable_file_upload",
@@ -207,6 +307,14 @@ def should_ignore(
         "deserialization",
         "ssrf_metadata",
         "privilege_acquisition",
+        "authentication_bypass",
+        "authorization_bypass",
+        "idor_bola",
+        "exposed_admin_function",
+        "cloud_storage_unauthorized_access",
+        "cloud_storage_writable",
+        "business_logic_unauthorized_action",
+        "credential_exposure_observed",
     }
 
 

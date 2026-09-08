@@ -159,16 +159,16 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 
 模式选择优先级为：CLI 参数 > `STRIX_MODE` > 持久化配置 > `normal`。扫描开始后模式不可切换，使用 `--resume` 时必须沿用原运行记录中的模式。
 
-红队专项模式只允许 RCE、可写文件上传、堆叠查询 SQL 注入、反序列化、受控 SSRF 元数据验证以及有实际权限影响证明的漏洞类型；XSS、CSRF、点击劫持、弱 SSL/TLS、敏感信息泄露、缺少安全头和未知类型会在请求发出前被拦截。
+红队专项模式允许 RCE、可写文件上传、堆叠查询 SQL 注入、反序列化、受控 SSRF 元数据验证、认证/授权绕过、IDOR/BOLA、暴露的管理功能、云存储未授权访问或可写、高影响业务逻辑和有实际权限影响证明的漏洞类型。凭据类问题只允许记录脱敏的凭据材料访问证明；XSS、CSRF、点击劫持、弱 SSL/TLS、普通敏感信息泄露、缺少安全头和未知类型仍会在请求发出前被拦截。
 
-验证深度限定为身份确认、随机 marker 文件上传并清理、只读 SQL 查询和受控 Canary。不会生成或投递 Webshell、反弹 Shell、凭据窃取、持久化或真实自动提权流程。
+验证深度限定为身份确认、随机 marker 文件/对象上传并清理、只读 SQL 查询、单个测试对象、dry-run 业务动作和受控 Canary。凭据观察只保留类型、`[REDACTED]` 和指纹，不读取、输出或复用真实凭据。不会生成或投递 Webshell、反弹 Shell、持久化、批量数据收集或真实自动提权流程。
 
 运行产物位于 `strix_runs/<run-name>/`，其中 `penetration_test_report.md` 和 `vulnerabilities/*.md` 使用红队专项结构化 Markdown 格式，`run.json` 会记录：
 
 ```json
 {
   "mode": "redteam",
-  "policy_version": "redteam-v1"
+  "policy_version": "redteam-v2"
 }
 ```
 

@@ -1,0 +1,186 @@
+---
+title: "红队专项模式"
+description: "面向已授权演练的高影响安全验证模式"
+---
+
+红队专项模式（`redteam`）用于已获得明确授权的应用安全演练。它关注能够改变身份、权限、资源访问边界或后渗透判断的高影响问题，并以最小、可审计、可清理的验证动作收集证据。
+
+该模式不会扩大授权范围，也不等同于自动接管目标。不得将它用于未授权系统、生产破坏性操作或凭据复用。
+
+## 与 normal 模式的差异
+
+| 行为 | `normal` | `redteam` |
+| --- | --- | --- |
+| 测试范围 | 按常规扫描策略执行 | 仅执行专项白名单，未知类型默认拒绝 |
+| 验证深度 | 证明问题存在即可停止 | 继续到受控的身份、权限或资源边界证明 |
+| 报告格式 | 漏洞清单和常规摘要 | 仅保留 High/Critical 成功验证节点的攻击链 |
+| 证据 | 依照常规脱敏规则 | 必须包含脱敏 Request/Response 和客观影响证明 |
+
+模式在扫描开始后不可切换。`--resume` 必须沿用原运行记录的模式和策略版本；策略版本不匹配时需要新建扫描。
+
+## 启动方式
+
+```bash
+strix --red --target https://staging.example.com
+```
+
+```bash
+strix --mode redteam --target https://staging.example.com
+```
+
+```bash
+STRIX_MODE=redteam strix --target https://staging.example.com
+```
+
+模式选择优先级为：CLI 参数、`STRIX_MODE`、持久化配置、`normal`。CLI 选项的完整说明见 [CLI 用法](/usage/cli)。
+
+## 测试范围与拦截策略
+
+红队专项允许以下高影响类别：
+
+- RCE，但只做 `id`/`whoami` 等身份确认。
+- 可写文件上传和云存储可写，但只使用随机 marker，并在验证后清理。
+- 堆叠查询 SQL 注入，但只执行无副作用的只读查询。
+- 反序列化，在测试对象和授权范围内验证服务端行为。
+- 受控 SSRF 元数据验证，只访问本地 Stub、保留 Canary 或显式授权主机，不访问云凭据端点。
+- 认证/授权绕过、IDOR/BOLA、暴露的管理功能和高影响未授权业务操作，但必须提供单个测试对象或 dry-run 业务动作的具体影响证明。
+- 云存储未授权访问，只验证一个测试对象的读取边界。
+- 凭据材料暴露观察，只记录材料类型、`[REDACTED]` 和 SHA-256 指纹；不读取、输出或复用真实凭据。
+- 有实际身份或权限影响证明的漏洞。
+
+XSS（包括 DOM、反射型和存储型）、CSRF、点击劫持、弱 SSL/TLS、路径遍历等普通敏感信息泄露、缺少安全头以及未知类型会在请求发出前被拒绝。被拒绝的意图不会发送到目标，也不会进入漏洞报告、HTML、Markdown 或 SARIF。
+
+## Prompt、请求拦截和验证深度
+
+Root Agent 与 Child Agent 会接收同一版本化红队策略。Prompt 要求模型只生成白名单类型的验证意图，并把规范化的 `vulnerability_type` 传递给请求和报告工具。
+
+请求出口和报告写入前都会再次执行策略判断，形成纵深防御：缺少类型、未知类型、影响证明不足或策略版本不匹配时均 fail closed。
+
+红队专项使用 `strix/redteam/depth.py` 构造安全验证请求，不执行自动 GetShell：
+
+- 上传使用随机 marker 文件或对象，并要求清理。
+- RCE 使用身份确认命令，不生成 Webshell 或反弹 Shell。
+- SQL 使用只读查询，不修改业务数据。
+- SSRF 使用受控 Canary，不请求云凭据元数据。
+- 凭据观察保留脱敏字段和指纹，不保留秘密值。
+
+明确禁止 Webshell 投递、反弹 Shell、真实凭据读取或复用、持久化、横向移动、批量数据收集和真实自动提权。需要进一步后渗透判断时，应由授权人员基于脱敏证据手工复核。
+
+## 安全验证型 PoC
+
+以下示例只验证授权测试接口是否返回固定 marker，代理不可用时回退直连；不要把它改造成真实命令执行、文件投递或凭据读取请求：
+
+```python
+import os
+
+import requests
+
+
+def post_marker() -> None:
+    url = os.environ["AUTHORIZED_TEST_URL"]
+    marker = "redteam-proof-example"
+    proxy = os.environ.get("HTTPS_PROXY", "http://127.0.0.1:8080")
+    proxies = {"http": proxy, "https": proxy}
+    payload = {"probe": "identity-proof", "marker": marker}
+
+    try:
+        response = requests.post(url, json=payload, proxies=proxies, timeout=10)
+    except requests.RequestException:
+        response = requests.post(url, json=payload, timeout=10)
+
+    response.raise_for_status()
+    assert marker in response.text
+
+
+if __name__ == "__main__":
+    post_marker()
+```
+
+该示例只适用于已授权的测试接口。请使用测试账户、测试对象和可清理资源；报告中只保留必要的脱敏请求、响应和观察结果。
+
+## Python 调用
+
+引擎入口是 `strix.core.runner.run_strix_scan()`，模式通过 `scan_config` 传递：
+
+```python
+import asyncio
+
+from strix.core.runner import run_strix_scan
+
+
+async def main() -> None:
+    await run_strix_scan(
+        scan_config={
+            "mode": "redteam",
+            "targets": ["https://staging.example.com"],
+            "scan_mode": "standard",
+            "user_instructions": "仅执行红队专项中的无害验证。",
+        },
+        image="strix-sandbox:latest",
+    )
+
+
+asyncio.run(main())
+```
+
+只传入已授权目标。`run_strix_scan()` 会将模式传播到运行状态、Prompt、请求拦截器和报告链路。
+
+## 运行记录与报告
+
+`strix_runs/<run-name>/run.json` 至少包含：
+
+```json
+{
+  "mode": "redteam",
+  "policy_version": "redteam-v2"
+}
+```
+
+红队报告使用 Markdown 格式，正文包含固定章节：漏洞名称、漏洞等级与 CVSS 4.0、漏洞位置、漏洞描述、漏洞定位过程、安全验证过程、漏洞根因、漏洞影响、修复建议、复测方案、证据限制与待确认事项。结论必须引用请求、响应、前端代码和服务端行为，不使用“AI 黑盒测试发现”“通过利用”“绕过”或“最终确认利用”等模糊表述。
+
+攻击链报告只包含成功验证的 High/Critical 节点：
+
+```markdown
+# 红队专项攻击链报告
+
+## 攻击链路摘要
+
+### 节点 1：受控身份确认
+
+- 类型：`rce`
+- 等级：`HIGH`
+- 证据节点：`vuln-0001`
+- 权限证明：`uid=1000(app)`
+
+Request（已脱敏）：
+
+```http
+POST /authorized-test HTTP/1.1
+Content-Type: application/json
+
+{"probe":"identity-proof"}
+```
+
+Response（已脱敏）：
+
+```text
+HTTP/1.1 200 OK
+
+app
+```
+```
+
+报告不得包含 Webshell、反弹 Shell、凭据值、批量数据或真实自动提权代码。
+
+## 测试与审计
+
+提交红队专项变更前，至少验证：
+
+- `normal` 模式行为不变，`--red`、`--mode redteam` 和 `STRIX_MODE` 解析一致。
+- 黑名单和未知类型在传输前被拦截，且不写入报告或 SARIF。
+- 新增白名单类别必须有具体影响证明；凭据观察必须同时满足脱敏和指纹要求。
+- Prompt、请求出口、报告状态和 `--resume` 都遵守同一策略版本。
+- marker、测试对象和 Canary 可清理，Request/Response 中的 Cookie、Token、密码和 API Key 已脱敏。
+- Markdown、HTML、JSON 和 SARIF 的输出不包含真实凭据或可直接执行的后渗透载荷。
+
+所有测试仅限明确授权的目标，并应保留运行记录、策略版本和人工复核结论。

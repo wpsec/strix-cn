@@ -26,6 +26,7 @@
               "usage/cli",
               "usage/scan-modes",
               "usage/instructions",
+              "usage/redteam-mode",
               "usage/viewer"
             ]
           },

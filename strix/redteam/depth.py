@@ -18,7 +18,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-ValidationKind = Literal["rce_identity", "writable_file_upload", "sqli", "ssrf_canary"]
+ValidationKind = Literal[
+    "rce_identity",
+    "writable_file_upload",
+    "sqli",
+    "ssrf_canary",
+    "credential_exposure_observed",
+]
 
 SAFE_IDENTITY_COMMANDS = frozenset({"id", "whoami"})
 _MUTATING_SQL = re.compile(
@@ -99,3 +105,24 @@ class RedTeamDepthController:
         if hostname not in configured_hosts and not is_local_stub and not is_reserved_canary:
             raise RedTeamDepthError("SSRF 验证只能访问本地 Stub、保留 Canary 域名或显式授权主机")
         return SafeValidationRequest(kind="ssrf_canary", target=target, proof=canary_url)
+
+    @staticmethod
+    def credential_observation(
+        target: str,
+        credential_type: str,
+        fingerprint: str,
+    ) -> SafeValidationRequest:
+        """Record only a redacted credential-access observation."""
+        if not credential_type.strip():
+            raise RedTeamDepthError("凭据观察必须声明凭据类型")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint.strip().lower()):
+            raise RedTeamDepthError("凭据观察只能记录 sha256 指纹，不能接收真实凭据值")
+        proof = (
+            f"credential_type={credential_type.strip()}; value=[REDACTED]; "
+            f"fingerprint={fingerprint.strip().lower()}"
+        )
+        return SafeValidationRequest(
+            kind="credential_exposure_observed",
+            target=target,
+            proof=proof,
+        )

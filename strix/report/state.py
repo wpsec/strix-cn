@@ -871,6 +871,13 @@ class ReportState:
                 raise ValueError(
                     "恢复扫描时不能修改安全策略模式；必须沿用历史运行模式。"
                 )
+            if (
+                persisted_mode == "redteam"
+                and self.run_record.get("policy_version") != POLICY_VERSION
+            ):
+                raise ValueError(
+                    "历史红队专项策略版本不受支持；策略已变更，请新建扫描。"
+                )
             persisted_limit = normalize_token_limit(self.run_record.get("token_limit"))
             if persisted_limit is not None and (
                 token_limit is not None and token_limit < persisted_limit

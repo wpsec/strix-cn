@@ -11,7 +11,6 @@ from pathlib import Path
 from strix.config import apply_config_override, load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
-from strix.redteam.policy import normalize_mode
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
@@ -20,6 +19,7 @@ from strix.interface.utils import (
     resolve_workspace_files,
     validate_config_file,
 )
+from strix.redteam.policy import POLICY_VERSION, normalize_mode
 
 
 def get_version() -> str:
@@ -491,6 +491,11 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         parser.error(
             f"--resume {args.resume}：不能将模式从 {persisted_mode} 改为 {explicit_mode}。"
             "恢复扫描必须沿用历史运行模式。"
+        )
+    if persisted_mode == "redteam" and state.get("policy_version") != POLICY_VERSION:
+        parser.error(
+            f"--resume {args.resume}：历史红队专项策略版本不受支持；"
+            "策略已变更，请新建扫描以重新确认授权范围。"
         )
     args.mode = persisted_mode
 

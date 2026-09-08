@@ -47,8 +47,37 @@ def test_privilege_category_requires_concrete_impact() -> None:
     assert not should_ignore("权限获取", mode="redteam", impact="验证得到未授权身份: id 输出")
 
 
+@pytest.mark.parametrize(
+    ("vulnerability_type", "impact", "expected_ignore"),
+    [
+        ("认证绕过", "验证获得 authenticated session", False),
+        ("IDOR/BOLA", "验证越权读取单个测试对象", False),
+        ("存储桶未授权访问", "验证未授权读取一个测试对象", False),
+        ("存储桶可写", "验证未授权写入随机 marker 并已清理", False),
+        ("高影响业务逻辑", "验证未授权业务操作被执行", False),
+        ("凭据材料可访问", "材料已脱敏，仅记录 sha256 指纹", False),
+        ("凭据材料可访问", "发现 token 文件", True),
+        ("存储桶未授权访问", "发现 bucket object", True),
+        ("IDOR/BOLA", "potential unauthorized access", True),
+    ],
+)
+def test_redteam_expanded_scope_requires_concrete_safe_impact(
+    vulnerability_type: str, impact: str, expected_ignore: bool
+) -> None:
+    assert should_ignore(vulnerability_type, mode="redteam", impact=impact) is expected_ignore
+
+
 def test_normal_mode_preserves_existing_report_selection() -> None:
     assert should_ignore("未知类型", mode="normal") is False
+
+
+def test_resuming_stale_redteam_policy_is_rejected() -> None:
+    state = ReportState(run_name="stale-redteam")
+    state._hydrated_from_disk = True
+    state.run_record.update({"mode": "redteam", "policy_version": "redteam-v1"})
+
+    with pytest.raises(ValueError, match="策略版本不受支持"):
+        state.set_scan_config({"mode": "redteam", "targets": []})
 
 
 def test_cvss4_vector_is_calculated_without_relabeling_cvss31() -> None:
@@ -79,11 +108,25 @@ def test_depth_controller_only_constructs_safe_proofs() -> None:
     with pytest.raises(RedTeamDepthError):
         RedTeamDepthController.ssrf_canary("authorized-target", "https://example.com/metadata")
 
+    credential = RedTeamDepthController.credential_observation(
+        "authorized-target",
+        "test API token",
+        "sha256:" + "a" * 64,
+    )
+    assert "value=[REDACTED]" in credential.proof
+    assert "sha256:" + "a" * 64 in credential.proof
+    with pytest.raises(RedTeamDepthError):
+        RedTeamDepthController.credential_observation(
+            "authorized-target",
+            "test API token",
+            "actual-secret-value",
+        )
+
 
 def test_redteam_prompt_is_versioned_and_safe() -> None:
     prompt = render_system_prompt(mode="redteam", scan_mode="quick", is_root=True)
     assert "REDTEAM SPECIAL MODE IS ACTIVE" in prompt
-    assert "redteam-v1" in prompt
+    assert "redteam-v2" in prompt
     assert "Never create or deploy Webshells" in prompt
     assert "reverse-shell" in prompt
 
@@ -197,7 +240,7 @@ def test_attack_chain_and_delivery_renderers_filter_and_redact() -> None:
     redteam_record = {
         "run_name": "redteam-test",
         "mode": "redteam",
-        "policy_version": "redteam-v1",
+        "policy_version": "redteam-v2",
         "targets_info": [{"original": "https://staging.example.invalid"}],
     }
     markdown = render_complete_report(
