@@ -20,7 +20,10 @@ from strix.verification.intent import (
 from strix.verification.models import VerificationCase
 from strix.verification.planner import VerificationPlanError
 from strix.verification.request import RequestParseError, parse_request_text
-from strix.verification.runner import run_verification_case
+from strix.verification.runner import (
+    persist_verification_failure,
+    run_verification_case,
+)
 
 
 def _read_request_interactively(console: Console) -> str:
@@ -88,6 +91,8 @@ def _plan_text(plan: Any) -> str:
     return "\n".join(
         [
             f"识别类型：{plan.vulnerability_type}",
+            f"验证能力：{plan.strategy_kind}",
+            f"响应判定器：{plan.oracle_kind}",
             f"目标字段：{fields}",
             f"预计请求数：{plan.max_requests}",
             f"计划来源：{plan.planner_source}"
@@ -137,6 +142,8 @@ def _write_temp_request(text: str) -> Path:
 async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
     console = Console()
     temporary_requests: list[Path] = []
+    request_path: str | None = None
+    issue: str | None = None
     try:
         request_text = _read_request_file_or_prompt(args, console)
         request_path = getattr(args, "verification_request", None)
@@ -150,17 +157,9 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
             non_interactive=bool(getattr(args, "non_interactive", False)),
         )
         issue = _issue_or_prompt(args, console)
-        intent = None
-        if issue is not None and not getattr(args, "verification_baseline", None):
-            intent = await infer_verification_intent(
-                VerificationCase(
-                    request=parse_request_text(request_text, scheme=request_scheme),
-                    issue_description=issue,
-                )
-            )
-        approved = bool(getattr(args, "verification_approve", False))
-        side_effect_approved = approved
-        secondary_path: str | None = None
+        secondary_path = getattr(args, "verification_secondary_request", None)
+        secondary_text: str | None = None
+        secondary_request_for_intent = None
         secondary_scheme: str | None = None
         if secondary_path:
             secondary_text = Path(secondary_path).read_text(encoding="utf-8")
@@ -169,6 +168,24 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                 console=console,
                 non_interactive=bool(getattr(args, "non_interactive", False)),
             )
+            secondary_request_for_intent = parse_request_text(
+                secondary_text,
+                scheme=secondary_scheme,
+            )
+        intent = None
+        if issue is not None and not getattr(args, "verification_baseline", None):
+            intent = await infer_verification_intent(
+                VerificationCase(
+                    request=parse_request_text(request_text, scheme=request_scheme),
+                    issue_description=issue,
+                    supporting_requests=(
+                        [secondary_request_for_intent] if secondary_request_for_intent else []
+                    ),
+                    controlled_canary_url=getattr(args, "verification_canary_url", None),
+                )
+            )
+        approved = bool(getattr(args, "verification_approve", False))
+        side_effect_approved = approved
         run_dir, plan, result = run_verification_case(
             request_file=request_path,
             issue=issue,
@@ -178,6 +195,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
             secondary_request_file=secondary_path,
             scheme=request_scheme,
             secondary_scheme=secondary_scheme,
+            controlled_canary_url=getattr(args, "verification_canary_url", None),
             intent=intent,
         )
         plan_displayed = False
@@ -196,9 +214,9 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
             secondary_text = _read_request_interactively(
                 console,
             )
-            secondary_request = _write_temp_request(secondary_text)
-            temporary_requests.append(secondary_request)
-            secondary_path = str(secondary_request)
+            secondary_request_path = _write_temp_request(secondary_text)
+            temporary_requests.append(secondary_request_path)
+            secondary_path = str(secondary_request_path)
             secondary_scheme = _resolve_scheme(
                 secondary_text,
                 console=console,
@@ -211,6 +229,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                     supporting_requests=[
                         parse_request_text(secondary_text, scheme=secondary_scheme)
                     ],
+                    controlled_canary_url=getattr(args, "verification_canary_url", None),
                 )
             )
             run_dir, plan, result = run_verification_case(
@@ -222,6 +241,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                 secondary_request_file=secondary_path,
                 scheme=request_scheme,
                 secondary_scheme=secondary_scheme,
+                controlled_canary_url=getattr(args, "verification_canary_url", None),
                 intent=intent,
             )
             plan_displayed = False
@@ -248,6 +268,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                     secondary_request_file=secondary_path,
                     scheme=request_scheme,
                     secondary_scheme=secondary_scheme,
+                    controlled_canary_url=getattr(args, "verification_canary_url", None),
                     intent=intent,
                 )
         console.print(Panel(_result_text(result, run_dir), title="漏洞验证结果"))
@@ -257,7 +278,32 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
             return 1
         return 0  # noqa: TRY300
     except (OSError, ValueError, VerificationPlanError, IntentGenerationError) as exc:
-        console.print(Panel(str(exc), title="漏洞验证失败", border_style="red"))
+        if request_path and issue:
+            try:
+                failure_dir, _failure_plan, failure_result = persist_verification_failure(
+                    request_file=request_path,
+                    issue=issue,
+                    reason=str(exc),
+                    scheme=request_scheme,
+                )
+            except (OSError, ValueError) as persist_exc:
+                console.print(
+                    Panel(
+                        f"{exc}\n验证失败报告生成失败：{persist_exc}",
+                        title="漏洞验证失败",
+                        border_style="red",
+                    )
+                )
+            else:
+                console.print(
+                    Panel(
+                        _result_text(failure_result, failure_dir),
+                        title="漏洞验证结果",
+                        border_style="yellow",
+                    )
+                )
+        else:
+            console.print(Panel(str(exc), title="漏洞验证失败", border_style="red"))
         return 1
     finally:
         for temporary_request in temporary_requests:

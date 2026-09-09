@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -17,7 +19,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from strix.interface import cli_args
+from strix.interface import cli_args, verification_cli
 from strix.verification import (
     IntentGenerationError,
     IntentProbe,
@@ -108,31 +110,87 @@ Content-Length: 42
     assert request_shape_sha256(request) == request_shape_sha256(changed_value)
 
 
-def test_planner_infers_supported_types_and_blocks_unsafe_boundaries() -> None:
+def test_planner_requires_model_intent_and_applies_generic_capability_limits() -> None:
     request = parse_request_text(
         "GET https://app.test/orders?orderId=42 HTTP/1.1\n"
         "Host: app.test\n"
         "Cookie: session=test-session\n\n"
     )
-    idor_plan = build_verification_plan(
-        VerificationCase(request=request, issue_description="疑似 IDOR，读取其他用户订单")
+    unplanned = build_verification_plan(
+        VerificationCase(request=request, issue_description="读取其他用户订单")
     )
-    assert idor_plan.vulnerability_type == "idor_bola"
-    assert idor_plan.probes[0].requires_secondary_identity is True
-    assert idor_plan.blocked_reason is not None
+    assert unplanned.vulnerability_type == "unclassified"
+    assert unplanned.probes == []
+    assert unplanned.blocked_reason is not None
 
-    ssrf_plan = build_verification_plan(
+    secondary_intent = VerificationIntent(
+        vulnerability_type="对象访问边界问题",
+        strategy_kind="secondary_identity",
+        target_fields=("query.orderId",),
+        probes=(
+            IntentProbe(
+                field="query.orderId",
+                value=None,
+                action="secondary_value",
+            ),
+        ),
+        oracle_kind="authorization_boundary",
+        oracle_description="第二身份请求不应读取越权对象。",
+        rationale="需要第二身份请求进行对照。",
+        confidence=0.8,
+    )
+    secondary_plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="读取其他用户订单"),
+        intent=secondary_intent,
+    )
+    assert secondary_plan.probes[0].requires_secondary_identity is True
+    assert secondary_plan.blocked_reason is not None
+
+    canary_intent = VerificationIntent(
+        vulnerability_type="服务端请求边界问题",
+        strategy_kind="controlled_canary",
+        target_fields=("query.url",),
+        probes=(
+            IntentProbe(
+                field="query.url",
+                value="http://127.0.0.1:80",
+                action="set",
+            ),
+        ),
+        oracle_kind="canary_echo",
+        oracle_description="响应应出现受控 Canary。",
+        rationale="需要验证 URL 字段的出站请求边界。",
+        confidence=0.7,
+    )
+    canary_plan = build_verification_plan(
         VerificationCase(
             request=parse_request_text(
                 "GET https://app.test/fetch?url=https://example.test HTTP/1.1\nHost: app.test\n\n"
             ),
-            issue_description="疑似 SSRF，使用 http://127.0.0.1:80 作为 Canary",
-        )
+            issue_description="验证 URL 字段的出站请求边界",
+            controlled_canary_url="http://127.0.0.1:80",
+        ),
+        intent=canary_intent,
     )
+    assert canary_plan.blocked_reason is not None
+    assert "内网" in canary_plan.blocked_reason
 
-    assert ssrf_plan.blocked_reason is not None
-    assert "内网" in ssrf_plan.blocked_reason
-
+    upload_intent = VerificationIntent(
+        vulnerability_type="文件处理边界问题",
+        strategy_kind="multipart_marker",
+        target_fields=(),
+        probes=(
+            IntentProbe(
+                field=None,
+                value="strix-verification-marker",
+                action="multipart_marker",
+            ),
+        ),
+        oracle_kind="canary_echo",
+        oracle_description="响应应出现受控 marker。",
+        rationale="需要验证 multipart 内容处理边界。",
+        confidence=0.6,
+    )
     upload_plan = build_verification_plan(
         VerificationCase(
             request=parse_request_text(
@@ -142,11 +200,269 @@ def test_planner_infers_supported_types_and_blocks_unsafe_boundaries() -> None:
                 '--demo\nContent-Disposition: form-data; name="file"; filename="a.txt"\n\n'
                 "body\n--demo--\n"
             ),
-            issue_description="疑似文件上传漏洞",
-        )
+            issue_description="验证 multipart 内容处理边界",
+        ),
+        intent=upload_intent,
     )
     assert upload_plan.probes[0].cleanup_required is True
     assert upload_plan.blocked_reason is not None
+
+
+def test_single_field_difference_is_not_reported_as_confirmed_vulnerability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = parse_request_text("GET https://app.test/search?q=hello HTTP/1.1\nHost: app.test\n\n")
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="验证输入字段边界"),
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="field_mutation",
+            target_fields=("query.q",),
+            probes=(IntentProbe(field="query.q", value="probe", action="set"),),
+            oracle_kind="response_difference",
+            oracle_description="记录输入变异后的响应差异。",
+            rationale="单字段变异只能作为诊断证据。",
+            confidence=0.5,
+        ),
+    )
+    observations = iter(
+        [
+            HttpObservation(200, {}, "normal"),
+            HttpObservation(400, {}, "invalid input"),
+        ]
+    )
+    monkeypatch.setattr(executor, "send_request", lambda _request: next(observations))
+    result = execute_plan(plan, request, run_name="verify-single-field", approved=True)
+    assert result.status == "inconclusive"
+    assert "不能确认漏洞" in result.summary
+
+
+def test_blocked_secondary_strategy_has_explicit_secondary_status() -> None:
+    request = parse_request_text(
+        "GET https://app.test/orders?orderId=42 HTTP/1.1\nHost: app.test\n\n"
+    )
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="验证对象边界"),
+        intent=VerificationIntent(
+            vulnerability_type="对象访问边界问题",
+            strategy_kind="secondary_identity",
+            target_fields=("query.orderId",),
+            probes=(
+                IntentProbe(
+                    field="query.orderId",
+                    value=None,
+                    action="secondary_value",
+                ),
+            ),
+            oracle_kind="authorization_boundary",
+            oracle_description="需要第二身份作为对象对照。",
+            rationale="第二身份请求缺失。",
+            confidence=0.8,
+        ),
+    )
+    result = execute_plan(plan, request, run_name="verify-secondary-blocked", approved=True)
+    assert result.status == "needs_secondary_identity"
+
+
+def test_control_alignment_includes_status_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = parse_request_text("GET https://app.test/items?id=1 HTTP/1.1\nHost: app.test\n\n")
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="验证成对响应边界"),
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="paired_field_mutation",
+            target_fields=("query.id",),
+            probes=(
+                IntentProbe(
+                    field="query.id",
+                    value="true",
+                    action="set",
+                    role="true",
+                    pair_id="pair-1",
+                ),
+                IntentProbe(
+                    field="query.id",
+                    value="false",
+                    action="set",
+                    role="false",
+                    pair_id="pair-1",
+                ),
+            ),
+            oracle_kind="response_difference",
+            oracle_description="成对响应需要稳定对照。",
+            rationale="验证成对响应。",
+            confidence=0.8,
+        ),
+    )
+    observations = iter(
+        [
+            HttpObservation(200, {}, "same"),
+            HttpObservation(500, {}, "same"),
+            HttpObservation(200, {}, "different"),
+        ]
+    )
+    monkeypatch.setattr(executor, "send_request", lambda _request: next(observations))
+    result = execute_plan(plan, request, run_name="verify-status-alignment", approved=True)
+    assert result.status == "inconclusive"
+
+
+def test_delay_probe_is_blocked_for_every_strategy() -> None:
+    request = parse_request_text("GET https://app.test/items?id=1 HTTP/1.1\nHost: app.test\n\n")
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="验证输入处理边界"),
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="field_mutation",
+            target_fields=("query.id",),
+            probes=(
+                IntentProbe(
+                    field="query.id",
+                    value="probe",
+                    action="set",
+                    role="delay",
+                ),
+            ),
+            oracle_kind="response_difference",
+            oracle_description="不执行耗时型探针。",
+            rationale="描述包含耗时验证要求。",
+            confidence=0.7,
+        ),
+    )
+    assert plan.blocked_reason is not None
+    assert "耗时型" in plan.blocked_reason
+
+
+def test_identity_marker_already_in_control_response_is_not_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = parse_request_text("GET https://app.test/items?id=1 HTTP/1.1\nHost: app.test\n\n")
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="验证身份确认"),
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="identity_marker",
+            target_fields=("query.id",),
+            probes=(IntentProbe(field="query.id", value="probe", action="set"),),
+            oracle_kind="identity_marker",
+            oracle_marker="stable-marker",
+            oracle_description="响应需要包含受控身份 marker。",
+            rationale="验证响应 marker。",
+            confidence=0.8,
+        ),
+    )
+    observations = iter(
+        [
+            HttpObservation(200, {}, "stable-marker in baseline"),
+            HttpObservation(200, {}, "stable-marker in probe"),
+        ]
+    )
+    monkeypatch.setattr(executor, "send_request", lambda _request: next(observations))
+    result = execute_plan(plan, request, run_name="verify-marker-baseline", approved=True)
+    assert result.status == "inconclusive"
+
+
+def test_send_request_preserves_case_insensitive_host_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeConnection:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def request(
+            self,
+            _method: str,
+            _path: str,
+            *,
+            body: bytes,
+            headers: dict[str, str],
+        ) -> None:
+            captured["body"] = body
+            captured["headers"] = headers
+
+        def getresponse(self) -> Any:
+            class Response:
+                status = 200
+
+                def read(self, _limit: int) -> bytes:
+                    return b"ok"
+
+                def getheaders(self) -> list[tuple[str, str]]:
+                    return []
+
+            return Response()
+
+        def close(self) -> None:
+            pass
+
+    request = parse_request_text("GET https://app.test/items HTTP/1.1\nhOsT: app.test\n\n")
+    monkeypatch.setattr(executor.http.client, "HTTPSConnection", FakeConnection)
+    executor.send_request(request)
+    headers = captured["headers"]
+    assert [name for name in headers if name.lower() == "host"] == ["hOsT"]
+
+
+def test_secondary_identity_requires_matching_control_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = parse_request_text(
+        "GET https://app.test/orders?orderId=42 HTTP/1.1\n"
+        "Host: app.test\n"
+        "Cookie: session=primary\n\n"
+    )
+    secondary = parse_request_text(
+        "GET https://app.test/orders?orderId=99 HTTP/1.1\n"
+        "Host: app.test\n"
+        "Cookie: session=secondary\n\n"
+    )
+    intent = VerificationIntent(
+        vulnerability_type="对象访问边界问题",
+        strategy_kind="secondary_identity",
+        target_fields=("query.orderId",),
+        probes=(
+            IntentProbe(
+                field="query.orderId",
+                value=None,
+                action="secondary_value",
+            ),
+        ),
+        oracle_kind="authorization_boundary",
+        oracle_description="主身份不应取得第二身份对象。",
+        rationale="用第二身份响应作为对象对照。",
+        confidence=0.9,
+    )
+    plan = build_verification_plan(
+        VerificationCase(
+            request=request,
+            issue_description="验证对象访问边界",
+            supporting_requests=[secondary],
+        ),
+        intent=intent,
+    )
+    assert plan.blocked_reason is None
+    assert plan.max_requests == 3
+    observations = iter(
+        [
+            HttpObservation(200, {}, '{"id":42}'),
+            HttpObservation(200, {}, '{"id":99}'),
+            HttpObservation(200, {}, '{"id":99}'),
+        ]
+    )
+    monkeypatch.setattr(executor, "send_request", lambda _request: next(observations))
+    result = execute_plan(
+        plan,
+        request,
+        run_name="verify-secondary",
+        approved=True,
+        secondary=secondary,
+    )
+    assert result.status == "verified_vulnerable"
+    assert [item.probe_id for item in result.evidence] == [
+        "control",
+        "secondary-control",
+        "intent-1",
+    ]
 
 
 def test_description_driven_intent_uses_request_field_allow_list() -> None:
@@ -160,6 +476,7 @@ def test_description_driven_intent_uses_request_field_allow_list() -> None:
     raw_intent = json.dumps(
         {
             "vulnerability_type": "sqli",
+            "strategy_kind": "paired_field_mutation",
             "target_fields": ["body.ids[0]"],
             "probes": [
                 {
@@ -205,6 +522,7 @@ def test_description_driven_intent_uses_request_field_allow_list() -> None:
 def test_description_driven_intent_rejects_unknown_fields_and_exfiltration() -> None:
     base = {
         "vulnerability_type": "sqli",
+        "strategy_kind": "paired_field_mutation",
         "target_fields": ["body.ids[0]"],
         "oracle_kind": "response_difference",
         "oracle_description": "响应差异",
@@ -244,7 +562,7 @@ def test_description_driven_intent_rejects_unknown_fields_and_exfiltration() -> 
         )
 
 
-def test_sql_error_role_is_supported_and_delay_role_is_blocked(
+def test_exception_role_is_supported_and_expensive_probe_is_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = parse_request_text("GET https://app.test/items?id=1 HTTP/1.1\nHost: app.test\n\n")
@@ -252,6 +570,7 @@ def test_sql_error_role_is_supported_and_delay_role_is_blocked(
         json.dumps(
             {
                 "vulnerability_type": "sqli",
+                "strategy_kind": "paired_field_mutation",
                 "target_fields": ["query.id"],
                 "probes": [
                     {
@@ -283,12 +602,13 @@ def test_sql_error_role_is_supported_and_delay_role_is_blocked(
     )
     monkeypatch.setattr(executor, "send_request", lambda _request: next(observations))
     result = execute_plan(plan, request, run_name="verify-error", approved=True)
-    assert result.status == "verified_vulnerable"
+    assert result.status == "inconclusive"
 
     delay_intent = parse_intent_response(
         json.dumps(
             {
                 "vulnerability_type": "sqli",
+                "strategy_kind": "paired_field_mutation",
                 "target_fields": ["query.id"],
                 "probes": [
                     {
@@ -311,7 +631,7 @@ def test_sql_error_role_is_supported_and_delay_role_is_blocked(
         intent=delay_intent,
     )
     assert delay_plan.blocked_reason is not None
-    assert "延时盲注" in delay_plan.blocked_reason
+    assert "耗时型" in delay_plan.blocked_reason
 
 
 def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
@@ -320,6 +640,11 @@ def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
     request_file = tmp_path / "request.txt"
     request_file.write_text(
         "GET https://app.test/search?q=hello HTTP/1.1\nHost: app.test\n\n",
+        encoding="utf-8",
+    )
+    secondary_file = tmp_path / "secondary.txt"
+    secondary_file.write_text(
+        "GET https://app.test/search?q=other HTTP/1.1\nHost: app.test\n\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -332,6 +657,8 @@ def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
             str(request_file),
             "--issue",
             "疑似 SQL 注入",
+            "--secondary-request",
+            str(secondary_file),
             "-n",
             "--yes",
         ],
@@ -339,6 +666,7 @@ def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
     args = cli_args.parse_arguments()
     assert args.mode == "verify"
     assert args.verification_request == str(request_file)
+    assert args.verification_secondary_request == str(secondary_file)
     assert args.verification_approve is True
 
     monkeypatch.setattr(
@@ -350,10 +678,56 @@ def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
         cli_args.parse_arguments()
 
 
+def test_cli_persists_model_planning_failure_as_blocked_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_file = tmp_path / "request.txt"
+    request_file.write_text(
+        "GET https://app.test/search?q=hello HTTP/1.1\nHost: app.test\n\n",
+        encoding="utf-8",
+    )
+
+    async def fail_intent(_case: VerificationCase) -> VerificationIntent:
+        raise IntentGenerationError("模型返回了不支持的验证能力")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(verification_cli, "infer_verification_intent", fail_intent)
+    result = asyncio.run(
+        verification_cli.run_verification_cli(
+            SimpleNamespace(
+                verification_request=str(request_file),
+                verification_secondary_request=None,
+                verification_canary_url=None,
+                verification_issue="验证输入字段边界",
+                verification_baseline=None,
+                verification_approve=True,
+                non_interactive=True,
+            )
+        )
+    )
+    assert result == 1
+    reports = list((tmp_path / "strix_runs").glob("verify-*/penetration_test_report.md"))
+    assert len(reports) == 1
+    report = reports[0].read_text(encoding="utf-8")
+    assert "模型返回了不支持的验证能力" in report
+    assert "没有已执行的请求" in report
+
+
 def test_plan_confirmation_precedes_network_execution(monkeypatch: pytest.MonkeyPatch) -> None:
     request = parse_request_text("GET https://app.test/search?q=hello HTTP/1.1\nHost: app.test\n\n")
     plan = build_verification_plan(
-        VerificationCase(request=request, issue_description="疑似命令注入")
+        VerificationCase(request=request, issue_description="验证输入字段的响应边界"),
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="field_mutation",
+            target_fields=("query.q",),
+            probes=(IntentProbe(field="query.q", value="probe", action="set"),),
+            oracle_kind="response_difference",
+            oracle_description="探针响应应与控制响应进行比较。",
+            rationale="验证计划需要用户确认后执行。",
+            confidence=0.5,
+        ),
     )
 
     def fail_if_called(_request: object) -> object:
@@ -375,7 +749,17 @@ def test_non_idempotent_request_requires_separate_side_effect_approval(
         '{"cmd":"hello"}'
     )
     plan = build_verification_plan(
-        VerificationCase(request=request, issue_description="疑似命令注入 cmd")
+        VerificationCase(request=request, issue_description="验证 cmd 字段的输入处理边界"),
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="field_mutation",
+            target_fields=("body.cmd",),
+            probes=(IntentProbe(field="body.cmd", value="probe", action="set"),),
+            oracle_kind="response_difference",
+            oracle_description="探针响应应与控制响应进行比较。",
+            rationale="POST 请求需要额外副作用确认。",
+            confidence=0.5,
+        ),
     )
     monkeypatch.setattr(executor, "send_request", lambda _request: pytest.fail("不应执行"))
     result = execute_plan(plan, request, run_name="verify-side-effect", approved=True)
@@ -409,7 +793,18 @@ def test_command_injection_verification_uses_local_http_fixture() -> None:
             f"GET http://127.0.0.1:{port}/verify?cmd=hello HTTP/1.1\nHost: 127.0.0.1:{port}\n\n"
         )
         plan = build_verification_plan(
-            VerificationCase(request=request, issue_description="疑似命令注入 cmd")
+            VerificationCase(request=request, issue_description="验证 cmd 字段的身份确认边界"),
+            intent=VerificationIntent(
+                vulnerability_type="输入处理边界问题",
+                strategy_kind="identity_marker",
+                target_fields=("query.cmd",),
+                probes=(IntentProbe(field="query.cmd", value=";id", action="set"),),
+                oracle_kind="identity_marker",
+                oracle_marker="uid=1000(test)",
+                oracle_description="响应应包含模型指定的身份确认 marker。",
+                rationale="使用低风险 marker 检查响应证据。",
+                confidence=0.8,
+            ),
         )
         result = execute_plan(
             plan,
@@ -463,6 +858,7 @@ def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
         )
         intent = VerificationIntent(
             vulnerability_type="sqli",
+            strategy_kind="paired_field_mutation",
             target_fields=("body.ids[0]",),
             probes=(
                 IntentProbe(
@@ -505,7 +901,15 @@ def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
             "intent-1",
             "intent-2",
         ]
-        assert "\"ids\":[\"1' OR '1'='1\"]" in result.evidence[1].request
+        probe_request = result.evidence[1].request or ""
+        assert "\"ids\":[\"1' OR '1'='1\"]" in probe_request
+        rendered_body = probe_request.split("\r\n\r\n", 1)[1].encode("utf-8")
+        rendered_length = next(
+            int(line.split(":", 1)[1].strip())
+            for line in probe_request.split("\r\n")
+            if line.lower().startswith("content-length:")
+        )
+        assert rendered_length == len(rendered_body)
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -573,9 +977,20 @@ def test_runner_reuses_plan_for_fixed_retest_without_requiring_same_values(
     monkeypatch.setattr(executor, "send_request", lambda _request: next(observations))
     baseline_dir, _plan, baseline_result = run_verification_case(
         request_file=str(before),
-        issue="疑似命令注入 cmd",
+        issue="验证 cmd 字段的身份确认边界",
         run_name="baseline",
         approved=True,
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="identity_marker",
+            target_fields=("query.cmd",),
+            probes=(IntentProbe(field="query.cmd", value=";id", action="set"),),
+            oracle_kind="identity_marker",
+            oracle_marker="uid=1000(test)",
+            oracle_description="响应应包含模型指定的身份确认 marker。",
+            rationale="复用同一验证计划进行修复后复测。",
+            confidence=0.8,
+        ),
     )
     assert baseline_result.status == "verified_vulnerable"
     assert baseline_dir.name == "baseline"

@@ -199,11 +199,13 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 
 ### 单个漏洞验证模式
 
-SQL 注入验证支持真值/假值对照和错误型探针；模型输出的角色会先归一化，SQLi 中不能识别的角色不会直接导致 CLI 崩溃，而会生成不可判定的阻断计划。延时盲注可能造成目标负载，始终只记录阻断原因，不发送延时载荷。
-
-验证计划由当前配置的 Strix LLM 根据“漏洞描述 + 脱敏请求结构”生成。模型只提出目标字段、对照组、探针和判定器，随后由本地校验器检查字段白名单、动作、载荷、请求数量和副作用边界；模型调用失败或意图不完整时直接阻断，不使用固定的参数名或固定 SQL 注入模板猜测。运行前请先完成模型配置，至少设置 STRIX_LLM、LLM_API_KEY，以及兼容网关所需的 LLM_API_BASE。
+验证计划由当前配置的 Strix LLM 根据“漏洞描述 + 脱敏请求结构”生成。模型只提出漏洞标签、目标字段、验证能力、探针和判定器，随后由本地校验器检查字段白名单、动作、载荷、请求数量和副作用边界；模型调用失败或意图不完整时直接阻断，不按漏洞名称匹配固定模板，也不猜测请求中不存在的字段。运行前请先完成模型配置，至少设置 STRIX_LLM、LLM_API_KEY，以及兼容网关所需的 LLM_API_BASE。
 
 确认漏洞时报告会提供“可复现 PoC”和已执行探针请求；未复现、阻断或证据不足时会提供“未复现证明”，包括控制请求、探针请求、响应状态码、长度、响应指纹和未满足的判定条件。报告中的原始请求和实际重放请求仍按原样保留，便于在 Burp Repeater 中复核。
+
+需要第二授权身份时，使用 --secondary-request 提供第二个 Burp 请求包；需要受控出站验证时，使用 --canary-url 提供由操作员控制的公网 Canary 地址。模型不能自行指定第二身份请求或出站目标。
+
+当前版本没有 OOB 回调确认能力，Canary 回显只记录为证据不足，不会单凭回显确认服务端请求伪造。
 
 `--verify` 用于复核一个具体漏洞，不启动普通扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才发送受限探针请求。
 
@@ -221,6 +223,20 @@ SQL 注入验证支持真值/假值对照和错误型探针；模型输出的角
 .venv/bin/strix --verify \
   --baseline <历史运行名> \
   --request ./burp-request-after-fix.txt \
+  -n --yes
+
+# 跨身份对象边界：额外提供第二个授权身份的同端点请求
+.venv/bin/strix --verify \
+  --request ./primary-request.txt \
+  --secondary-request ./secondary-request.txt \
+  --issue "疑似对象访问边界问题" \
+  -n --yes
+
+# 需要受控出站验证时：只使用操作员控制的 Canary 地址
+.venv/bin/strix --verify \
+  --request ./burp-request.txt \
+  --canary-url https://canary.example/strix-test \
+  --issue "疑似服务端出站请求边界问题" \
   -n --yes
 ```
 

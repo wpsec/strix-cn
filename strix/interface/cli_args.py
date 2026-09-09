@@ -215,6 +215,18 @@ def parse_arguments() -> argparse.Namespace:
         help="漏洞验证模式使用的 Burp Raw HTTP 或 Copy as cURL 请求文件。",
     )
     parser.add_argument(
+        "--secondary-request",
+        dest="verification_secondary_request",
+        metavar="PATH",
+        help="漏洞验证模式使用的第二授权身份请求文件，用于跨身份对象边界对照。",
+    )
+    parser.add_argument(
+        "--canary-url",
+        dest="verification_canary_url",
+        metavar="URL",
+        help="漏洞验证模式使用的操作员控制 Canary 地址，不接受模型自行指定的目标地址。",
+    )
+    parser.add_argument(
         "--issue",
         dest="verification_issue",
         metavar="TEXT|@FILE",
@@ -420,13 +432,18 @@ def parse_arguments() -> argparse.Namespace:
     has_verification_args = any(
         (
             args.verification_request,
+            args.verification_secondary_request,
+            args.verification_canary_url,
             args.verification_issue,
             args.verification_baseline,
             args.verification_approve,
         )
     )
     if args.mode != "verify" and has_verification_args:
-        parser.error("--request、--issue、--baseline 和 --yes 只能用于 --verify。")
+        parser.error(
+            "--request、--secondary-request、--canary-url、--issue、"
+            "--baseline 和 --yes 只能用于 --verify。"
+        )
 
     if args.mode == "verify":
         if args.redteam or args.burp_port is not None:
@@ -451,6 +468,13 @@ def parse_arguments() -> argparse.Namespace:
             if not request_path.is_file():
                 parser.error(f"请求文件不存在：{args.verification_request}")
             args.verification_request = str(request_path)
+        if args.verification_secondary_request:
+            secondary_path = Path(args.verification_secondary_request).expanduser()
+            if not secondary_path.is_file():
+                parser.error(
+                    f"第二身份请求文件不存在：{args.verification_secondary_request}"
+                )
+            args.verification_secondary_request = str(secondary_path)
         if args.non_interactive and not args.verification_baseline and not args.verification_issue:
             parser.error("首次漏洞验证模式需要 --issue <问题描述>。")
         if args.verification_approve and not args.non_interactive:

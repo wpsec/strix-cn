@@ -1,4 +1,4 @@
-"""Bounded, direct HTTP execution for verification plans."""
+"""Bounded direct HTTP execution and generic response oracles."""
 
 # ruff: noqa: RUF001
 
@@ -8,7 +8,6 @@ import hashlib
 import http.client
 import json
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
@@ -33,8 +32,6 @@ from strix.verification.request import (
 logger = logging.getLogger(__name__)
 _MAX_RESPONSE_BYTES = 512 * 1024
 _REQUEST_TIMEOUT_SECONDS = 20
-_DB_ERROR_RE = re.compile(r"(?i)(sql syntax|mysql|postgres|sqlite|odbc|ora-\d+|syntax error)")
-_IDENTITY_RE = re.compile(r"(?i)\b(uid|gid)=\d+|\bwhoami\b|\b(root|www-data|application)\b")
 
 
 class VerificationExecutionError(RuntimeError):
@@ -60,10 +57,10 @@ def send_request(request: CanonicalRequest) -> HttpObservation:
     """Send exactly one request without following redirects or using env proxies."""
     body = request.body.encode("utf-8")
     headers = _headers_without_framing(request.headers)
-    headers.setdefault(
-        "Host",
-        request.host if request.port in {80, 443} else f"{request.host}:{request.port}",
-    )
+    if not any(name.lower() == "host" for name in headers):
+        headers["Host"] = (
+            request.host if request.port in {80, 443} else f"{request.host}:{request.port}"
+        )
     headers["Content-Length"] = str(len(body))
     path = request.path or "/"
     if request.query:
@@ -113,7 +110,7 @@ def _apply_probe(
         return remove_authentication(request)
     if action == "multipart_marker":
         if not probe.value:
-            raise VerificationExecutionError("文件上传 marker 缺失")
+            raise VerificationExecutionError("multipart marker 缺失")
         return replace_multipart_marker(request, probe.value)
     if not probe.field:
         raise VerificationExecutionError(f"探针 {probe.probe_id} 缺少目标字段")
@@ -133,30 +130,19 @@ def _fingerprint(observation: HttpObservation) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _json_shape(value: Any) -> Any:
-    if isinstance(value, dict):
-        entries = ((str(key), _json_shape(item)) for key, item in value.items())
-        return ("object", tuple(sorted(entries)))
-    if isinstance(value, list):
-        return ("array", len(value), tuple(_json_shape(item) for item in value[:3]))
-    if isinstance(value, bool):
-        return ("boolean",)
-    if isinstance(value, (int, float)):
-        return ("number",)
-    if value is None:
-        return ("null",)
-    return ("string", len(str(value)))
-
-
 def _responses_differ(first: HttpObservation, second: HttpObservation) -> bool:
-    if first.status_code == second.status_code and first.body == second.body:
-        return False
     if first.status_code != second.status_code:
         return True
-    if abs(len(first.body) - len(second.body)) > 32:
+    return first.body != second.body
+
+
+def _responses_match(first: HttpObservation, second: HttpObservation) -> bool:
+    if first.status_code != second.status_code:
+        return False
+    if first.body == second.body:
         return True
     try:
-        return bool(_json_shape(json.loads(first.body)) != _json_shape(json.loads(second.body)))
+        return bool(json.loads(first.body) == json.loads(second.body))
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
 
@@ -170,14 +156,14 @@ def _response_label(observation: HttpObservation | None) -> str:
 def _effective_oracle_kind(plan: VerificationPlan) -> str:
     if plan.schema_version >= 2:
         return plan.oracle_kind
-    return {
-        "sqli": "response_difference",
-        "idor_bola": "authorization_boundary",
-        "authz_bypass": "authorization_boundary",
-        "command_injection": "identity_marker",
-        "ssrf": "canary_echo",
-        "file_upload": "canary_echo",
-    }.get(plan.vulnerability_type, plan.oracle_kind)
+    if plan.oracle_marker:
+        return "identity_marker"
+    if any(
+        probe.requires_secondary_identity or probe.action == "remove_authentication"
+        for probe in plan.probes
+    ):
+        return "authorization_boundary"
+    return plan.oracle_kind or "response_difference"
 
 
 def _probe_result(
@@ -197,129 +183,180 @@ def _probe_result(
     )
 
 
-def _assess(  # noqa: PLR0911, PLR0912, PLR0915
+def _response_difference_oracle(
+    plan: VerificationPlan,
+    observations: dict[str, HttpObservation],
+) -> tuple[VerificationStatus, str]:
+    control = observations.get("control")
+    if control is None:
+        return "inconclusive", "缺少控制响应，无法确认响应差异"
+
+    pair_map: dict[str, dict[str, str]] = {}
+    for probe in plan.probes:
+        if probe.pair_id and probe.role in {"true", "false"}:
+            pair_map.setdefault(probe.pair_id, {})[probe.role] = probe.probe_id
+
+    evidence: list[str] = []
+    for pair_id, pair in pair_map.items():
+        true_id = pair.get("true")
+        false_id = pair.get("false")
+        if not true_id or not false_id:
+            continue
+        true_response = observations.get(true_id)
+        false_response = observations.get(false_id)
+        if true_response is None or false_response is None:
+            continue
+        differs = _responses_differ(true_response, false_response)
+        control_aligned = _responses_match(control, true_response) or _responses_match(
+            control, false_response
+        )
+        evidence.append(
+            f"{pair_id}: 真值 {_response_label(true_response)}，"
+            f"假值 {_response_label(false_response)}"
+        )
+        if differs and control_aligned:
+            return "verified_vulnerable", "成对探针产生了可复现的响应差异；" + "；".join(evidence)
+
+    for probe in plan.probes:
+        if probe.probe_id == "control" or probe.role in {"true", "false"}:
+            continue
+        response = observations.get(probe.probe_id)
+        if response is None:
+            continue
+        if _responses_differ(control, response):
+            evidence.append(f"{probe.probe_id}: {_response_label(response)}")
+
+    details = "；".join(evidence) or "未获得完整对照响应"
+    if evidence:
+        return (
+            "inconclusive",
+            "观察到响应差异，但没有成对对照或明确证据 marker，不能确认漏洞；" + details,
+        )
+    return (
+        "not_reproduced",
+        f"未观察到足以确认问题的响应差异；控制 {_response_label(control)}；{details}",
+    )
+
+
+def _secondary_identity_oracle(
+    plan: VerificationPlan,
+    observations: dict[str, HttpObservation],
+) -> tuple[VerificationStatus, str]:
+    control = observations.get("control")
+    secondary = observations.get("secondary-control")
+    if secondary is None:
+        return "inconclusive", "缺少第二身份控制响应，无法确认对象边界"
+    if control is not None and _responses_match(control, secondary):
+        return "inconclusive", "主身份和第二身份返回相同对象，无法确认越权"
+    for probe in plan.probes:
+        observation = observations.get(probe.probe_id)
+        if (
+            observation
+            and 200 <= observation.status_code < 300
+            and observation.body.strip()
+            and _responses_match(observation, secondary)
+        ):
+            return (
+                "verified_vulnerable",
+                f"边界探针 {probe.probe_id} 返回了第二身份可取得的对象响应",
+            )
+    return "not_reproduced", "未观察到主身份取得第二身份对象响应的证据"
+
+
+def _remove_authentication_oracle(
+    plan: VerificationPlan,
+    observations: dict[str, HttpObservation],
+) -> tuple[VerificationStatus, str]:
+    control = observations.get("control")
+    if control is None or not (200 <= control.status_code < 300 and control.body.strip()):
+        return "inconclusive", "控制请求没有成功响应，无法确认移除认证后的边界"
+    tested = [
+        (probe, observations.get(probe.probe_id))
+        for probe in plan.probes
+        if probe.probe_id != "control"
+    ]
+    for probe, observation in tested:
+        if observation and 200 <= observation.status_code < 300 and observation.body.strip():
+            return "verified_vulnerable", f"边界探针 {probe.probe_id} 仍返回非空成功响应"
+    return "not_reproduced", "未观察到越过授权边界的成功响应"
+
+
+def _authorization_oracle(
+    plan: VerificationPlan,
+    observations: dict[str, HttpObservation],
+) -> tuple[VerificationStatus, str]:
+    strategy = plan.strategy_kind
+    if plan.schema_version < 2:
+        strategy = (
+            "secondary_identity"
+            if any(probe.requires_secondary_identity for probe in plan.probes)
+            else "remove_authentication"
+        )
+    if strategy == "secondary_identity":
+        return _secondary_identity_oracle(plan, observations)
+    return _remove_authentication_oracle(plan, observations)
+
+
+def _marker_oracle(
+    plan: VerificationPlan,
+    observations: dict[str, HttpObservation],
+) -> tuple[VerificationStatus, str]:
+    marker = plan.oracle_marker
+    if not marker:
+        return "inconclusive", "计划没有提供可验证的响应 marker"
+    control = observations.get("control")
+    if control and marker in control.body:
+        return "inconclusive", "控制响应已经包含该 marker，不能将其归因于探针"
+    for probe in plan.probes:
+        response = observations.get(probe.probe_id)
+        if response and marker in response.body:
+            return "verified_vulnerable", f"响应包含计划指定的 marker：{marker}"
+    return "not_reproduced", "未观察到计划指定的响应 marker"
+
+
+def _canary_oracle(
+    plan: VerificationPlan,
+    observations: dict[str, HttpObservation],
+    probe_values: dict[str, str | None],
+) -> tuple[VerificationStatus, str]:
+    for probe in plan.probes:
+        value = probe_values.get(probe.probe_id)
+        response = observations.get(probe.probe_id)
+        if value and response and value in response.body:
+            return "inconclusive", "响应仅回显了 Canary，不能证明服务端发起了出站请求"
+    return "inconclusive", "未观察到足以证明出站请求的 Canary 证据"
+
+
+def _run_oracle(
+    plan: VerificationPlan,
+    observations: dict[str, HttpObservation],
+    *,
+    probe_values: dict[str, str | None],
+) -> tuple[VerificationStatus, str]:
+    oracle_kind = _effective_oracle_kind(plan)
+    if oracle_kind == "response_difference":
+        return _response_difference_oracle(plan, observations)
+    if oracle_kind == "authorization_boundary":
+        return _authorization_oracle(plan, observations)
+    if oracle_kind == "identity_marker":
+        return _marker_oracle(plan, observations)
+    if oracle_kind == "canary_echo":
+        return _canary_oracle(plan, observations, probe_values)
+    return "inconclusive", f"不支持的响应判定器：{oracle_kind}"
+
+
+def _assess(
     plan: VerificationPlan,
     probes: list[ProbeResult],
     observations: dict[str, HttpObservation],
     *,
-    issue_description: str,
     probe_values: dict[str, str | None],
 ) -> tuple[VerificationStatus, str]:
-    vulnerability_type = plan.vulnerability_type
-    oracle_kind = _effective_oracle_kind(plan)
     if not probes:
         return "inconclusive", "没有可执行的验证探针"
     if any(result.error for result in probes):
         return "inconclusive", "部分验证请求执行失败，无法形成完整证据"
-
-    if oracle_kind == "response_difference" and vulnerability_type == "sqli":
-        control_response = observations.get("control")
-        pairs: dict[str, dict[str, str]] = {}
-        for probe in plan.probes:
-            role = probe.role
-            pair_id = probe.pair_id
-            if not pair_id or role not in {"true", "false"}:
-                legacy_match = re.fullmatch(r"sqli-(.+)-(true|false)", probe.probe_id)
-                if legacy_match:
-                    pair_id = pair_id or legacy_match.group(1)
-                    role = role or legacy_match.group(2)
-            if pair_id and role in {"true", "false"}:
-                pairs.setdefault(pair_id, {})[role] = probe.probe_id
-        evidence_lines: list[str] = []
-        for pair_id, pair in pairs.items():
-            true_probe_id = pair.get("true")
-            false_probe_id = pair.get("false")
-            if not true_probe_id or not false_probe_id:
-                continue
-            true_response = observations.get(true_probe_id)
-            false_response = observations.get(false_probe_id)
-            if not true_response or not false_response:
-                continue
-            evidence_lines.append(
-                f"{pair_id}: 真值 {_response_label(true_response)}，"
-                f"假值 {_response_label(false_response)}"
-            )
-            differs = _responses_differ(true_response, false_response)
-            database_error = _DB_ERROR_RE.search(true_response.body) or _DB_ERROR_RE.search(
-                false_response.body
-            )
-            same_body_as_control = control_response is not None and control_response.body in {
-                true_response.body,
-                false_response.body,
-            }
-            status_split_around_control = control_response is not None and (
-                (true_response.status_code == control_response.status_code)
-                and (false_response.status_code != control_response.status_code)
-            )
-            control_aligned = same_body_as_control or status_split_around_control
-            if differs and (database_error or control_aligned):
-                return (
-                    "verified_vulnerable",
-                    "基线、真值和假值请求产生了可复现的数据库响应差异；"
-                    + "；".join(evidence_lines),
-                )
-        for probe in plan.probes:
-            if probe.role != "error":
-                continue
-            response = observations.get(probe.probe_id)
-            if response is None:
-                continue
-            evidence_lines.append(f"错误型探针：{_response_label(response)}")
-            if _DB_ERROR_RE.search(response.body):
-                return (
-                    "verified_vulnerable",
-                    "错误型探针触发了数据库错误响应；" + "；".join(evidence_lines),
-                )
-        baseline = _response_label(control_response)
-        details = "；".join(evidence_lines) or "未获得完整的真值/假值响应"
-        return (
-            "not_reproduced",
-            f"未观察到足以确认 SQL 注入的响应差异；基线 {baseline}；{details}",
-        )
-
-    if oracle_kind == "authorization_boundary" and vulnerability_type in {
-        "idor_bola",
-        "authz_bypass",
-    }:
-        for result in probes:
-            if result.probe_id == "control":
-                continue
-            observation = observations.get(result.probe_id)
-            if observation and 200 <= observation.status_code < 300 and observation.body.strip():
-                if vulnerability_type == "idor_bola":
-                    return "verified_vulnerable", "受保护对象在不同身份边界下仍返回了非空响应"
-                return "verified_vulnerable", "移除认证信息后仍返回了非空成功响应"
-        return "not_reproduced", "未观察到未授权成功访问"
-
-    if oracle_kind == "identity_marker" and vulnerability_type == "command_injection":
-        for result in probes:
-            if result.probe_id == "control":
-                continue
-            if _IDENTITY_RE.search(result.response_summary):
-                return "verified_vulnerable", "响应包含受控身份确认结果"
-        return "not_reproduced", "未观察到身份确认结果"
-
-    if oracle_kind == "canary_echo" and vulnerability_type == "file_upload":
-        for probe in plan.probes:
-            if probe.action != "multipart_marker":
-                continue
-            marker = probe_values.get(probe.probe_id)
-            response = observations.get(probe.probe_id)
-            if marker and response and marker in response.body:
-                return "verified_vulnerable", "响应中返回了上传 marker，可继续复核对象访问边界"
-        return "inconclusive", "上传请求已执行，但响应未提供可确认的 marker 证据"
-
-    if oracle_kind == "canary_echo" and vulnerability_type == "ssrf":
-        for probe in plan.probes:
-            if probe.action != "set":
-                continue
-            canary = probe_values.get(probe.probe_id)
-            response = observations.get(probe.probe_id)
-            if canary and response and canary in response.body:
-                return "verified_vulnerable", "响应包含受控 Canary 地址"
-        return "inconclusive", "未观察到受控 Canary 命中证据"
-
-    return "inconclusive", f"未支持的验证类型：{issue_description[:80]}"
+    return _run_oracle(plan, observations, probe_values=probe_values)
 
 
 def execute_plan(
@@ -343,9 +380,10 @@ def execute_plan(
             baseline_run=baseline_run,
         )
     if plan.blocked_reason:
-        status: VerificationStatus = (
-            "needs_secondary_identity" if "第二" in plan.blocked_reason else "blocked"
+        needs_secondary = plan.strategy_kind == "secondary_identity" or any(
+            probe.requires_secondary_identity for probe in plan.probes
         )
+        status: VerificationStatus = "needs_secondary_identity" if needs_secondary else "blocked"
         return VerificationResult(
             status=status,
             vulnerability_type=plan.vulnerability_type,
@@ -392,6 +430,24 @@ def execute_plan(
         except VerificationExecutionError as exc:
             results.append(ProbeResult(probe_id="control", status="error", error=str(exc)))
 
+    if (
+        any(probe.requires_secondary_identity for probe in plan.probes)
+        and len(results) < plan.max_requests
+        and secondary is not None
+    ):
+        try:
+            secondary_observation = send_request(secondary)
+            observations["secondary-control"] = secondary_observation
+            results.append(_probe_result("secondary-control", secondary, secondary_observation))
+        except VerificationExecutionError as exc:
+            results.append(
+                ProbeResult(
+                    probe_id="secondary-control",
+                    status="error",
+                    error=str(exc),
+                )
+            )
+
     for probe in plan.probes:
         if len(results) >= plan.max_requests:
             break
@@ -407,7 +463,6 @@ def execute_plan(
         plan,
         results,
         observations,
-        issue_description=plan.issue_description,
         probe_values={probe.probe_id: probe.value for probe in plan.probes},
     )
     return VerificationResult(

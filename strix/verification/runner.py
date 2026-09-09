@@ -20,6 +20,7 @@ from strix.verification.models import (
     VerificationPlan,
     VerificationProbe,
     VerificationResult,
+    redact_text,
     render_raw_request,
 )
 from strix.verification.planner import build_verification_plan
@@ -82,6 +83,10 @@ def _same_authority(first: object, second: object) -> bool:
     )
 
 
+def _same_endpoint(first: CanonicalRequest, second: CanonicalRequest) -> bool:
+    return first.method.upper() == second.method.upper() and first.path == second.path
+
+
 def _load_plan(run_dir: Path) -> VerificationPlan:
     try:
         data = json.loads((run_dir / "verification-plan.json").read_text(encoding="utf-8"))
@@ -113,6 +118,8 @@ def _load_plan(run_dir: Path) -> VerificationPlan:
             intent_rationale=str(data.get("intent_rationale", "")),
             intent_confidence=float(data.get("intent_confidence", 0.0)),
             oracle_kind=str(data.get("oracle_kind", "response_difference")),
+            strategy_kind=str(data.get("strategy_kind", "legacy")),
+            oracle_marker=str(data.get("oracle_marker", "")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"验证计划格式无效：{exc}") from exc
@@ -174,6 +181,8 @@ def _render_report(  # noqa: PLR0912
             "",
             "## 验证计划",
             "",
+            f"- 验证能力：`{plan.strategy_kind}`",
+            f"- 响应判定器：`{plan.oracle_kind}`",
             f"- 目标字段：{', '.join(plan.target_fields) or '未识别'}",
             f"- 预计请求数：{plan.max_requests}",
             f"- 计划哈希：`{plan.plan_sha256}`",
@@ -310,10 +319,46 @@ def _persist(
         "verification_issue": plan.issue_description,
         "verification_planner_source": plan.planner_source,
         "verification_oracle": plan.oracle_kind,
+        "verification_strategy": plan.strategy_kind,
         "verification_intent_confidence": plan.intent_confidence,
     }
     write_run_record(run_dir, record)
     return run_dir
+
+
+def persist_verification_failure(
+    *,
+    request_file: str,
+    issue: str,
+    reason: str,
+    run_name: str | None = None,
+    scheme: str | None = None,
+) -> tuple[Path, VerificationPlan, VerificationResult]:
+    """Persist a planning failure so a failed verification remains auditable."""
+    selected_run_name = run_name or _run_name()
+    _validate_run_name(selected_run_name)
+    request = parse_request_file(request_file, scheme=scheme)
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description=issue),
+    )
+    safe_reason = redact_text(reason.strip())[:2000] or "验证计划生成失败"
+    plan.blocked_reason = f"{plan.blocked_reason}；{safe_reason}"
+    plan.intent_rationale = plan.blocked_reason
+    plan.finalize_hash()
+    result = VerificationResult(
+        status="blocked",
+        vulnerability_type=plan.vulnerability_type,
+        plan_sha256=plan.plan_sha256,
+        run_name=selected_run_name,
+        summary=plan.blocked_reason,
+    )
+    run_dir = _persist(
+        run_name=selected_run_name,
+        plan=plan,
+        result=result,
+        baseline_run=None,
+    )
+    return run_dir, plan, result
 
 
 def run_verification_case(
@@ -327,6 +372,7 @@ def run_verification_case(
     secondary_request_file: str | None = None,
     scheme: str | None = None,
     secondary_scheme: str | None = None,
+    controlled_canary_url: str | None = None,
     intent: VerificationIntent | None = None,
 ) -> tuple[Path, VerificationPlan, VerificationResult]:
     """Build or load a plan, execute it when approved, and persist artifacts."""
@@ -338,8 +384,11 @@ def run_verification_case(
         if secondary_request_file
         else None
     )
-    if secondary is not None and not _same_authority(request, secondary):
-        raise ValueError("第二身份请求必须使用与主请求相同的 Scheme、Host 和 Port")
+    if secondary is not None:
+        if not _same_authority(request, secondary):
+            raise ValueError("第二身份请求必须使用与主请求相同的 Scheme、Host 和 Port")
+        if not _same_endpoint(request, secondary):
+            raise ValueError("第二身份请求必须使用与主请求相同的 Method 和 Path")
 
     if baseline_run:
         _validate_run_name(baseline_run)
@@ -376,6 +425,7 @@ def run_verification_case(
                 request=request,
                 issue_description=issue,
                 supporting_requests=[secondary] if secondary else [],
+                controlled_canary_url=controlled_canary_url,
             ),
             intent=intent,
         )

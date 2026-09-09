@@ -140,11 +140,16 @@ def render_raw_request(request: CanonicalRequest) -> str:
     target = request.path or "/"
     if request.query:
         target = f"{target}?{urlencode(request.query, doseq=True)}"
-    headers = dict(request.headers)
+    headers = {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() not in {"content-length", "transfer-encoding", "connection"}
+    }
     if not any(name.lower() == "host" for name in headers):
         headers["Host"] = (
             request.host if request.port in {80, 443} else f"{request.host}:{request.port}"
         )
+    headers["Content-Length"] = str(len(request.body.encode("utf-8")))
     lines = [f"{request.method} {target} HTTP/1.1"]
     lines.extend(f"{name}: {value}" for name, value in headers.items())
     return "\r\n".join(lines) + "\r\n\r\n" + request.body
@@ -156,6 +161,7 @@ class VerificationCase:
     issue_description: str
     baseline_run: str | None = None
     supporting_requests: list[CanonicalRequest] = field(default_factory=list)
+    controlled_canary_url: str | None = None
 
 
 @dataclass(slots=True)
@@ -204,6 +210,8 @@ class VerificationPlan:
     intent_rationale: str = ""
     intent_confidence: float = 0.0
     oracle_kind: str = "response_difference"
+    strategy_kind: str = "legacy"
+    oracle_marker: str = ""
 
     def payload(self) -> dict[str, Any]:
         probes = [probe.to_dict() for probe in self.probes]
@@ -232,6 +240,8 @@ class VerificationPlan:
                     "intent_rationale": self.intent_rationale,
                     "intent_confidence": self.intent_confidence,
                     "oracle_kind": self.oracle_kind,
+                    "strategy_kind": self.strategy_kind,
+                    "oracle_marker": self.oracle_marker,
                 }
             )
         return payload

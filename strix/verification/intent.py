@@ -27,14 +27,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_VULNERABILITY_TYPES = frozenset(
+SUPPORTED_STRATEGIES = frozenset(
     {
-        "idor_bola",
-        "sqli",
-        "ssrf",
-        "command_injection",
-        "file_upload",
-        "authz_bypass",
+        "field_mutation",
+        "paired_field_mutation",
+        "secondary_identity",
+        "remove_authentication",
+        "controlled_canary",
+        "identity_marker",
+        "multipart_marker",
     }
 )
 SUPPORTED_ACTIONS = frozenset(
@@ -88,34 +89,39 @@ class VerificationIntent:
     """Validated semantic instructions consumed by the deterministic planner."""
 
     vulnerability_type: str
+    strategy_kind: str
     target_fields: tuple[str, ...]
     probes: tuple[IntentProbe, ...]
     oracle_kind: str
     oracle_description: str
     rationale: str
     confidence: float
+    oracle_marker: str = ""
     source: str = "llm"
 
 
 INTENT_SYSTEM_PROMPT = """你是 Strix 的漏洞验证计划器。你的工作是把漏洞描述和一个脱敏后的 HTTP 请求结构转换为“受约束的验证意图”，供本地确定性执行器执行。
 
 必须遵守：
-1. 只根据问题描述和请求结构选择漏洞类型、目标字段、验证动作和响应判定方式；不要臆造不存在的字段。
+1. 只根据问题描述和请求结构选择漏洞标签、目标字段、验证能力和响应判定方式；不要臆造不存在的字段。
 2. target_fields 和 probes[].field 只能使用输入中的 candidate_fields；字段路径必须逐字匹配。
-3. 只能使用支持的漏洞类型和动作。set 只能修改一个已有字段；remove_authentication、secondary_value、multipart_marker 的语义由本地执行器实现。
-4. 只生成低副作用验证载荷。禁止数据提取、联合查询、读文件、执行 shell、联网、写文件、删除/修改业务数据和持久化。
-5. SQL 注入只允许布尔真/假或错误差异验证，不要生成 UNION、时间盲注、读取系统表或数据内容的载荷。
-6. 如果信息不足，返回空 probes，并在 rationale 中说明阻断原因；不要用猜测填充字段。
-7. 输出严格为一个 JSON 对象，不要 Markdown、解释文字或代码围栏。
+3. 只能使用支持的验证能力和动作。set 只能修改一个已有字段；remove_authentication、secondary_value、multipart_marker 的语义由本地执行器实现。
+4. 只生成低副作用验证载荷。禁止批量查询、数据提取、读文件、执行 shell、联网、写文件、删除/修改业务数据和持久化。
+5. 需要真假对照时使用 paired_field_mutation；单个输入变异使用 field_mutation；跨身份使用 secondary_identity；认证边界使用 remove_authentication；受控地址使用 controlled_canary（探针值使用 {{controlled_canary}}）；身份确认使用 identity_marker；上传使用 multipart_marker。
+6. 只使用响应状态、响应结构、受控 marker 或受控 Canary 作为证据；耗时型探针、数据提取和业务副作用均不执行。
+7. 如果信息不足，返回空 probes，并在 rationale 中说明阻断原因；不要用猜测填充字段。
+8. 输出严格为一个 JSON 对象，不要 Markdown、解释文字或代码围栏。
 
 JSON 格式：
 {
-  "vulnerability_type": "sqli|idor_bola|ssrf|command_injection|file_upload|authz_bypass",
+  "vulnerability_type": "自然语言漏洞标签",
+  "strategy_kind": "field_mutation|paired_field_mutation|secondary_identity|remove_authentication|controlled_canary|identity_marker|multipart_marker",
   "target_fields": ["body.ids[0]"],
   "probes": [
     {"field":"body.ids[0]", "value":"...", "action":"set", "role":"true|false|error", "pair_id":"pair-1", "rationale":"..."}
   ],
   "oracle_kind": "response_difference|authorization_boundary|identity_marker|canary_echo",
+  "oracle_marker": "",
   "oracle_description": "...",
   "rationale": "...",
   "confidence": 0.0
@@ -234,10 +240,13 @@ def parse_intent_response(
     """Parse and validate model output without permitting executable input."""
     data = _parse_json_object(text)
     vulnerability_type = _bounded_text(
-        data.get("vulnerability_type", ""), name="漏洞类型", limit=64
+        data.get("vulnerability_type", ""), name="漏洞标签", limit=128
     )
-    if vulnerability_type not in SUPPORTED_VULNERABILITY_TYPES:
-        raise IntentGenerationError(f"模型返回了不支持的漏洞类型：{vulnerability_type}")
+    if not vulnerability_type:
+        raise IntentGenerationError("模型没有返回漏洞标签")
+    strategy_kind = _bounded_text(data.get("strategy_kind", ""), name="验证能力", limit=64)
+    if strategy_kind not in SUPPORTED_STRATEGIES:
+        raise IntentGenerationError(f"模型返回了不支持的验证能力：{strategy_kind}")
 
     candidates = set(candidate_fields)
     raw_fields = data.get("target_fields", [])
@@ -264,6 +273,7 @@ def parse_intent_response(
     oracle_description = _bounded_text(
         data.get("oracle_description", ""), name="判定器说明", limit=1000
     )
+    oracle_marker = _bounded_text(data.get("oracle_marker", ""), name="判定 marker", limit=128)
     rationale = _bounded_text(data.get("rationale", ""), name="计划理由", limit=2000)
     try:
         confidence = float(data.get("confidence", 0.0))
@@ -273,12 +283,14 @@ def parse_intent_response(
         raise IntentGenerationError("模型返回的 confidence 必须在 0 到 1 之间")
     return VerificationIntent(
         vulnerability_type=vulnerability_type,
+        strategy_kind=strategy_kind,
         target_fields=target_fields,
         probes=probes,
         oracle_kind=oracle_kind,
         oracle_description=oracle_description,
         rationale=rationale,
         confidence=confidence,
+        oracle_marker=oracle_marker,
     )
 
 
@@ -306,6 +318,7 @@ def _candidate_context(case: VerificationCase) -> dict[str, Any]:
             for path in fields
         ],
         "supporting_request_count": len(case.supporting_requests),
+        "controlled_canary_url": case.controlled_canary_url,
     }
 
 
@@ -377,7 +390,7 @@ async def infer_verification_intent(case: VerificationCase) -> VerificationInten
 __all__ = [
     "SUPPORTED_ACTIONS",
     "SUPPORTED_ORACLES",
-    "SUPPORTED_VULNERABILITY_TYPES",
+    "SUPPORTED_STRATEGIES",
     "IntentGenerationError",
     "IntentProbe",
     "VerificationIntent",
