@@ -296,7 +296,7 @@ def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
             VerificationCase(request=request, issue_description="ids 存在 SQL 注入")
         )
         assert plan.target_fields[0] == "body.ids[0]"
-        assert plan.max_requests == 3
+        assert plan.max_requests == 7
         result = execute_plan(
             plan,
             request,
@@ -305,7 +305,7 @@ def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
             side_effect_approved=True,
         )
         assert result.status == "verified_vulnerable"
-        assert [item.probe_id for item in result.evidence] == [
+        assert [item.probe_id for item in result.evidence][:3] == [
             "control",
             "sqli-boolean-true",
             "sqli-boolean-false",

@@ -149,6 +149,8 @@ def _json_shape(value: Any) -> Any:
 
 
 def _responses_differ(first: HttpObservation, second: HttpObservation) -> bool:
+    if first.status_code == second.status_code and first.body == second.body:
+        return False
     if first.status_code != second.status_code:
         return True
     if abs(len(first.body) - len(second.body)) > 32:
@@ -157,6 +159,12 @@ def _responses_differ(first: HttpObservation, second: HttpObservation) -> bool:
         return _json_shape(json.loads(first.body)) != _json_shape(json.loads(second.body))
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
+
+
+def _response_label(observation: HttpObservation | None) -> str:
+    if observation is None:
+        return "未获得响应"
+    return f"HTTP {observation.status_code} / {len(observation.body.encode('utf-8'))} bytes"
 
 
 def _probe_result(
@@ -191,20 +199,46 @@ def _assess(  # noqa: PLR0911, PLR0912
 
     if vulnerability_type == "sqli":
         control_response = observations.get("control")
-        true_response = observations.get("sqli-boolean-true")
-        false_response = observations.get("sqli-boolean-false")
-        if true_response and false_response:
+        variant_names = (
+            "boolean",
+            "numeric",
+            "parenthesized",
+        )
+        evidence_lines: list[str] = []
+        for variant_name in variant_names:
+            true_response = observations.get(f"sqli-{variant_name}-true")
+            false_response = observations.get(f"sqli-{variant_name}-false")
+            if not true_response or not false_response:
+                continue
+            evidence_lines.append(
+                f"{variant_name}: 真值 {_response_label(true_response)}，"
+                f"假值 {_response_label(false_response)}"
+            )
             differs = _responses_differ(true_response, false_response)
             database_error = _DB_ERROR_RE.search(true_response.body) or _DB_ERROR_RE.search(
                 false_response.body
             )
-            control_changed = control_response is not None and (
-                _responses_differ(control_response, true_response)
-                or _responses_differ(control_response, false_response)
+            same_body_as_control = control_response is not None and control_response.body in {
+                true_response.body,
+                false_response.body,
+            }
+            status_split_around_control = control_response is not None and (
+                (true_response.status_code == control_response.status_code)
+                and (false_response.status_code != control_response.status_code)
             )
-            if differs and (database_error or control_changed):
-                return "verified_vulnerable", "基线、真值和假值请求产生了可复现的数据库响应差异"
-        return "not_reproduced", "未观察到足以确认 SQL 注入的响应差异"
+            control_aligned = same_body_as_control or status_split_around_control
+            if differs and (database_error or control_aligned):
+                return (
+                    "verified_vulnerable",
+                    "基线、真值和假值请求产生了可复现的数据库响应差异；"
+                    + "；".join(evidence_lines),
+                )
+        baseline = _response_label(control_response)
+        details = "；".join(evidence_lines) or "未获得完整的真值/假值响应"
+        return (
+            "not_reproduced",
+            f"未观察到足以确认 SQL 注入的响应差异；基线 {baseline}；{details}",
+        )
 
     if vulnerability_type in {"idor_bola", "authz_bypass"}:
         for result in probes:

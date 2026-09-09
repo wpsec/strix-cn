@@ -98,10 +98,19 @@ def _plan_text(plan: Any) -> str:
 
 
 def _result_text(result: Any, run_dir: Path) -> str:
+    evidence = getattr(result, "evidence", [])
+    evidence_lines = [
+        f"- {item.probe_id}: HTTP {item.response_status or '未获得'}，"
+        f"{item.response_length} bytes，指纹 {item.response_sha256 or '无'}"
+        for item in evidence
+    ]
     return "\n".join(
         [
             f"验证结论：{result.status}",
             result.summary,
+            "",
+            "验证证据：",
+            *(evidence_lines or ["- 无"]),
             "",
             f"运行目录：{run_dir}",
             f"验证报告：{run_dir / 'penetration_test_report.md'}",

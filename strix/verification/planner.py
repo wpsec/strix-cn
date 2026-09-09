@@ -124,6 +124,27 @@ def _probe(
     )
 
 
+def _sqli_variants(original_value: str) -> tuple[tuple[str, str, str], ...]:
+    base = original_value or "1"
+    return (
+        (
+            "boolean",
+            f"{base}' OR '1'='1",
+            f"{base}' AND '1'='2",
+        ),
+        (
+            "numeric",
+            f"{base} OR 1=1",
+            f"{base} AND 1=2",
+        ),
+        (
+            "parenthesized",
+            f"{base}') OR ('1'='1",
+            f"{base}') AND ('1'='2",
+        ),
+    )
+
+
 def _assertions(vulnerability_type: str) -> list[VerificationAssertion]:
     descriptions = {
         "sqli": "真值和假值探针必须产生可重复的状态码或响应差异，并有数据库错误或状态差异支撑。",
@@ -186,24 +207,25 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
             blocked_reason = "请求中没有可安全变异的 Query、JSON 或表单字段"
         else:
             original_value = get_field(case.request, field) or ""
-            probes.extend(
-                [
-                    _probe(
-                        "sqli-boolean-true",
-                        "SQL 注入布尔真值探针",
-                        "向指定字段加入低副作用的布尔条件，并与原始响应进行差异比较。",
-                        field=field,
-                        value=f"{original_value}' OR '1'='1",
-                    ),
-                    _probe(
-                        "sqli-boolean-false",
-                        "SQL 注入布尔假值探针",
-                        "向指定字段加入低副作用的反向布尔条件，作为对照。",
-                        field=field,
-                        value=f"{original_value}' AND '1'='2",
-                    ),
-                ]
-            )
+            for variant_name, true_value, false_value in _sqli_variants(original_value):
+                probes.extend(
+                    [
+                        _probe(
+                            f"sqli-{variant_name}-true",
+                            f"SQL 注入{variant_name}真值探针",
+                            "向指定字段加入低副作用的真值条件，并与原始响应进行差异比较。",
+                            field=field,
+                            value=true_value,
+                        ),
+                        _probe(
+                            f"sqli-{variant_name}-false",
+                            f"SQL 注入{variant_name}假值探针",
+                            "向指定字段加入低副作用的假值条件，作为对照。",
+                            field=field,
+                            value=false_value,
+                        ),
+                    ]
+                )
     elif vulnerability_type == "idor_bola":
         field = _first_field(fields, preferred=("id", "uuid", "order", "user", "account"))
         if field is None:
