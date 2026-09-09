@@ -1,69 +1,10 @@
-"""Attack-chain projection and evidence redaction for red-team reports."""
+"""Attack-chain projection and evidence handling for red-team reports."""
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from strix.redteam.policy import normalize_vulnerability_type, should_ignore
-
-
-_SENSITIVE_HEADER = re.compile(
-    r"(?im)^(\s*(?:authorization|proxy-authorization|cookie|set-cookie|"
-    r"x-api-key|api-key|x-auth-token|x-csrf-token)\s*:\s*)([^\r\n]*)$"
-)
-_SENSITIVE_JSON = re.compile(
-    r'(?i)(["\'](?:password|passwd|secret|token|api[_-]?key|access[_-]?token)'
-    r'["\']\s*:\s*["\'])([^"\']*)(["\'])'
-)
-_SENSITIVE_QUERY = re.compile(
-    r"(?i)([?&](?:token|secret|password|passwd|api[_-]?key|access_token)=)([^&#\s]+)"
-)
-_MAX_EVIDENCE_CHARS = 16_000
-_MAX_PROVENANCE_CHARS = 2_000
-_CREDENTIAL_PROVENANCE_FIELDS = frozenset(
-    {
-        "material_type",
-        "source",
-        "source_location",
-        "acquisition_method",
-        "authentication_context",
-        "validation_status",
-        "validation_endpoint",
-        "validation_result",
-        "identity",
-        "privilege_scope",
-        "fingerprint",
-        "length",
-        "evidence_reference",
-    }
-)
-
-
-def redact_sensitive_text(value: object, *, max_chars: int = _MAX_EVIDENCE_CHARS) -> str:
-    """Redact common credential-bearing fields before report persistence."""
-    text = str(value or "")
-    text = _SENSITIVE_HEADER.sub(r"\1[REDACTED]", text)
-    text = _SENSITIVE_JSON.sub(r"\1[REDACTED]\3", text)
-    text = _SENSITIVE_QUERY.sub(r"\1[REDACTED]", text)
-    if len(text) > max_chars:
-        text = f"{text[:max_chars]}\n[证据已截断]"
-    return text
-
-
-def redact_credential_provenance(value: object) -> dict[str, str]:
-    """Keep provenance metadata while excluding raw credential fields."""
-    if not isinstance(value, dict):
-        return {}
-    result: dict[str, str] = {}
-    for raw_key, raw_value in value.items():
-        key = str(raw_key).strip()
-        if key not in _CREDENTIAL_PROVENANCE_FIELDS:
-            continue
-        if raw_value in (None, ""):
-            continue
-        result[key] = redact_sensitive_text(raw_value, max_chars=_MAX_PROVENANCE_CHARS)
-    return result
 
 
 def build_attack_chain(reports: list[dict[str, Any]]) -> dict[str, Any]:
@@ -95,17 +36,17 @@ def build_attack_chain(reports: list[dict[str, Any]]) -> dict[str, Any]:
                 "vulnerability_type": normalize_vulnerability_type(
                     report.get("vulnerability_type")
                 ),
-                "title": redact_sensitive_text(report.get("title"), max_chars=512),
+                "title": str(report.get("title") or ""),
                 "severity": str(report.get("severity") or "").lower(),
-                "evidence": redact_sensitive_text(
-                    report.get("validation_evidence") or report.get("evidence")
+                "evidence": str(
+                    report.get("validation_evidence") or report.get("evidence") or ""
                 ),
-                "permission_proof": redact_sensitive_text(report.get("permission_proof")),
-                "request": redact_sensitive_text(report.get("request")),
-                "response": redact_sensitive_text(report.get("response")),
-                "credential_provenance": redact_credential_provenance(
-                    report.get("credential_provenance")
-                ),
+                "permission_proof": str(report.get("permission_proof") or ""),
+                "request": str(report.get("request") or ""),
+                "response": str(report.get("response") or ""),
+                "credential_provenance": dict(report.get("credential_provenance") or {})
+                if isinstance(report.get("credential_provenance"), dict)
+                else {},
             }
         )
         if index > 1:
@@ -117,23 +58,3 @@ def build_attack_chain(reports: list[dict[str, Any]]) -> dict[str, Any]:
                 }
             )
     return {"nodes": nodes, "edges": edges}
-
-
-def redact_report_evidence(report: dict[str, Any]) -> dict[str, Any]:
-    """Return a shallow report copy with evidence-bearing fields redacted."""
-    sanitized = dict(report)
-    for field in (
-        "evidence",
-        "validation_evidence",
-        "poc_script_code",
-        "permission_proof",
-        "request",
-        "response",
-    ):
-        if field in sanitized and sanitized[field] not in (None, ""):
-            sanitized[field] = redact_sensitive_text(sanitized[field])
-    if sanitized.get("credential_provenance"):
-        sanitized["credential_provenance"] = redact_credential_provenance(
-            sanitized["credential_provenance"]
-        )
-    return sanitized

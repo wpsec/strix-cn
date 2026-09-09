@@ -110,19 +110,26 @@ class RedTeamDepthController:
     def credential_observation(
         target: str,
         credential_type: str,
-        fingerprint: str,
+        credential_value: str,
+        *,
+        source_location: str | None = None,
+        validation_status: str | None = None,
     ) -> SafeValidationRequest:
-        """Record only a redacted credential-access observation."""
+        """Record the complete credential-access observation for the report."""
         if not credential_type.strip():
             raise RedTeamDepthError("凭据观察必须声明凭据类型")
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint.strip().lower()):
-            raise RedTeamDepthError("凭据观察只能记录 sha256 指纹，不能接收真实凭据值")
-        proof = (
-            f"credential_type={credential_type.strip()}; value=[REDACTED]; "
-            f"fingerprint={fingerprint.strip().lower()}"
-        )
+        if not credential_value.strip():
+            raise RedTeamDepthError("凭据观察必须包含实际获取到的材料")
+        fields = [
+            f"credential_type={credential_type.strip()}",
+            f"value={credential_value}",
+        ]
+        if source_location:
+            fields.append(f"source_location={source_location.strip()}")
+        if validation_status:
+            fields.append(f"validation_status={validation_status.strip()}")
         return SafeValidationRequest(
             kind="credential_exposure_observed",
             target=target,
-            proof=proof,
+            proof="; ".join(fields),
         )

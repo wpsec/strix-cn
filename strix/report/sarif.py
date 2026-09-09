@@ -204,6 +204,7 @@ def build_sarif_report(
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
     coverage: dict[str, Any] | None = None,
+    preserve_sensitive: bool = False,
 ) -> dict[str, Any]:
     """Return a SARIF 2.1.0 document for findings.
 
@@ -254,6 +255,7 @@ def build_sarif_report(
                 report,
                 locations,
                 is_synthetic=is_synthetic,
+                preserve_sensitive=preserve_sensitive,
             )
         )
 
@@ -309,6 +311,7 @@ def write_sarif_report(
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
     coverage: dict[str, Any] | None = None,
+    preserve_sensitive: bool = False,
 ) -> None:
     """Write a SARIF report to disk, creating parent directories first.
 
@@ -322,6 +325,7 @@ def write_sarif_report(
         tool_version=tool_version,
         repository_context=repository_context,
         coverage=coverage,
+        preserve_sensitive=preserve_sensitive,
     )
     tmp_path = output_path.with_name(f"{output_path.name}.{os.getpid()}.tmp")
     try:
@@ -340,6 +344,7 @@ def write_sarif(
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
     coverage: dict[str, Any] | None = None,
+    preserve_sensitive: bool = False,
     filename: str = "findings.sarif",
 ) -> Path:
     """Write ``findings.sarif`` alongside existing outputs in ``run_dir``.
@@ -355,6 +360,7 @@ def write_sarif(
         tool_version=tool_version,
         repository_context=repository_context,
         coverage=coverage,
+        preserve_sensitive=preserve_sensitive,
     )
     logger.info(
         "Wrote SARIF 2.1.0 report: %s (%d results)",
@@ -371,11 +377,13 @@ def build_sarif_document(
     *,
     tool_version: str | None = None,
     repository_context: dict[str, Any] | None = None,
+    preserve_sensitive: bool = False,
 ) -> dict[str, Any]:
     return build_sarif_report(
         reports,
         tool_version=tool_version,
         repository_context=repository_context,
+        preserve_sensitive=preserve_sensitive,
     )
 
 
@@ -463,6 +471,7 @@ def _build_result(
     locations: list[dict[str, Any]],
     *,
     is_synthetic: bool = False,
+    preserve_sensitive: bool = False,
 ) -> dict[str, Any]:
     """Build one SARIF result using validated locations.
 
@@ -503,7 +512,12 @@ def _build_result(
     # fingerprint legitimately shifts but the underlying class is
     # unchanged.
     class_fp = _class_fingerprint(rule_id, report)
-    result["properties"] = _result_properties(report, class_fp, is_synthetic=is_synthetic)
+    result["properties"] = _result_properties(
+        report,
+        class_fp,
+        is_synthetic=is_synthetic,
+        preserve_sensitive=preserve_sensitive,
+    )
     return result
 
 
@@ -512,6 +526,7 @@ def _result_properties(
     class_fingerprint: str | None = None,
     *,
     is_synthetic: bool = False,
+    preserve_sensitive: bool = False,
 ) -> dict[str, Any]:
     """Strix-specific metadata for downstream consumers.
 
@@ -560,15 +575,23 @@ def _result_properties(
     if isinstance(dependency_metadata, dict) and dependency_metadata:
         strix["dependency_metadata"] = dependency_metadata
 
-    # SARIF is written for external upload (code-scanning / ASPM), so it must
-    # NOT carry the weaponized exploit payload — that stays a local run
-    # artifact (vulnerabilities.json / the finding MD). We surface the PoC
-    # *description* (triage context) and a boolean flag that a script exists,
-    # so consumers know to look at the local artifact, but never the script
-    # body itself.
+    if preserve_sensitive:
+        for key in (
+            "request",
+            "response",
+            "validation_evidence",
+            "poc_description",
+            "poc_script_code",
+            "credential_provenance",
+        ):
+            value = report.get(key)
+            if value not in (None, "", {}):
+                strix[key] = value
+    # Normal-mode SARIF keeps the exploit body out of external uploads while
+    # preserving triage context and the fact that a local script exists.
     poc_description = _string_value(report.get("poc_description"))
     poc_script = _string_value(report.get("poc_script_code"))
-    if poc_description or poc_script:
+    if not preserve_sensitive and (poc_description or poc_script):
         poc: dict[str, Any] = {}
         if poc_description:
             poc["description"] = poc_description

@@ -11,7 +11,7 @@ from agents.tool import FunctionTool
 
 from strix.agents import factory
 from strix.agents.prompt import render_system_prompt
-from strix.redteam.attack_chain import build_attack_chain, redact_sensitive_text
+from strix.redteam.attack_chain import build_attack_chain
 from strix.redteam.depth import RedTeamDepthController, RedTeamDepthError
 from strix.redteam.policy import should_ignore
 from strix.report.html_report import render_html_report
@@ -55,8 +55,8 @@ def test_privilege_category_requires_concrete_impact() -> None:
         ("存储桶未授权访问", "验证未授权读取一个测试对象", False),
         ("存储桶可写", "验证未授权写入随机 marker 并已清理", False),
         ("高影响业务逻辑", "验证未授权业务操作被执行", False),
-        ("凭据材料可访问", "材料已脱敏，仅记录 sha256 指纹", False),
-        ("凭据材料可访问", "发现 token 文件", True),
+        ("凭据材料可访问", "响应返回 password 字段并完成测试身份验证", False),
+        ("凭据材料可访问", "可能存在 token 文件", True),
         ("存储桶未授权访问", "发现 bucket object", True),
         ("IDOR/BOLA", "potential unauthorized access", True),
     ],
@@ -88,7 +88,7 @@ def test_cvss4_vector_is_calculated_without_relabeling_cvss31() -> None:
     assert severity == "critical"
 
 
-def test_depth_controller_only_constructs_safe_proofs() -> None:
+def test_depth_controller_records_complete_credential_proofs() -> None:
     identity = RedTeamDepthController.identity_command("whoami")
     assert identity.proof == "whoami"
 
@@ -111,22 +111,25 @@ def test_depth_controller_only_constructs_safe_proofs() -> None:
     credential = RedTeamDepthController.credential_observation(
         "authorized-target",
         "test API token",
-        "sha256:" + "a" * 64,
+        "test-token-value",
+        source_location="GET /api/config -> data.access_token",
+        validation_status="validated against the authorized test endpoint",
     )
-    assert "value=[REDACTED]" in credential.proof
-    assert "sha256:" + "a" * 64 in credential.proof
+    assert "value=test-token-value" in credential.proof
+    assert "source_location=GET /api/config -> data.access_token" in credential.proof
+    assert "validation_status=validated against the authorized test endpoint" in credential.proof
     with pytest.raises(RedTeamDepthError):
         RedTeamDepthController.credential_observation(
             "authorized-target",
             "test API token",
-            "actual-secret-value",
+            "",
         )
 
 
 def test_redteam_prompt_is_versioned_and_safe() -> None:
     prompt = render_system_prompt(mode="redteam", scan_mode="quick", is_root=True)
     assert "REDTEAM SPECIAL MODE IS ACTIVE" in prompt
-    assert "redteam-v2" in prompt
+    assert "redteam-v3" in prompt
     assert "Never create or deploy Webshells" in prompt
     assert "reverse-shell" in prompt
     assert "exact field or file location" in prompt
@@ -222,10 +225,39 @@ def test_report_state_filters_and_builds_redteam_chain(monkeypatch: pytest.Monke
     )
     assert report_id == "vuln-0001"
     assert len(state.vulnerability_reports) == 1
-    assert "placeholder-value" not in json.dumps(state.vulnerability_reports)
+    assert "placeholder-value" in json.dumps(state.vulnerability_reports)
 
 
-def test_credential_provenance_records_acquisition_without_secret_value(
+def test_normal_mode_preserves_report_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = ReportState(run_name="normal-evidence")
+    state.set_scan_config({"mode": "normal", "targets": [], "scan_mode": "quick"})
+    monkeypatch.setattr(state, "save_run_data", lambda: None)
+
+    report_id = state.add_vulnerability_report(
+        "Verified RCE",
+        "high",
+        vulnerability_type="RCE",
+        request="Authorization: Bearer normal-mode-value\nGET /run",
+        response='{"password":"normal-mode-value","ok":true}',
+        evidence="response contained the authorized test value",
+        poc_script_code="print('normal-mode-proof')",
+    )
+
+    assert report_id == "vuln-0001"
+    serialized = json.dumps(state.vulnerability_reports)
+    assert "normal-mode-value" in serialized
+    assert "normal-mode-proof" in serialized
+
+    html = render_html_report(
+        final_scan_result="# 执行摘要\n\n已验证",
+        run_record={"mode": "normal"},
+        vulnerability_reports=state.vulnerability_reports,
+    )
+    assert "normal-mode-value" in html
+    assert "normal-mode-proof" in html
+
+
+def test_credential_provenance_records_complete_acquisition_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = ReportState(run_name="credential-provenance")
@@ -236,15 +268,15 @@ def test_credential_provenance_records_acquisition_without_secret_value(
         "Credential material observed",
         "high",
         vulnerability_type="credential_exposure_observed",
-        impact="材料已脱敏，仅记录 sha256 指纹",
+        impact="响应返回 password 字段并完成测试身份验证",
         evidence="response field contained credential-shaped material",
         validation_evidence="observed, not validated",
         credential_provenance={
             "material_type": "Bearer token",
             "source": "HTTP response",
             "source_location": "GET /api/config -> data.access_token",
-            "acquisition_method": "从响应 JSON 字段读取并计算指纹",
-            "validation_status": "observed_unverified",
+            "acquisition_method": "从响应 JSON 字段读取原始值",
+            "validation_status": "validated_against_authorized_test_endpoint",
             "fingerprint": "sha256:" + "b" * 64,
             "length": "384",
             "raw_value": "must-not-be-stored",
@@ -255,27 +287,27 @@ def test_credential_provenance_records_acquisition_without_secret_value(
     report = state.vulnerability_reports[0]
     provenance = report["credential_provenance"]
     assert provenance["source_location"] == "GET /api/config -> data.access_token"
-    assert provenance["validation_status"] == "observed_unverified"
-    assert "raw_value" not in provenance
+    assert provenance["validation_status"] == "validated_against_authorized_test_endpoint"
+    assert provenance["raw_value"] == "must-not-be-stored"
 
     markdown = render_complete_report(
         "# 执行摘要\n\n已观察",
-        run_record={"mode": "redteam", "policy_version": "redteam-v2"},
+        run_record={"mode": "redteam", "policy_version": "redteam-v3"},
         vulnerability_reports=state.vulnerability_reports,
     )
     html = render_html_report(
         final_scan_result="# 执行摘要\n\n已观察",
-        run_record={"mode": "redteam", "policy_version": "redteam-v2"},
+        run_record={"mode": "redteam", "policy_version": "redteam-v3"},
         vulnerability_reports=state.vulnerability_reports,
     )
     assert "凭据材料获取过程" in markdown
     assert "GET /api/config -> data.access_token" in markdown
-    assert "observed_unverified" in html
-    assert "must-not-be-stored" not in markdown
-    assert "must-not-be-stored" not in html
+    assert "validated_against_authorized_test_endpoint" in html
+    assert "must-not-be-stored" in markdown
+    assert "must-not-be-stored" in html
 
 
-def test_attack_chain_and_delivery_renderers_filter_and_redact() -> None:
+def test_attack_chain_and_delivery_renderers_filter_and_preserve_redteam_evidence() -> None:
     report = {
         "id": "vuln-0001",
         "title": "Verified upload",
@@ -286,12 +318,12 @@ def test_attack_chain_and_delivery_renderers_filter_and_redact() -> None:
         "response": "HTTP/1.1 201 Created",
     }
     chain = build_attack_chain([report])
-    assert chain["nodes"][0]["request"].find("placeholder-value") == -1
+    assert "placeholder-value" in chain["nodes"][0]["request"]
 
     redteam_record = {
         "run_name": "redteam-test",
         "mode": "redteam",
-        "policy_version": "redteam-v2",
+        "policy_version": "redteam-v3",
         "targets_info": [{"original": "https://staging.example.invalid"}],
     }
     markdown = render_complete_report(
@@ -321,14 +353,8 @@ def test_attack_chain_and_delivery_renderers_filter_and_redact() -> None:
         assert heading in markdown
     assert "CVSS 4.0：未提供真实 CVSS 4.0" in markdown
     assert "攻击链路图" in html
-    assert "placeholder-value" not in markdown
-    assert "placeholder-value" not in html
+    assert "placeholder-value" in markdown
+    assert "placeholder-value" in html
     assert "AI 黑盒测试发现" not in markdown
     assert "最终确认利用" not in markdown
     assert "## 十一、证据限制与待确认事项" in render_vulnerability_md(report, redteam=True)
-
-
-def test_sensitive_text_redaction_is_bounded() -> None:
-    redacted = redact_sensitive_text("Authorization: Bearer placeholder-value\n" + "x" * 100)
-    assert "placeholder-value" not in redacted
-    assert len(redacted) <= 16_000

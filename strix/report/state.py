@@ -20,11 +20,7 @@ from strix.core.token_budget import (
     TokenBudgetPlan,
     normalize_token_limit,
 )
-from strix.redteam.attack_chain import (
-    build_attack_chain,
-    redact_credential_provenance,
-    redact_report_evidence,
-)
+from strix.redteam.attack_chain import build_attack_chain
 from strix.redteam.policy import (
     POLICY_VERSION,
     normalize_mode,
@@ -486,9 +482,11 @@ class ReportState:
             report["request"] = request.strip()
         if response:
             report["response"] = response.strip()
-        safe_credential_provenance = redact_credential_provenance(credential_provenance)
-        if safe_credential_provenance:
-            report["credential_provenance"] = safe_credential_provenance
+        report_credential_provenance = (
+            dict(credential_provenance) if isinstance(credential_provenance, dict) else {}
+        )
+        if report_credential_provenance:
+            report["credential_provenance"] = report_credential_provenance
         if cvss_4_vector:
             report["cvss_4_vector"] = cvss_4_vector.strip()
         if cvss_4_score is not None:
@@ -552,8 +550,6 @@ class ReportState:
         if agent_name:
             report["agent_name"] = agent_name
 
-        report = redact_report_evidence(report)
-
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
         posthog.finding(severity, cwe=cwe, is_cve=bool(cve))
@@ -594,7 +590,7 @@ class ReportState:
                 continue
             value = raw_value
             if key == "credential_provenance":
-                value = redact_credential_provenance(value)
+                value = dict(value) if isinstance(value, dict) else {}
                 if not value:
                     continue
             if isinstance(value, str):
@@ -685,7 +681,7 @@ class ReportState:
                 for field in ("evidence", "validation_evidence", "permission_proof")
             ):
                 continue
-            eligible.append(redact_report_evidence(report))
+            eligible.append(dict(report))
         return eligible
 
     def record_sdk_usage(
@@ -1142,7 +1138,9 @@ class ReportState:
                     logger.exception("coverage.json write failed (non-fatal)")
 
             if normalize_mode(self.run_record.get("mode", "normal")) == "redteam":
-                self.run_record["attack_chain"] = build_attack_chain(artifact_reports)
+                self.run_record["attack_chain"] = build_attack_chain(
+                    artifact_reports,
+                )
             else:
                 self.run_record.pop("attack_chain", None)
 
@@ -1183,6 +1181,8 @@ class ReportState:
                     tool_version=_strix_version(),
                     repository_context=self._sarif_repository_context(),
                     coverage=coverage,
+                    preserve_sensitive=normalize_mode(self.run_record.get("mode", "normal"))
+                    == "redteam",
                 )
             except Exception:
                 logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")

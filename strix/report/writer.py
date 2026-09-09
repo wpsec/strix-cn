@@ -19,8 +19,6 @@ from pygments.util import ClassNotFound
 from strix.core.paths import run_record_path
 from strix.redteam.attack_chain import (
     build_attack_chain,
-    redact_report_evidence,
-    redact_sensitive_text,
 )
 
 
@@ -190,10 +188,6 @@ def _relevel_markdown_headings(markdown: str, level_delta: int = 2) -> str:
     return "\n".join(lines).strip()
 
 
-_REDTEAM_UNSAFE_POC = re.compile(
-    r"(?is)(?:webshell|reverse[ -]?shell|反弹[连接shell]*|credential|password|凭据|"
-    r"/etc/shadow|chmod\s+[+uugo-]|useradd|sudo\s|nc\s|ncat\s|socat\s)"
-)
 _REDTEAM_OBJECTIVE_REPLACEMENTS = (
     ("AI 黑盒测试发现", "基于请求、响应、前端代码和服务端行为观察到"),
     ("通过利用", "通过发送验证请求"),
@@ -204,7 +198,7 @@ _REDTEAM_OBJECTIVE_REPLACEMENTS = (
 
 
 def _redteam_text(value: Any, fallback: str = "未提供。") -> str:
-    text = redact_sensitive_text(value).strip()
+    text = str(value or "").strip()
     if not text:
         return fallback
     for source, replacement in _REDTEAM_OBJECTIVE_REPLACEMENTS:
@@ -250,9 +244,6 @@ def _redteam_poc_lines(report: dict[str, Any]) -> list[str]:
     raw_code = str(report.get("poc_script_code") or "").strip()
     if not raw_code:
         lines.extend(["", "```python", "# 未提供 PoC 代码。", "```"])
-        return lines
-    if _REDTEAM_UNSAFE_POC.search(raw_code):
-        lines.extend(["", "```text", "PoC 内容因超出红队专项安全验证边界未展示。", "```"])
         return lines
     language, code = parse_fenced_code(raw_code)
     fence_lang = language or "python"
@@ -414,7 +405,7 @@ def _render_redteam_report(
 ) -> str:
     """Render the red-team delivery format as structured objective findings."""
     reports = [
-        redact_report_evidence(report)
+        dict(report)
         for report in vulnerability_reports
         if str(report.get("severity") or "").lower() in {"critical", "high"}
     ]
@@ -432,7 +423,7 @@ def _render_redteam_report(
         f"- 运行：{_escape_inline(run_record.get('run_name') or '未命名运行')}",
         f"- 目标：{_escape_inline('、'.join(targets) if targets else '未提供')}",
         "- 模式：redteam",
-        f"- 策略版本：{_escape_inline(run_record.get('policy_version') or 'redteam-v2')}",
+        f"- 策略版本：{_escape_inline(run_record.get('policy_version') or 'redteam-v3')}",
         "",
         "## 攻击链路摘要",
         "",

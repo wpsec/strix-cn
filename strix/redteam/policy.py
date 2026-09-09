@@ -15,7 +15,7 @@ SecurityMode = Literal["normal", "redteam"]
 
 NORMAL_MODE: SecurityMode = "normal"
 REDTEAM_MODE: SecurityMode = "redteam"
-POLICY_VERSION = "redteam-v2"
+POLICY_VERSION = "redteam-v3"
 
 _PRIVILEGE_IMPACT_MARKERS = (
     "未授权身份",
@@ -53,16 +53,15 @@ _ACCESS_IMPACT_MARKERS = (
     "authenticated session",
     "获取管理员权限",
 )
-_CREDENTIAL_REDACTION_MARKERS = (
-    "已脱敏",
-    "[redacted]",
-    "redacted",
-)
-_CREDENTIAL_FINGERPRINT_MARKERS = (
-    "仅记录指纹",
-    "fingerprint",
-    "sha256:",
-    "sha256",
+_CREDENTIAL_OBSERVATION_MARKERS = (
+    "password",
+    "token",
+    "api key",
+    "apikey",
+    "secret",
+    "凭据",
+    "口令",
+    "密钥",
 )
 
 _TYPE_ALIASES: dict[str, str] = {
@@ -120,7 +119,7 @@ _TYPE_ALIASES: dict[str, str] = {
     "credential exposure observed": "credential_exposure_observed",
     "credential material exposure": "credential_exposure_observed",
     "凭据材料可访问": "credential_exposure_observed",
-    "凭据暴露已脱敏": "credential_exposure_observed",
+    "凭据暴露": "credential_exposure_observed",
     "privilege acquisition": "privilege_acquisition",
     "privilege escalation": "privilege_acquisition",
     "unauthorized access": "authorization_bypass",
@@ -257,12 +256,12 @@ def has_verified_access_impact(impact: object) -> bool:
     )
 
 
-def has_redacted_credential_observation(impact: object) -> bool:
-    """Whether credential access is described without retaining the secret."""
+def has_credential_observation(impact: object) -> bool:
+    """Whether the impact describes an observed credential material access."""
     text = str(impact or "").strip().lower()
-    has_redaction = any(marker in text for marker in _CREDENTIAL_REDACTION_MARKERS)
-    has_fingerprint = any(marker in text for marker in _CREDENTIAL_FINGERPRINT_MARKERS)
-    return bool(text) and has_redaction and has_fingerprint
+    return bool(text) and not any(marker in text for marker in _SPECULATIVE_IMPACT_MARKERS) and any(
+        marker in text for marker in _CREDENTIAL_OBSERVATION_MARKERS
+    )
 
 
 def should_ignore(
@@ -296,9 +295,7 @@ def should_ignore(
         "business_logic_unauthorized_action",
     } and not has_verified_access_impact(impact):
         return True
-    if normalized == "credential_exposure_observed" and not has_redacted_credential_observation(
-        impact
-    ):
+    if normalized == "credential_exposure_observed" and not has_credential_observation(impact):
         return True
     return normalized not in {
         "rce",

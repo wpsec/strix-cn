@@ -14,9 +14,11 @@ description: "面向已授权演练的高影响安全验证模式"
 | 测试范围 | 按常规扫描策略执行 | 仅执行专项白名单，未知类型默认拒绝 |
 | 验证深度 | 证明问题存在即可停止 | 继续到受控的身份、权限或资源边界证明 |
 | 报告格式 | 漏洞清单和常规摘要 | 仅保留 High/Critical 成功验证节点的攻击链 |
-| 证据 | 依照常规脱敏规则 | 必须包含脱敏 Request/Response 和客观影响证明 |
+| 证据 | 依照常规报告规则 | 必须包含完整 Request/Response、PoC 和客观影响证明 |
 
 模式在扫描开始后不可切换。`--resume` 必须沿用原运行记录的模式和策略版本；策略版本不匹配时需要新建扫描。
+
+报告层遵循原生 Strix：`normal` 和 `redteam` 的 Markdown、HTML、JSON 及攻击链不替换 Request、Response、PoC 或凭据字段。SARIF 默认只保留 PoC 描述和脚本存在标记；红队专项 SARIF 额外保留完整复核字段。
 
 ## 启动方式
 
@@ -45,7 +47,7 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 - 受控 SSRF 元数据验证，只访问本地 Stub、保留 Canary 或显式授权主机，不访问云凭据端点。
 - 认证/授权绕过、IDOR/BOLA、暴露的管理功能和高影响未授权业务操作，但必须提供单个测试对象或 dry-run 业务动作的具体影响证明。
 - 云存储未授权访问，只验证一个测试对象的读取边界。
-- 凭据材料暴露观察，只记录材料类型、`[REDACTED]` 和 SHA-256 指纹；不读取、输出或复用真实凭据。
+- 凭据材料暴露，记录材料类型、原始值、来源字段、获取动作、验证状态、身份和权限范围。
 - 有实际身份或权限影响证明的漏洞。
 
 XSS（包括 DOM、反射型和存储型）、CSRF、点击劫持、弱 SSL/TLS、路径遍历等普通敏感信息泄露、缺少安全头以及未知类型会在请求发出前被拒绝。被拒绝的意图不会发送到目标，也不会进入漏洞报告、HTML、Markdown 或 SARIF。
@@ -62,9 +64,9 @@ Root Agent 与 Child Agent 会接收同一版本化红队策略。Prompt 要求�
 - RCE 使用身份确认命令，不生成 Webshell 或反弹 Shell。
 - SQL 使用只读查询，不修改业务数据。
 - SSRF 使用受控 Canary，不请求云凭据元数据。
-- 凭据观察保留脱敏字段和指纹，不保留秘密值。
+- 凭据观察保留实际获取值、来源、验证结果和权限范围。
 
-明确禁止 Webshell 投递、反弹 Shell、真实凭据读取或复用、持久化、横向移动、批量数据收集和真实自动提权。需要进一步后渗透判断时，应由授权人员基于脱敏证据手工复核。
+明确禁止 Webshell 投递、反弹 Shell、持久化、横向移动、批量数据收集和真实自动提权。凭据验证必须限定在已授权的测试身份和目标范围内。
 
 ## 安全验证型 PoC
 
@@ -96,7 +98,7 @@ if __name__ == "__main__":
     post_marker()
 ```
 
-该示例只适用于已授权的测试接口。请使用测试账户、测试对象和可清理资源；报告中只保留必要的脱敏请求、响应和观察结果。
+该示例只适用于已授权的测试接口。请使用测试账户、测试对象和可清理资源；报告保留完整请求、响应和观察结果。
 
 ## Python 调用
 
@@ -132,13 +134,13 @@ asyncio.run(main())
 ```json
 {
   "mode": "redteam",
-  "policy_version": "redteam-v2"
+  "policy_version": "redteam-v3"
 }
 ```
 
 红队报告使用 Markdown 格式，正文包含固定章节：漏洞名称、漏洞等级与 CVSS 4.0、漏洞位置、漏洞描述、漏洞定位过程、安全验证过程、漏洞根因、漏洞影响、修复建议、复测方案、证据限制与待确认事项。结论必须引用请求、响应、前端代码和服务端行为，不使用“AI 黑盒测试发现”“通过利用”“绕过”或“最终确认利用”等模糊表述。
 
-对于 Token、Key 或其他凭据材料，报告必须说明获取过程：材料类型、来源（例如 HTTP Response、前端配置或日志）、具体字段/文件位置、获取动作、验证状态、指纹和长度。`validation_status` 应明确区分 `observed_unverified` 与 `validated`；没有受控验证接口时不能声称凭据可用。凭据原文不进入报告，未知字段也不会被持久化。
+对于 Token、Key 或其他凭据材料，报告必须说明获取过程：材料类型、原始值、来源（例如 HTTP Response、前端配置或日志）、具体字段/文件位置、获取动作、验证状态、身份、权限范围、指纹和长度。`validation_status` 应明确区分 `observed_unverified` 与 `validated`；没有受控验证接口时不能声称凭据可用。
 
 示例：
 
@@ -166,7 +168,7 @@ length: 384
 - 证据节点：`vuln-0001`
 - 权限证明：`uid=1000(app)`
 
-Request（已脱敏）：
+Request：
 
 ```http
 POST /authorized-test HTTP/1.1
@@ -175,7 +177,7 @@ Content-Type: application/json
 {"probe":"identity-proof"}
 ```
 
-Response（已脱敏）：
+Response：
 
 ```text
 HTTP/1.1 200 OK
@@ -184,7 +186,7 @@ app
 ```
 ```
 
-报告不得包含 Webshell、反弹 Shell、凭据值、批量数据或真实自动提权代码。
+报告必须包含完成复核所需的有效请求、响应、PoC 和验证数据；仍不得生成 Webshell、反弹 Shell、批量数据或真实自动提权代码。
 
 ## 测试与审计
 
@@ -192,9 +194,9 @@ app
 
 - `normal` 模式行为不变，`--red`、`--mode redteam` 和 `STRIX_MODE` 解析一致。
 - 黑名单和未知类型在传输前被拦截，且不写入报告或 SARIF。
-- 新增白名单类别必须有具体影响证明；凭据观察必须同时满足脱敏和指纹要求。
+- 新增白名单类别必须有具体影响证明；凭据观察必须同时满足来源和验证结果要求。
 - Prompt、请求出口、报告状态和 `--resume` 都遵守同一策略版本。
-- marker、测试对象和 Canary 可清理，Request/Response 中的 Cookie、Token、密码和 API Key 已脱敏。
-- Markdown、HTML、JSON 和 SARIF 的输出不包含真实凭据或可直接执行的后渗透载荷。
+- marker、测试对象和 Canary 可清理，Request/Response、凭据材料和 PoC 在授权报告中完整保留。
+- Markdown、HTML、JSON 和 SARIF 的输出包含红队复核所需的完整证据。
 
 所有测试仅限明确授权的目标，并应保留运行记录、策略版本和人工复核结论。

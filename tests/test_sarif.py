@@ -129,6 +129,34 @@ def test_write_sarif_never_embeds_poc_script(tmp_path: Path) -> None:
     assert poc["description"] == "Send a crafted request to trigger the sink."
 
 
+def test_write_sarif_redteam_preserves_complete_evidence(tmp_path: Path) -> None:
+    marker = "authorized-token-value"
+    write_sarif(
+        tmp_path,
+        [
+            _finding(
+                request="Authorization: Bearer " + marker,
+                response='{"token":"' + marker + '"}',
+                validation_evidence="validated with the authorized test identity",
+                poc_description="Replay the captured request with the test marker.",
+                poc_script_code="print('proof')",
+                credential_provenance={
+                    "source_location": "GET /api/config -> data.token",
+                    "raw_value": marker,
+                },
+            )
+        ],
+        preserve_sensitive=True,
+    )
+
+    raw = (tmp_path / "findings.sarif").read_text(encoding="utf-8")
+    assert marker in raw
+    properties = _read(tmp_path)["runs"][0]["results"][0]["properties"]["strix"]
+    assert properties["request"].endswith(marker)
+    assert properties["poc_description"].startswith("Replay the captured request")
+    assert properties["credential_provenance"]["raw_value"] == marker
+
+
 def test_write_sarif_builds_fixes_from_code_location_fix_pairs(tmp_path: Path) -> None:
     # A code location carrying fix_before/fix_after must surface as a SARIF
     # fix (artifactChange/replacement) so consumers can offer a one-click fix.

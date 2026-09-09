@@ -9,7 +9,7 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
-from strix.redteam.attack_chain import build_attack_chain, redact_report_evidence
+from strix.redteam.attack_chain import build_attack_chain
 from strix.redteam.policy import normalize_vulnerability_type, should_ignore
 
 
@@ -162,7 +162,7 @@ def render_html_report(
     is_redteam = str(run_record.get("mode") or "normal").strip().lower() == "redteam"
     reports = sorted(
         [
-            redact_report_evidence(report)
+            dict(report)
             for report in vulnerability_reports
             if not is_redteam
             or (
@@ -226,7 +226,7 @@ def render_html_report(
             "本次运行使用 redteam 策略，仅允许白名单类型和无害、可清理、"
             "可审计的验证动作。"
         )
-        technical = "技术细节、脱敏 Request/Response 和权限证明请查看攻击链节点。"
+        technical = "技术细节、完整 Request/Response 和权限证明请查看攻击链节点。"
         recommendations = "请根据攻击链节点修复问题，并在授权范围内执行定向复测。"
     cards = "".join(
         _finding_card(report, initially_open=index == 0) for index, report in enumerate(reports)
@@ -352,7 +352,7 @@ h1{{max-width:850px;margin:12px 0 18px;font-size:clamp(34px,5vw,64px);line-heigh
 <div class="layout">
   <aside class="rail"><div class="brand"><span class="mark">S</span>Strix<span class="local">本地报告</span></div><p>授权安全测试交付物</p><nav><a href="#overview">测试总览</a>{'<a href="#attack-chain">攻击链路图</a>' if is_redteam else ''}<a href="#analysis">技术分析</a><a href="#findings">{'攻击链节点' if is_redteam else '问题详情'} · {len(reports)}</a><a href="#remediation">修复建议</a></nav><div class="confidential">Confidential · Local only</div></aside>
   <main class="content">
-    <header id="overview"><div class="eyebrow">{status_label}</div><h1>{'红队专项攻击链报告' if is_redteam else '安全渗透测试报告'}</h1><p class="subtitle">{escape(target_label)}</p><div class="meta"><span class="chip">运行：{_html(run_record.get('run_name'), '未命名')}</span><span class="chip">模式：{_html('redteam' if is_redteam else run_record.get('scan_mode'))}</span>{f'<span class="chip">策略：{_html(run_record.get("policy_version"), "redteam-v2")}</span>' if is_redteam else ''}<span class="chip">生成：{generated_at}</span></div></header>
+    <header id="overview"><div class="eyebrow">{status_label}</div><h1>{'红队专项攻击链报告' if is_redteam else '安全渗透测试报告'}</h1><p class="subtitle">{escape(target_label)}</p><div class="meta"><span class="chip">运行：{_html(run_record.get('run_name'), '未命名')}</span><span class="chip">模式：{_html('redteam' if is_redteam else run_record.get('scan_mode'))}</span>{f'<span class="chip">策略：{_html(run_record.get("policy_version"), "redteam-v3")}</span>' if is_redteam else ''}<span class="chip">生成：{generated_at}</span></div></header>
     {token_budget}
     <div class="metrics"><div class="metric"><strong>{len(reports)}</strong><span>问题总数</span></div><div class="metric critical"><strong>{counts['critical']}</strong><span>严重</span></div><div class="metric high"><strong>{counts['high']}</strong><span>高危</span></div><div class="metric medium"><strong>{counts['medium']}</strong><span>中危</span></div><div class="metric low"><strong>{counts['low'] + counts['info']}</strong><span>低危 / 信息</span></div></div>
     <section class="section"><h2>执行摘要</h2><div class="narrative prose">{_markdown(summary)}</div></section>
