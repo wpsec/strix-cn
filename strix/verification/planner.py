@@ -21,7 +21,7 @@ from strix.verification.models import (
     VerificationProbe,
     request_shape_sha256,
 )
-from strix.verification.request import list_candidate_fields, prioritize_fields
+from strix.verification.request import get_field, list_candidate_fields, prioritize_fields
 
 
 class VerificationPlanError(ValueError):
@@ -185,6 +185,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
         if field is None:
             blocked_reason = "请求中没有可安全变异的 Query、JSON 或表单字段"
         else:
+            original_value = get_field(case.request, field) or ""
             probes.extend(
                 [
                     _probe(
@@ -192,14 +193,14 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
                         "SQL 注入布尔真值探针",
                         "向指定字段加入低副作用的布尔条件，并与原始响应进行差异比较。",
                         field=field,
-                        value="' OR '1'='1",
+                        value=f"{original_value}' OR '1'='1",
                     ),
                     _probe(
                         "sqli-boolean-false",
                         "SQL 注入布尔假值探针",
                         "向指定字段加入低副作用的反向布尔条件，作为对照。",
                         field=field,
-                        value="' OR '1'='2",
+                        value=f"{original_value}' AND '1'='2",
                     ),
                 ]
             )
@@ -303,7 +304,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
         assertions=_assertions(vulnerability_type),
         max_requests=min(
             20,
-            len(probes) + (1 if case.request.method.upper() in {"GET", "HEAD", "OPTIONS"} else 0),
+            len(probes) + 1,
         ),
         requires_side_effect_approval=requires_side_effect_approval
         or any(probe.requires_side_effect_approval for probe in probes),

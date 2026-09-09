@@ -324,7 +324,11 @@ def list_candidate_fields(request: CanonicalRequest) -> list[str]:
         fields.append(f"query.{name}")
     body_json = _body_json(request)
     if isinstance(body_json, dict):
-        fields.extend(f"body.{name}" for name in body_json)
+        for name, value in body_json.items():
+            if isinstance(value, list):
+                fields.extend(f"body.{name}[{index}]" for index in range(len(value)))
+            else:
+                fields.append(f"body.{name}")
     elif "application/x-www-form-urlencoded" in _content_type(request).lower():
         for name, _value in parse_qsl(request.body, keep_blank_values=True):
             fields.append(f"form.{name}")
@@ -347,6 +351,7 @@ def prioritize_fields(fields: list[str], issue: str) -> list[str]:
 
     def score(field: str) -> tuple[int, str]:
         name = field.rsplit(".", 1)[-1].lower()
+        name = re.sub(r"(?:\[\d+\])+$", "", name)
         issue_match = 0 if name in words else 1
         semantic = 0 if _FIELD_NAME_RE.search(name) else 1
         return issue_match + semantic, field
@@ -375,7 +380,7 @@ def get_field(request: CanonicalRequest, field: str) -> str | None:
     if location == "body":
         payload = _body_json(request)
         if isinstance(payload, dict):
-            value = payload.get(name)
+            value = _get_json_field(payload, name)
             return str(value) if value is not None else None
     return None
 
@@ -412,11 +417,49 @@ def set_field(request: CanonicalRequest, field: str, value: str) -> CanonicalReq
         payload = _body_json(result)
         if not isinstance(payload, dict):
             raise RequestParseError(f"无法修改请求字段：{field}")
-        payload[name] = value
+        _set_json_field(payload, name, value)
         result.body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     else:
         raise RequestParseError(f"不支持的请求字段：{field}")
     return result
+
+
+def _json_field_path(name: str) -> tuple[str, list[int]]:
+    match = re.fullmatch(r"([^\[\].]+)((?:\[\d+\])*)", name)
+    if not match:
+        raise RequestParseError(f"不支持的 JSON 字段路径：body.{name}")
+    indexes = [int(item) for item in re.findall(r"\[(\d+)\]", match.group(2))]
+    return match.group(1), indexes
+
+
+def _get_json_field(payload: dict[str, Any], name: str) -> Any:
+    root, indexes = _json_field_path(name)
+    if root not in payload:
+        return None
+    value: Any = payload[root]
+    for index in indexes:
+        if not isinstance(value, list) or index >= len(value):
+            return None
+        value = value[index]
+    return value
+
+
+def _set_json_field(payload: dict[str, Any], name: str, value: str) -> None:
+    root, indexes = _json_field_path(name)
+    if not indexes:
+        if root not in payload:
+            raise RequestParseError(f"请求中不存在 JSON 字段：body.{name}")
+        payload[root] = value
+        return
+    current: Any = payload.get(root)
+    for index in indexes[:-1]:
+        if not isinstance(current, list) or index >= len(current):
+            raise RequestParseError(f"无法修改请求字段：body.{name}")
+        current = current[index]
+    final_index = indexes[-1]
+    if not isinstance(current, list) or final_index >= len(current):
+        raise RequestParseError(f"无法修改请求字段：body.{name}")
+    current[final_index] = value
 
 
 def remove_authentication(request: CanonicalRequest) -> CanonicalRequest:

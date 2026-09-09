@@ -28,6 +28,7 @@ from strix.verification import (
 )
 from strix.verification.executor import HttpObservation, execute_plan
 from strix.verification.models import redact_response_body, request_shape_sha256
+from strix.verification.request import get_field, list_candidate_fields, set_field
 from strix.verification.runner import run_verification_case
 
 
@@ -60,6 +61,10 @@ Content-Length: 42
     inferred = parse_request_text(browser_raw)
     assert inferred.scheme == "https"
     assert inferred.url == "https://ygt.arrmyy.cn:4443/api/MedicareDict/GetItemList"
+    assert "body.ids[0]" in list_candidate_fields(inferred)
+    mutated = set_field(inferred, "body.ids[0]", "1' OR '1'='1")
+    assert get_field(mutated, "body.ids[0]") == "1' OR '1'='1"
+    assert '"ids":["1\' OR \'1\'=\'1"]' in mutated.body
 
     query_secret = parse_request_text(
         "GET https://app.test/search?access_token=query-secret HTTP/1.1\nHost: app.test\n\n"
@@ -246,6 +251,66 @@ def test_command_injection_verification_uses_local_http_fixture() -> None:
         )
         assert result.status == "verified_vulnerable"
         assert result.evidence
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length))
+            value = payload["ids"][0]
+            if " OR '1'='1" in value:
+                body = b'{"items":[{"id":1}]}'
+            elif " AND '1'='2" in value:
+                body = b'{"items":[]}'
+            else:
+                body = b'{"items":[{"id":1}]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    except PermissionError as exc:
+        pytest.skip(f"当前测试沙箱禁止绑定本地端口：{exc}")
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_port
+        request = parse_request_text(
+            f"POST http://127.0.0.1:{port}/items HTTP/1.1\n"
+            f"Host: 127.0.0.1:{port}\n"
+            "Content-Type: application/json\n\n"
+            '{"RegId":"1","PatId":"1","ids":["1"]}'
+        )
+        plan = build_verification_plan(
+            VerificationCase(request=request, issue_description="ids 存在 SQL 注入")
+        )
+        assert plan.target_fields[0] == "body.ids[0]"
+        assert plan.max_requests == 3
+        result = execute_plan(
+            plan,
+            request,
+            run_name="verify-sqli-array",
+            approved=True,
+            side_effect_approved=True,
+        )
+        assert result.status == "verified_vulnerable"
+        assert [item.probe_id for item in result.evidence] == [
+            "control",
+            "sqli-boolean-true",
+            "sqli-boolean-false",
+        ]
+        assert '"ids":["1\' OR \'1\'=\'1"]' in result.evidence[1].request
     finally:
         server.shutdown()
         thread.join(timeout=5)

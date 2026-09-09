@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -132,13 +133,40 @@ def _fingerprint(observation: HttpObservation) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _json_shape(value: Any) -> Any:
+    if isinstance(value, dict):
+        entries = ((str(key), _json_shape(item)) for key, item in value.items())
+        return ("object", tuple(sorted(entries)))
+    if isinstance(value, list):
+        return ("array", len(value), tuple(_json_shape(item) for item in value[:3]))
+    if isinstance(value, bool):
+        return ("boolean",)
+    if isinstance(value, (int, float)):
+        return ("number",)
+    if value is None:
+        return ("null",)
+    return ("string", len(str(value)))
+
+
+def _responses_differ(first: HttpObservation, second: HttpObservation) -> bool:
+    if first.status_code != second.status_code:
+        return True
+    if abs(len(first.body) - len(second.body)) > 32:
+        return True
+    try:
+        return _json_shape(json.loads(first.body)) != _json_shape(json.loads(second.body))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def _probe_result(
     probe: Any,
     request: CanonicalRequest,
     observation: HttpObservation,
 ) -> ProbeResult:
+    probe_id = probe if isinstance(probe, str) else probe.probe_id
     return ProbeResult(
-        probe_id=probe.probe_id,
+        probe_id=probe_id,
         status="observed",
         response_status=observation.status_code,
         response_length=len(observation.body.encode("utf-8")),
@@ -162,22 +190,26 @@ def _assess(  # noqa: PLR0911, PLR0912
         return "inconclusive", "部分验证请求执行失败，无法形成完整证据"
 
     if vulnerability_type == "sqli":
+        control_response = observations.get("control")
         true_response = observations.get("sqli-boolean-true")
         false_response = observations.get("sqli-boolean-false")
         if true_response and false_response:
-            differs = (
-                true_response.status_code != false_response.status_code
-                or abs(len(true_response.body) - len(false_response.body)) > 32
+            differs = _responses_differ(true_response, false_response)
+            database_error = _DB_ERROR_RE.search(true_response.body) or _DB_ERROR_RE.search(
+                false_response.body
             )
-            if differs and (
-                _DB_ERROR_RE.search(true_response.body)
-                or true_response.status_code != false_response.status_code
-            ):
-                return "verified_vulnerable", "真值与假值探针产生了可重复的数据库响应差异"
+            control_changed = control_response is not None and (
+                _responses_differ(control_response, true_response)
+                or _responses_differ(control_response, false_response)
+            )
+            if differs and (database_error or control_changed):
+                return "verified_vulnerable", "基线、真值和假值请求产生了可复现的数据库响应差异"
         return "not_reproduced", "未观察到足以确认 SQL 注入的响应差异"
 
     if vulnerability_type in {"idor_bola", "authz_bypass"}:
         for result in probes:
+            if result.probe_id == "control":
+                continue
             observation = observations.get(result.probe_id)
             if observation and 200 <= observation.status_code < 300 and observation.body.strip():
                 if vulnerability_type == "idor_bola":
@@ -187,6 +219,8 @@ def _assess(  # noqa: PLR0911, PLR0912
 
     if vulnerability_type == "command_injection":
         for result in probes:
+            if result.probe_id == "control":
+                continue
             if _IDENTITY_RE.search(result.response_summary):
                 return "verified_vulnerable", "响应包含受控身份确认结果"
         return "not_reproduced", "未观察到身份确认结果"
@@ -270,11 +304,11 @@ def execute_plan(
 
     observations: dict[str, HttpObservation] = {}
     results: list[ProbeResult] = []
-    safe_method = request.method.upper() in {"GET", "HEAD", "OPTIONS"}
-    if safe_method and len(results) < plan.max_requests:
+    if len(results) < plan.max_requests:
         try:
             control = send_request(request)
             observations["control"] = control
+            results.append(_probe_result("control", request, control))
         except VerificationExecutionError as exc:
             results.append(ProbeResult(probe_id="control", status="error", error=str(exc)))
 
