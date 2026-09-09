@@ -77,6 +77,19 @@ brew install go
 go version
 ```
 
+### 更新已有源码环境
+
+在其他机器（例如 Kali）使用当前分支前，先拉取最新提交并刷新源码安装：
+
+```bash
+cd /home/tmp/strix-cn
+git pull --ff-only
+.venv/bin/python -m pip install -e .
+.venv/bin/strix --version
+```
+
+如果工作树存在未提交改动，请先确认并保留这些改动，再执行 `git pull`。
+
 说明：
 
 - 源码仓库下的交互模式会直接运行 Go / Bubble Tea TUI；如果本机没有 `go`，启动 `strix` 或 `strix --burp-port 8081` 时会报 `Bubble Tea TUI binary not found`
