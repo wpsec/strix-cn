@@ -50,8 +50,9 @@ from strix.core.inputs import (
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.proxy_scope import ensure_caido_proxy_scope
 from strix.core.sessions import open_agent_session
-from strix.report.state import get_global_report_state
+from strix.core.token_budget import normalize_token_limit
 from strix.redteam.policy import POLICY_VERSION, normalize_mode
+from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
@@ -214,7 +215,7 @@ async def run_strix_scan(
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,
     max_budget_usd: float | None = None,
-    token_limit: int | None = None,
+    token_limit: int | str | None = None,
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
@@ -262,6 +263,7 @@ async def run_strix_scan(
     configured_token_limit = token_limit
     if configured_token_limit is None:
         configured_token_limit = scan_config.get("token_limit")
+    configured_token_limit = normalize_token_limit(configured_token_limit)
 
     logger.info(
         "%s Strix scan %s (image=%s, max_turns=%d, token_limit=%s, interactive=%s, run_dir=%s)",
@@ -277,7 +279,11 @@ async def run_strix_scan(
     settings = load_settings()
     configured_mode = getattr(getattr(settings, "security", None), "mode", "normal")
     security_mode = normalize_mode(scan_config.get("mode", configured_mode))
-    scan_config = {**scan_config, "mode": security_mode}
+    scan_config = {
+        **scan_config,
+        "mode": security_mode,
+        "token_limit": configured_token_limit,
+    }
     configure_sdk_model_defaults(settings)
     resolved_model = (model or settings.llm.model or "").strip()
     if not resolved_model:

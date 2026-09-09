@@ -33,7 +33,10 @@ def _usage(input_tokens: int = 100, output_tokens: int = 25) -> Usage:
     return usage
 
 
-@pytest.mark.parametrize("value", [0, -1, False, "0", "-10", "not-a-number"])
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, False, "0", "-10", "not-a-number", "100X", "1.5"],
+)
 def test_token_limit_requires_positive_integer(value: object) -> None:
     with pytest.raises(ValueError):
         normalize_token_limit(value)
@@ -48,6 +51,20 @@ def test_empty_token_limit_is_unlimited() -> None:
 
     assert admitted is True
     assert reason == "unlimited"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("100K", 100_000),
+        ("100M", 100_000_000),
+        ("1.5G", 1_500_000_000),
+        ("2T", 2_000_000_000_000),
+        ("3B", 3_000_000_000),
+    ],
+)
+def test_token_limit_accepts_human_readable_suffixes(value: str, expected: int) -> None:
+    assert normalize_token_limit(value) == expected
 
 
 def test_priority_admission_preserves_twenty_percent_reserve() -> None:
@@ -251,6 +268,13 @@ def test_cli_accepts_token_limit_and_rejects_zero(monkeypatch: pytest.MonkeyPatc
         ["strix", "--target", "https://example.com", "--token-limit", "123"],
     )
     assert cli_args.parse_arguments().token_limit == 123
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--target", "https://example.com", "--token-limit", "100M"],
+    )
+    assert cli_args.parse_arguments().token_limit == 100_000_000
 
     monkeypatch.setattr(
         sys,

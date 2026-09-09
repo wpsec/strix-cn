@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 
@@ -13,27 +15,50 @@ TOKEN_RESERVE_RATIO = 0.20
 DEFAULT_TOKEN_ESTIMATE_PER_REQUEST = 4_096
 DEFAULT_TASK_ESTIMATE_TOKENS = 16_384
 TOKEN_PRIORITIES: tuple[TokenPriority, ...] = ("P0", "P1", "P2", "P3")
+_TOKEN_LIMIT_RE = re.compile(r"^(?P<number>\d+(?:\.\d+)?)(?P<suffix>[kmgtb]?)$", re.IGNORECASE)
+_TOKEN_LIMIT_MULTIPLIERS = {
+    "k": 1_000,
+    "m": 1_000_000,
+    "g": 1_000_000_000,
+    "t": 1_000_000_000_000,
+    "b": 1_000_000_000,
+}
+_TOKEN_LIMIT_ERROR = "token_limit 必须是大于 0 的整数，或带 K/M/G/T/B 后缀的数量"
 
 
 def normalize_token_limit(value: Any) -> int | None:
-    """Normalize an optional scan-wide Token limit and reject unsafe values."""
+    """Normalize a scan-wide Token limit, accepting values such as ``100M``."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, bool):
-        raise ValueError("token_limit 必须是大于 0 的整数")  # noqa: TRY004
+        raise ValueError(_TOKEN_LIMIT_ERROR)  # noqa: TRY004
     if isinstance(value, int):
         limit = value
     elif isinstance(value, str):
+        raw_value = value.strip()
+        match = _TOKEN_LIMIT_RE.fullmatch(raw_value)
+        if match is None:
+            raise ValueError(_TOKEN_LIMIT_ERROR)
+        number = match.group("number")
+        suffix = match.group("suffix").lower()
         try:
-            limit = int(value.strip())
-        except ValueError as exc:
-            raise ValueError("token_limit 必须是大于 0 的整数") from exc
+            if suffix:
+                limit_decimal = Decimal(number) * _TOKEN_LIMIT_MULTIPLIERS[suffix]
+                if limit_decimal != limit_decimal.to_integral_value():
+                    raise ValueError(_TOKEN_LIMIT_ERROR)
+                limit = int(limit_decimal)
+            else:
+                if "." in number:
+                    raise ValueError(_TOKEN_LIMIT_ERROR)
+                limit = int(number)
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError(_TOKEN_LIMIT_ERROR) from exc
     elif isinstance(value, float) and math.isfinite(value) and value.is_integer():
         limit = int(value)
     else:
-        raise ValueError("token_limit 必须是大于 0 的整数")
+        raise ValueError(_TOKEN_LIMIT_ERROR)
     if limit <= 0:
-        raise ValueError("token_limit 必须是大于 0 的整数")
+        raise ValueError(_TOKEN_LIMIT_ERROR)
     return limit
 
 

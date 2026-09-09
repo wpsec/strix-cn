@@ -11,6 +11,7 @@ from pathlib import Path
 from strix.config import apply_config_override, load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.core.token_budget import normalize_token_limit
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
@@ -50,6 +51,16 @@ def _positive_int(value: str) -> int:
         raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from exc
     if parsed <= 0:
         raise argparse.ArgumentTypeError("必须是大于 0 的整数")
+    return parsed
+
+
+def _positive_token_limit(value: str) -> int:
+    try:
+        parsed = normalize_token_limit(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if parsed is None:
+        raise argparse.ArgumentTypeError("token_limit 不能为空")
     return parsed
 
 
@@ -325,11 +336,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--token-limit",
         dest="token_limit",
-        metavar="N",
-        type=_positive_int,
+        metavar="N[K/M/G/T/B]",
+        type=_positive_token_limit,
         default=None,
         help=(
-            "扫描级有效 Token 上限（需大于 0）。配置后优先测试严重/高危漏洞；"
+            "扫描级有效 Token 上限（需大于 0，支持 100M、1.5G 等后缀）。配置后优先测试严重/高危漏洞；"
             "未配置表示不限制扫描 Token。"
         ),
     )

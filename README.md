@@ -285,7 +285,7 @@ strix --target api.example.com --instruction-file ./instruction.md
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 # 限制扫描级有效 Token，优先完成严重/高危漏洞路径
-strix -n --target ./ --token-limit 50000
+strix -n --target ./ --token-limit 100M
 
 # 恢复之前中断的运行
 strix --resume <run_name>
@@ -293,7 +293,7 @@ strix --resume <run_name>
 
 ### Token 限制与恢复
 
-`--token-limit` 是整次扫描的有效 Token 上限，按模型调用的 `input_tokens + output_tokens` 统计；未配置时不限制 Token，但仍会记录实际用量。配置后扫描会优先执行 P0/P1 的授权、攻击面、严重/高危漏洞发现、验证和报告，再进入中低危扩展测试。
+`--token-limit` 是整次扫描的有效 Token 上限，按模型调用的 `input_tokens + output_tokens` 统计；支持整数及 `K/M/G/T/B` 后缀，例如 `100M` 表示 100,000,000 Token。未配置时不限制 Token，但仍会记录实际用量。配置后扫描会优先执行 P0/P1 的授权、攻击面、严重/高危漏洞发现、验证和报告，再进入中低危扩展测试。
 
 Token 用尽时运行状态会标记为 `token_limit_exhausted`，报告会明确列出已完成测试、未完成阶段、跳过任务和严重度覆盖范围，不能将未覆盖区域视为“未发现问题”。`--max-budget-usd` 仍然只负责费用限制；两者同时配置时，任一限制先达到都会停止继续扩展测试。
 

@@ -97,8 +97,8 @@ strix (--target <target> | --target-list <path> | --mount <path> | --burp-port <
   整次扫描的 LLM 总预算上限（美元）。系统会在模型响应完成后检查预算，并在接近阈值时向代理发送渐进式收尾提醒。
 </ParamField>
 
-<ParamField path="--token-limit" type="integer">
-  整次扫描的有效 Token 上限，必须是正整数。有效用量按模型调用的
+<ParamField path="--token-limit" type="string">
+  整次扫描的有效 Token 上限，支持正整数及 `K/M/G/T/B` 后缀，例如 `100M` 表示 100,000,000 Token。有效用量按模型调用的
   `input_tokens + output_tokens` 统计；供应商未返回用量时采用保守估算。配置后优先执行
   P0/P1 的授权、攻击面、严重/高危漏洞发现、验证、复测和报告，再扩展 P2/P3 测试。
   未配置时不限制 Token，但仍记录实际用量。Token 耗尽后运行状态为
@@ -160,7 +160,7 @@ strix --target https://app.example.com --auth-username '<username>' --auth-passw
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 # 限制扫描级有效 Token，优先高风险路径
-strix -n --target ./ --token-limit 50000
+strix -n --target ./ --token-limit 100M
 
 # 恢复之前中断的运行
 strix --resume pentest_abc123
