@@ -43,6 +43,22 @@ SUPPORTED_ACTIONS = frozenset(
 SUPPORTED_ORACLES = frozenset(
     {"response_difference", "authorization_boundary", "identity_marker", "canary_echo"}
 )
+_ROLE_ALIASES = {
+    "true_condition": "true",
+    "positive": "true",
+    "success": "true",
+    "valid": "true",
+    "false_condition": "false",
+    "negative": "false",
+    "failure": "false",
+    "invalid": "false",
+    "error_based": "error",
+    "error_condition": "error",
+    "syntax_error": "error",
+    "baseline": "control",
+    "time_based": "delay",
+    "time": "delay",
+}
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _DANGEROUS_MARKER_RE = re.compile(
     r"(?i)(?:union\s+select|information_schema|drop\s+table|delete\s+from|"
@@ -97,7 +113,7 @@ JSON 格式：
   "vulnerability_type": "sqli|idor_bola|ssrf|command_injection|file_upload|authz_bypass",
   "target_fields": ["body.ids[0]"],
   "probes": [
-    {"field":"body.ids[0]", "value":"...", "action":"set", "role":"true", "pair_id":"pair-1", "rationale":"..."}
+    {"field":"body.ids[0]", "value":"...", "action":"set", "role":"true|false|error", "pair_id":"pair-1", "rationale":"..."}
   ],
   "oracle_kind": "response_difference|authorization_boundary|identity_marker|canary_echo",
   "oracle_description": "...",
@@ -194,9 +210,10 @@ def _validate_probe(
     ):
         raise IntentGenerationError("Cookie 探针值包含非法分隔符")
 
-    role = _bounded_text(raw.get("role", ""), name="探针角色", limit=32)
-    if role not in {"", "true", "false", "control", "secondary", "marker"}:
-        raise IntentGenerationError(f"模型返回了不支持的探针角色：{role}")
+    raw_role = _bounded_text(raw.get("role", ""), name="探针角色", limit=32)
+    role = _ROLE_ALIASES.get(raw_role.casefold().replace("-", "_"), raw_role)
+    if role not in {"", "true", "false", "error", "delay", "control", "secondary", "marker"}:
+        role = "other"
     pair_id = _bounded_text(raw.get("pair_id", ""), name="探针对照组", limit=64)
     rationale = _bounded_text(raw.get("rationale", ""), name="探针理由", limit=500)
     return IntentProbe(

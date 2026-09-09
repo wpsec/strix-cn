@@ -258,6 +258,18 @@ def _assess(  # noqa: PLR0911, PLR0912, PLR0915
                     "基线、真值和假值请求产生了可复现的数据库响应差异；"
                     + "；".join(evidence_lines),
                 )
+        for probe in plan.probes:
+            if probe.role != "error":
+                continue
+            response = observations.get(probe.probe_id)
+            if response is None:
+                continue
+            evidence_lines.append(f"错误型探针：{_response_label(response)}")
+            if _DB_ERROR_RE.search(response.body):
+                return (
+                    "verified_vulnerable",
+                    "错误型探针触发了数据库错误响应；" + "；".join(evidence_lines),
+                )
         baseline = _response_label(control_response)
         details = "；".join(evidence_lines) or "未获得完整的真值/假值响应"
         return (

@@ -244,6 +244,76 @@ def test_description_driven_intent_rejects_unknown_fields_and_exfiltration() -> 
         )
 
 
+def test_sql_error_role_is_supported_and_delay_role_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = parse_request_text("GET https://app.test/items?id=1 HTTP/1.1\nHost: app.test\n\n")
+    intent = parse_intent_response(
+        json.dumps(
+            {
+                "vulnerability_type": "sqli",
+                "target_fields": ["query.id"],
+                "probes": [
+                    {
+                        "field": "query.id",
+                        "value": "1'",
+                        "action": "set",
+                        "role": "error",
+                    }
+                ],
+                "oracle_kind": "response_difference",
+                "oracle_description": "检查数据库错误响应",
+                "rationale": "模型选择错误型 SQL 注入验证。",
+                "confidence": 0.8,
+            }
+        ),
+        candidate_fields=["query.id"],
+    )
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="id 存在 SQL 注入"),
+        intent=intent,
+    )
+    assert plan.probes[0].role == "error"
+    assert plan.blocked_reason is None
+    observations = iter(
+        [
+            HttpObservation(200, {}, "normal"),
+            HttpObservation(500, {}, "database syntax error"),
+        ]
+    )
+    monkeypatch.setattr(executor, "send_request", lambda _request: next(observations))
+    result = execute_plan(plan, request, run_name="verify-error", approved=True)
+    assert result.status == "verified_vulnerable"
+
+    delay_intent = parse_intent_response(
+        json.dumps(
+            {
+                "vulnerability_type": "sqli",
+                "target_fields": ["query.id"],
+                "probes": [
+                    {
+                        "field": "query.id",
+                        "value": "1",
+                        "action": "set",
+                        "role": "delay",
+                    }
+                ],
+                "oracle_kind": "response_difference",
+                "oracle_description": "检查响应时间差异",
+                "rationale": "描述提到了延时。",
+                "confidence": 0.5,
+            }
+        ),
+        candidate_fields=["query.id"],
+    )
+    delay_plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="id 存在 SQL 注入"),
+        intent=delay_intent,
+    )
+    assert delay_plan.blocked_reason is not None
+    assert "延时盲注" in delay_plan.blocked_reason
+
+
 def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

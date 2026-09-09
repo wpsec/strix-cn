@@ -257,8 +257,11 @@ def _build_plan_from_intent(  # noqa: PLR0912, PLR0915
             for pair_id in pairs
             if {probe.role for probe in probes if probe.pair_id == pair_id} >= {"true", "false"}
         }
-        if not complete_pairs:
-            blocked_reasons.append("SQL 注入意图必须包含同一对照组的真值和假值探针")
+        has_error_probe = any(probe.role == "error" for probe in probes)
+        if not complete_pairs and not has_error_probe:
+            blocked_reasons.append("SQL 注入意图必须包含同一对照组的真/假探针，或单独的错误型探针")
+        if any(probe.role == "delay" for probe in probes):
+            blocked_reasons.append("延时盲注探针可能造成目标负载，已阻断执行")
     if intent.vulnerability_type == "authz_bypass" and not any(
         probe.action == "remove_authentication" for probe in probes
     ):
