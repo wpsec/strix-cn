@@ -23,12 +23,16 @@ from strix.core.token_budget import (
 from strix.redteam.attack_chain import build_attack_chain
 from strix.redteam.policy import (
     POLICY_VERSION,
+    classify_test_priority,
     normalize_mode,
     normalize_vulnerability_type,
-    should_ignore,
 )
 from strix.report.coverage import write_coverage
-from strix.report.evidence import STRUCTURED_EVIDENCE_FIELDS, normalize_evidence_rows
+from strix.report.evidence import (
+    STRUCTURED_EVIDENCE_FIELDS,
+    backfill_report_http_evidence,
+    normalize_evidence_rows,
+)
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.writer import (
@@ -251,6 +255,7 @@ class ReportState:
             "auth_mode": auth_mode,
             "mode": "normal",
             "policy_version": None,
+            "redteam_skipped_tests": [],
             "targets_info": [],
             "llm_usage": self._build_llm_usage_record(),
             **self._token_budget.to_record(),
@@ -402,6 +407,7 @@ class ReportState:
                     r["finding_class"] = (
                         "dependency_cve" if r.get("dependency_metadata") else "dynamic"
                     )
+                backfill_report_http_evidence(r)
                 title = r.get("title")
                 stale_md = False
                 if isinstance(title, str):
@@ -462,17 +468,9 @@ class ReportState:
         cvss_4_severity: str | None = None,
     ) -> str:
         mode = normalize_mode(self.run_record.get("mode", "normal"))
-        if should_ignore(vulnerability_type or "", mode=mode, impact=impact):
-            return ""
-        if mode == "redteam" and str(severity).strip().lower() not in {"critical", "high"}:
-            return ""
-        if mode == "redteam" and not any(
-            str(value or "").strip()
-            for value in (evidence, validation_evidence, permission_proof)
-        ):
-            return ""
-
-        normalized_type = normalize_vulnerability_type(vulnerability_type)
+        raw_vulnerability_type = str(vulnerability_type or "").strip()
+        normalized_type = normalize_vulnerability_type(raw_vulnerability_type)
+        priority = classify_test_priority(raw_vulnerability_type, impact=impact)
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
         report: dict[str, Any] = {
@@ -481,6 +479,15 @@ class ReportState:
             "severity": severity.lower().strip(),
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
+        if mode == "redteam":
+            report["vulnerability_type_raw"] = raw_vulnerability_type or "unknown"
+            report["redteam_policy"] = {
+                "priority": priority["priority"],
+                "reason": priority["reason"],
+                "canonical_type": priority["canonical_type"],
+                "report_status": "persisted",
+                "attack_chain_candidate": priority["priority"] == "high",
+            }
         if normalized_type:
             report["vulnerability_type"] = normalized_type
         if permission_proof:
@@ -497,6 +504,7 @@ class ReportState:
             normalized, _errors = normalize_evidence_rows(raw_value, field_name)
             if normalized:
                 report[field_name] = normalized
+        backfill_report_http_evidence(report)
         report_credential_provenance = (
             dict(credential_provenance) if isinstance(credential_provenance, dict) else {}
         )
@@ -659,6 +667,19 @@ class ReportState:
         report.update(changed)
         for dependent in superseded:
             report.pop(dependent, None)
+        backfill_report_http_evidence(report)
+        if normalize_mode(self.run_record.get("mode", "normal")) == "redteam":
+            raw_type = str(
+                report.get("vulnerability_type_raw") or report.get("vulnerability_type") or ""
+            ).strip()
+            priority = classify_test_priority(raw_type, impact=report.get("impact"))
+            report["redteam_policy"] = {
+                "priority": priority["priority"],
+                "reason": priority["reason"],
+                "canonical_type": priority["canonical_type"],
+                "report_status": "persisted",
+                "attack_chain_candidate": priority["priority"] == "high",
+            }
         report["update_history"] = history
         report["updated_at"] = entry["timestamp"]
 
@@ -679,29 +700,57 @@ class ReportState:
         return report
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
-        return self._artifact_reports()
+        # Dedupe, list, get, and artifact generation must see every finding.
+        # Attack-chain eligibility is a separate projection and must not erase
+        # low-impact or not-yet-classified observations from the run state.
+        return list(self.vulnerability_reports)
+
+    def record_redteam_skip(
+        self,
+        *,
+        vulnerability_type: str | None,
+        reason: str,
+        target: str | None = None,
+        impact: str | None = None,
+        agent_id: str | None = None,
+        agent_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist an efficiency deferral without creating a false finding."""
+        mode = normalize_mode(self.run_record.get("mode", "normal"))
+        if mode != "redteam":
+            raise ValueError("仅 redteam 模式可以记录红队专项跳过项")
+        clean_reason = str(reason or "").strip()
+        if not clean_reason:
+            raise ValueError("跳过原因不能为空")
+        raw_type = str(vulnerability_type or "").strip() or "unknown"
+        priority = classify_test_priority(raw_type, impact=impact)
+        entry: dict[str, Any] = {
+            "vulnerability_type_raw": raw_type,
+            "priority": priority["priority"],
+            "reason": clean_reason,
+            "status": "not_executed",
+            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        }
+        for key, value in (
+            ("target", target),
+            ("impact", impact),
+            ("agent_id", agent_id),
+            ("agent_name", agent_name),
+        ):
+            if isinstance(value, str) and value.strip():
+                entry[key] = value.strip()
+        skipped = self.run_record.setdefault("redteam_skipped_tests", [])
+        if not isinstance(skipped, list):
+            skipped = []
+            self.run_record["redteam_skipped_tests"] = skipped
+        skipped.append(entry)
+        del skipped[:-200]
+        self.save_run_data()
+        return dict(entry)
 
     def _artifact_reports(self) -> list[dict[str, Any]]:
-        """Return reports allowed to leave the current run's artifact boundary."""
-        if normalize_mode(self.run_record.get("mode", "normal")) != "redteam":
-            return list(self.vulnerability_reports)
-        eligible: list[dict[str, Any]] = []
-        for report in self.vulnerability_reports:
-            if str(report.get("severity") or "").lower() not in {"critical", "high"}:
-                continue
-            if should_ignore(
-                str(report.get("vulnerability_type") or ""),
-                mode="redteam",
-                impact=report.get("impact"),
-            ):
-                continue
-            if not any(
-                str(report.get(field) or "").strip()
-                for field in ("evidence", "validation_evidence", "permission_proof")
-            ):
-                continue
-            eligible.append(dict(report))
-        return eligible
+        """Return every report; attack-chain filtering happens at the projection."""
+        return list(self.vulnerability_reports)
 
     def record_sdk_usage(
         self,

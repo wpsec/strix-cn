@@ -149,7 +149,7 @@ def _responses_match(first: HttpObservation, second: HttpObservation) -> bool:
 
 def _response_label(observation: HttpObservation | None) -> str:
     if observation is None:
-        return "未获得响应"
+        return "未捕获响应"
     return f"HTTP {observation.status_code} / {len(observation.body.encode('utf-8'))} bytes"
 
 
@@ -226,7 +226,7 @@ def _response_difference_oracle(
         if _responses_differ(control, response):
             evidence.append(f"{probe.probe_id}: {_response_label(response)}")
 
-    details = "；".join(evidence) or "未获得完整对照响应"
+    details = "；".join(evidence) or "未捕获完整对照响应"
     if evidence:
         return (
             "inconclusive",
@@ -416,7 +416,7 @@ def execute_plan(
             vulnerability_type=plan.vulnerability_type,
             plan_sha256=plan.plan_sha256,
             run_name=run_name,
-            summary="该验证需要第二身份请求包，当前未提供。",
+            summary="该验证需要第二身份请求包，当前未加载。",
             baseline_run=baseline_run,
         )
 

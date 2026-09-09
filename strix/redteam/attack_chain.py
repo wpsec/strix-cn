@@ -4,7 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from strix.redteam.policy import normalize_vulnerability_type, should_ignore
+from strix.redteam.policy import is_attack_chain_eligible, normalize_vulnerability_type
+from strix.report.evidence import report_request_evidence, report_response_evidence
+
+
+def _has_complete_chain_evidence(report: dict[str, Any]) -> bool:
+    _, request_source = report_request_evidence(report)
+    _, response_source = report_response_evidence(report)
+    if request_source == "missing" or response_source == "missing":
+        return False
+    return bool(
+        any(
+            str(report.get(field) or "").strip()
+            for field in ("evidence", "validation_evidence", "permission_proof")
+        )
+    )
 
 
 def build_attack_chain(reports: list[dict[str, Any]]) -> dict[str, Any]:
@@ -12,17 +26,12 @@ def build_attack_chain(reports: list[dict[str, Any]]) -> dict[str, Any]:
     eligible = [
         report
         for report in reports
-        if str(report.get("severity") or "").lower() in {"critical", "high"}
-        and normalize_vulnerability_type(report.get("vulnerability_type")) is not None
-        and not should_ignore(
-            str(report.get("vulnerability_type") or ""),
-            mode="redteam",
+        if is_attack_chain_eligible(
+            report.get("vulnerability_type") or report.get("vulnerability_type_raw"),
+            severity=report.get("severity"),
             impact=report.get("impact"),
         )
-        and any(
-            str(report.get(field) or "").strip()
-            for field in ("evidence", "validation_evidence", "permission_proof")
-        )
+        and _has_complete_chain_evidence(report)
     ]
     eligible.sort(key=lambda report: (str(report.get("timestamp") or ""), str(report.get("id"))))
 

@@ -249,11 +249,14 @@ def _render_report(  # noqa: PLR0912
                 f"### {evidence.probe_id}",
                 "",
                 f"- 执行状态：`{evidence.status}`",
-                f"- 响应状态码：`{evidence.response_status or '未获得'}`",
+                f"- 响应状态码：`{evidence.response_status or '未捕获'}`",
                 f"- 响应长度：`{evidence.response_length}`",
-                f"- 响应指纹：`{evidence.response_sha256 or '未获得'}`",
+                f"- 响应指纹：`{evidence.response_sha256 or '未捕获'}`",
                 "- 证据：",
-                evidence.evidence or evidence.response_summary or evidence.error or "未提供",
+                evidence.evidence
+                or evidence.response_summary
+                or evidence.error
+                or "未记录具体证据；请结合响应状态、长度和指纹复核。",
                 "",
             ]
         )

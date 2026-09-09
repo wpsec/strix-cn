@@ -268,7 +268,13 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     if security_mode == "redteam":
         task = (
             f"{task}\n\nSecurity policy mode: redteam ({POLICY_VERSION}). "
-            "Use only the built-in red-team allowlist and fail closed for unknown test types."
+            "Prioritize authentication, authorization, credential, injection, file, session, "
+            "and permission-impact tests. Defer invalid certificates, weak TLS, banners, "
+            "missing security headers, ordinary CAPTCHA bypass, and low-impact rate-limit "
+            "checks unless they can affect authentication, authorization, or sensitive data. "
+            "Finding labels guide priority only: unknown types remain testable when the "
+            "request is in scope and safe. Persist every observed finding and record every "
+            "efficiency skip with its reason."
         )
     return task
 
@@ -286,7 +292,9 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         {
             "security_mode": security_mode,
             "redteam_policy_version": POLICY_VERSION,
-            "redteam_fail_closed": True,
+            "redteam_fail_closed": False,
+            "redteam_action_policy": "scope-and-action-risk",
+            "redteam_priority_policy": "impact-aware",
         }
         if security_mode == "redteam"
         else {}

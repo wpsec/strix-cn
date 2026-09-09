@@ -20,7 +20,11 @@ from strix.core.paths import run_record_path
 from strix.redteam.attack_chain import (
     build_attack_chain,
 )
-from strix.report.evidence import render_structured_evidence_markdown
+from strix.report.evidence import (
+    report_request_evidence,
+    report_response_evidence,
+    render_structured_evidence_markdown,
+)
 
 
 if TYPE_CHECKING:
@@ -142,7 +146,7 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
 
 
 def _escape_inline(value: Any) -> str:
-    text = str(value or "未提供").strip()
+    text = str(value or "未记录").strip()
     return re.sub(r"([\\`*_{}\[\]()<>#+.!|\-])", r"\\\1", text)
 
 
@@ -168,9 +172,9 @@ def _extract_final_section(final_scan_result: str, title: str) -> str:
     )
     match = pattern.search(final_scan_result)
     if not match:
-        return final_scan_result.strip() or "未提供。"
+        return final_scan_result.strip() or "本节未记录内容。"
     content = match.group(1).strip()
-    return content or "未提供。"
+    return content or "本节未记录内容。"
 
 
 def _relevel_markdown_headings(markdown: str, level_delta: int = 2) -> str:
@@ -198,7 +202,7 @@ _REDTEAM_OBJECTIVE_REPLACEMENTS = (
 )
 
 
-def _redteam_text(value: Any, fallback: str = "未提供。") -> str:
+def _redteam_text(value: Any, fallback: str = "未记录；请结合证据补充。") -> str:
     text = str(value or "").strip()
     if not text:
         return fallback
@@ -212,18 +216,18 @@ def _redteam_context_value(report: dict[str, Any], *keys: str) -> str:
         value = report.get(key)
         if value not in (None, ""):
             return _redteam_text(value)
-    return "未提供。"
+    return "未记录；请结合证据补充。"
 
 
 def _redteam_location_lines(report: dict[str, Any]) -> list[str]:
     locations = report.get("code_locations")
     if not isinstance(locations, list):
-        return ["- 代码或资源定位：未提供。"]
+        return ["- 代码或资源定位：未记录；请结合证据章节定位。"]
     lines: list[str] = []
     for location in locations:
         if not isinstance(location, dict):
             continue
-        file_name = _escape_inline(location.get("file") or "未提供")
+        file_name = _escape_inline(location.get("file") or "未记录")
         start = location.get("start_line")
         end = location.get("end_line")
         line_ref = ""
@@ -232,7 +236,7 @@ def _redteam_location_lines(report: dict[str, Any]) -> list[str]:
         label = _redteam_text(location.get("label"), "")
         suffix = f"（{label}）" if label else ""
         lines.append(f"- `{file_name}{line_ref}`{suffix}")
-    return lines or ["- 代码或资源定位：未提供。"]
+    return lines or ["- 代码或资源定位：未记录；请结合证据章节定位。"]
 
 
 def _redteam_poc_lines(report: dict[str, Any]) -> list[str]:
@@ -244,7 +248,7 @@ def _redteam_poc_lines(report: dict[str, Any]) -> list[str]:
     lines.extend(["", "验证步骤：", "", description])
     raw_code = str(report.get("poc_script_code") or "").strip()
     if not raw_code:
-        lines.extend(["", "```python", "# 未提供 PoC 代码。", "```"])
+        lines.extend(["", "当前未保存可执行 PoC 代码；请按上述验证步骤手工复现。"])
         return lines
     language, code = parse_fenced_code(raw_code)
     fence_lang = language or "python"
@@ -255,13 +259,13 @@ def _redteam_poc_lines(report: dict[str, Any]) -> list[str]:
 
 def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
     title = _redteam_text(report.get("title"), "未命名漏洞")
-    severity = str(report.get("severity") or "未提供").strip().upper()
+    severity = str(report.get("severity") or "unknown").strip().upper()
     cvss4_score = report.get("cvss_4_score") or report.get("cvss_v4_score")
     cvss4_vector = report.get("cvss_4_vector") or report.get("cvss_v4_vector")
     if cvss4_score is not None or cvss4_vector:
-        cvss4 = f"分数：{cvss4_score or '未提供'}；向量：`{cvss4_vector or '未提供'}`"
+        cvss4 = f"分数：{cvss4_score or '未计算'}；向量：`{cvss4_vector or '未记录'}`"
     else:
-        cvss4 = "未提供真实 CVSS 4.0 分数或向量，未将旧版本分数误标为 CVSS 4.0。"
+        cvss4 = "未计算真实 CVSS 4.0 分数或向量；未将旧版本分数误标为 CVSS 4.0。"
     legacy_cvss = report.get("cvss")
     legacy_vector = (report.get("cvss_breakdown") or {}).get("vector")
     if legacy_cvss is not None:
@@ -269,7 +273,7 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
         if legacy_vector:
             reference += f"；向量：`{legacy_vector}`"
     else:
-        reference = "参考 CVSS 3.1：未提供。"
+        reference = "参考 CVSS 3.1：未计算。"
     endpoint = " ".join(
         part
         for part in (
@@ -293,6 +297,14 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
     permission_impact = _redteam_text(
         report.get("permission_proof") or report.get("impact")
     )
+    policy = report.get("redteam_policy")
+    policy_lines = []
+    if isinstance(policy, dict):
+        policy_lines = [
+            f"- 红队策略优先级：{_redteam_text(policy.get('priority'), '未分类')}",
+            f"- 策略归档状态：{_redteam_text(policy.get('report_status'), '未记录')}",
+            f"- 策略说明：{_redteam_text(policy.get('reason'), '未记录策略说明')}",
+        ]
     limitations = [
         ("前提与范围", report.get("assumptions")),
         ("反证与待确认事项", report.get("counterevidence")),
@@ -309,8 +321,11 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
         "## 二、漏洞等级与 CVSS 4.0",
         "",
         f"- 漏洞等级：`{_escape_inline(severity)}`",
+        f"- 原始漏洞类型：{_redteam_text(report.get('vulnerability_type_raw'))}",
+        f"- 规范化漏洞类型：{_redteam_text(report.get('vulnerability_type'))}",
         f"- CVSS 4.0：{cvss4}",
         f"- {reference}",
+        *policy_lines,
         "",
         "## 三、漏洞位置",
         "",
@@ -343,14 +358,20 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
         "- 请求：",
         "",
     ]
-    request = str(report.get("request") or "未提供请求数据。").strip()
-    request_fence = safe_fence(request)
-    lines.extend([f"{request_fence}http", request, request_fence, "", "- 响应现象："])
-    response = str(
-        report.get("response") or report.get("validation_evidence") or "未提供响应或运行时现象。"
-    ).strip()
-    response_fence = safe_fence(response)
-    lines.extend(["", f"{response_fence}http", response, response_fence, ""])
+    request, request_source = report_request_evidence(report)
+    lines.extend(["- Request："])
+    if request_source in {"request", "reproduction_request"}:
+        request_fence = safe_fence(request)
+        lines.extend(["", f"{request_fence}http", request, request_fence, ""])
+    else:
+        lines.extend(["", request, ""])
+    response, response_source = report_response_evidence(report)
+    lines.append("- Response / 运行时现象：")
+    if response_source in {"response", "observed_response"}:
+        response_fence = safe_fence(response)
+        lines.extend(["", f"{response_fence}text", response, response_fence, ""])
+    else:
+        lines.extend(["", response, ""])
     provenance = report.get("credential_provenance")
     if isinstance(provenance, dict) and provenance:
         lines.extend(
@@ -396,7 +417,7 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
         for label, value in limitations
         if value not in (None, "")
     ]
-    lines.extend(limitation_lines or ["- 未提供额外限制或待确认事项。"])
+    lines.extend(limitation_lines or ["- 当前没有额外限制或待确认事项。"])
     lines.append("")
     return lines
 
@@ -407,12 +428,8 @@ def _render_redteam_report(
     run_record: dict[str, Any],
     vulnerability_reports: list[dict[str, Any]],
 ) -> str:
-    """Render the red-team delivery format as structured objective findings."""
-    reports = [
-        dict(report)
-        for report in vulnerability_reports
-        if str(report.get("severity") or "").lower() in {"critical", "high"}
-    ]
+    """Render all findings and a separate evidence-backed attack-chain view."""
+    reports = [dict(report) for report in vulnerability_reports]
     chain = build_attack_chain(reports)
     targets = _target_labels(run_record)
     report_by_id = {str(report.get("id")): report for report in reports}
@@ -422,38 +439,74 @@ def _render_redteam_report(
         if node["id"] in report_by_id
     ]
     lines = [
-        "# 红队专项攻击链报告",
+        "# 红队专项安全验证报告",
         "",
         f"- 运行：{_escape_inline(run_record.get('run_name') or '未命名运行')}",
-        f"- 目标：{_escape_inline('、'.join(targets) if targets else '未提供')}",
+        f"- 目标：{_escape_inline('、'.join(targets) if targets else '当前运行未记录目标')}",
         "- 模式：redteam",
-        f"- 策略版本：{_escape_inline(run_record.get('policy_version') or 'redteam-v3')}",
+        f"- 策略版本：{_escape_inline(run_record.get('policy_version') or 'redteam-v4')}",
         "",
         "## 攻击链路摘要",
         "",
     ]
     if not chain["nodes"]:
-        lines.append("本次运行没有成功验证的 High/Critical 红队专项漏洞。")
-        return "\n".join(lines) + "\n"
-
-    for index, node in enumerate(chain["nodes"], start=1):
-        lines.extend(
-            [
+        lines.append("本次运行暂未形成具备充分证据的 High/Critical 攻击链节点。")
+    else:
+        for index, node in enumerate(chain["nodes"], start=1):
+            lines.append(
                 f"- 节点 {index}：{_escape_inline(node.get('title'))}；"
                 f"类型：`{node.get('vulnerability_type') or 'unknown'}`；"
                 f"等级：`{str(node.get('severity') or '').upper()}`；"
-                f"证据节点：`{node.get('id')}`",
-            ]
-        )
+                f"证据节点：`{node.get('id')}`"
+            )
 
-    lines.extend(["## 节点关系", ""])
-    for edge in chain["edges"]:
-        lines.append(
-            f"`{edge['source']}` → `{edge['target']}`（{edge['relationship']}）"
-        )
-    lines.extend(["", "被拦截、未知或未完成验证的测试意图不属于本报告。", ""])
-    for index, report in enumerate(chain_reports, start=1):
-        lines.extend(_redteam_finding_sections(report, index))
+    lines.extend(["", "## 节点关系", ""])
+    if chain["edges"]:
+        for edge in chain["edges"]:
+            lines.append(
+                f"`{edge['source']}` → `{edge['target']}`（{edge['relationship']}）"
+            )
+    else:
+        lines.append("暂无节点关系。")
+
+    skipped = run_record.get("redteam_skipped_tests") or []
+    lines.extend(["", "## 效率策略跳过项", ""])
+    if isinstance(skipped, list) and skipped:
+        for entry in skipped:
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                f"- `{_escape_inline(entry.get('vulnerability_type_raw') or 'unknown')}`："
+                f"{_escape_inline(entry.get('reason') or '未记录跳过原因')}"
+            )
+    else:
+        lines.append("本次运行没有记录效率策略跳过项。")
+
+    chain_ids = {str(report.get("id")) for report in chain_reports}
+    lines.extend(["", "## 已落盘发现", ""])
+    if not reports:
+        lines.append("本次运行尚未落盘安全问题。")
+    else:
+        report_index = 1
+        for report in reports:
+            report_id = str(report.get("id") or "")
+            archive_status = (
+                "已纳入攻击链"
+                if report_id in chain_ids
+                else "已落盘，暂未纳入攻击链（不代表该问题被丢弃）"
+            )
+            lines.extend(
+                [
+                    f"### 发现 {report_index}：{_escape_inline(report.get('title'))}",
+                    "",
+                    f"- 归档状态：{archive_status}",
+                    f"- 原始类型：{_escape_inline(report.get('vulnerability_type_raw') or 'unknown')}",
+                    f"- 严重度：`{str(report.get('severity') or 'info').upper()}`",
+                    "",
+                ]
+            )
+            lines.extend(_redteam_finding_sections(report, report_index))
+            report_index += 1
     return "\n".join(lines).strip() + "\n"
 
 
@@ -474,9 +527,9 @@ def render_complete_report(
         )
     targets = _target_labels(record)
     run_name = record.get("run_name") or record.get("scan_id") or "未命名运行"
-    status = _STATUS_LABELS_ZH.get(str(record.get("status") or "").lower(), "未提供")
-    generated_at = record.get("end_time") or record.get("start_time") or "未提供"
-    scan_mode = record.get("scan_mode") or "未提供"
+    status = _STATUS_LABELS_ZH.get(str(record.get("status") or "").lower(), "未记录状态")
+    generated_at = record.get("end_time") or record.get("start_time") or "未记录时间"
+    scan_mode = record.get("scan_mode") or "未记录模式"
     severity_counts = {severity: 0 for severity in ("critical", "high", "medium", "low", "info")}
     for report in reports:
         severity = str(report.get("severity") or "info").strip().lower()
@@ -513,7 +566,7 @@ def render_complete_report(
         "| 项目 | 内容 |",
         "| --- | --- |",
         f"| 报告名称 | {_escape_inline(run_name)} |",
-        f"| 测试目标 | {_escape_inline('、'.join(targets) if targets else '未提供')} |",
+        f"| 测试目标 | {_escape_inline('、'.join(targets) if targets else '当前运行未记录目标')} |",
         f"| 测试模式 | {_escape_inline(scan_mode)} |",
         f"| 报告状态 | {status} |",
         f"| 生成时间 | {_escape_inline(generated_at)} |",
@@ -549,7 +602,7 @@ def render_complete_report(
             '<a id="scope-and-methodology"></a>',
             "## 2. 测试范围与方法",
             "",
-            f"**测试目标：** {_escape_inline('、'.join(targets) if targets else '未提供')}",
+            f"**测试目标：** {_escape_inline('、'.join(targets) if targets else '当前运行未记录目标')}",
             "",
             methodology,
             "",
@@ -867,13 +920,28 @@ def render_vulnerability_md(
 
     lines.append("")
     lines.append("## 漏洞描述\n")
-    lines.append(report.get("description") or "未提供漏洞描述。")
+    lines.append(report.get("description") or "报告未记录漏洞描述；需结合证据补充。")
     lines.append("")
 
     if str(report.get("finding_class") or "dynamic").lower() != "dependency_cve":
         lines.append("## 发现与复现过程\n")
         lines.extend(render_structured_evidence_markdown(report))
         lines.append("")
+
+    request, request_source = report_request_evidence(report)
+    response, response_source = report_response_evidence(report)
+    lines.extend(["## 请求与响应证据\n", "### Request\n"])
+    if request_source in {"request", "reproduction_request"}:
+        request_fence = safe_fence(request)
+        lines.extend([f"{request_fence}http", request, request_fence, ""])
+    else:
+        lines.extend([request, ""])
+    lines.extend(["### Response / 运行时现象\n"])
+    if response_source in {"response", "observed_response"}:
+        response_fence = safe_fence(response)
+        lines.extend([f"{response_fence}text", response, response_fence, ""])
+    else:
+        lines.extend([response, ""])
 
     if report.get("evidence"):
         lines.append("## 证据\n")

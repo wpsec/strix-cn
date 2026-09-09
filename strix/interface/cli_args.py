@@ -301,7 +301,7 @@ def parse_arguments() -> argparse.Namespace:
         "--red",
         dest="redteam",
         action="store_true",
-        help="启用红队专项模式：仅验证白名单高风险类型，并生成攻击链报告。",
+        help="启用红队专项模式：优先验证高影响问题，并生成完整发现与攻击链报告。",
     )
     mode_group.add_argument(
         "--verify",

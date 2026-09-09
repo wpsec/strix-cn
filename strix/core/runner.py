@@ -549,7 +549,9 @@ async def run_strix_scan(
                 {
                     "security_mode": security_mode,
                     "redteam_policy_version": POLICY_VERSION,
-                    "redteam_fail_closed": True,
+                    "redteam_fail_closed": False,
+                    "redteam_action_policy": "scope-and-action-risk",
+                    "redteam_priority_policy": "impact-aware",
                 }
             )
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
@@ -634,7 +636,9 @@ async def run_strix_scan(
                 {
                     "security_mode": security_mode,
                     "redteam_policy_version": POLICY_VERSION,
-                    "redteam_fail_closed": True,
+                    "redteam_fail_closed": False,
+                    "redteam_action_policy": "scope-and-action-risk",
+                    "redteam_priority_policy": "impact-aware",
                 }
                 if security_mode == "redteam"
                 else {}

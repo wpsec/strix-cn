@@ -1,8 +1,9 @@
 """Policy primitives for the authorized red-team validation mode.
 
-The policy is deliberately fail-closed for red-team runs.  A missing or
-unrecognised vulnerability type cannot authorize a network action, and a
-privilege-impact claim must carry an explicit impact description.
+Red-team policy has two separate jobs: guide the agent toward useful tests and
+protect the target from unsafe actions.  A vulnerability label is evidence
+classification, not an authorization capability.  Unknown labels therefore
+remain testable and reportable; only the action boundary can deny a request.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ SecurityMode = Literal["normal", "redteam", "verify"]
 NORMAL_MODE: SecurityMode = "normal"
 REDTEAM_MODE: SecurityMode = "redteam"
 VERIFY_MODE: SecurityMode = "verify"
-POLICY_VERSION = "redteam-v3"
+POLICY_VERSION = "redteam-v4"
 
 _PRIVILEGE_IMPACT_MARKERS = (
     "未授权身份",
@@ -53,6 +54,15 @@ _ACCESS_IMPACT_MARKERS = (
     "admin access",
     "authenticated session",
     "获取管理员权限",
+    "成功登录",
+    "登录后台",
+    "登录成功",
+    "找回密码",
+    "重置密码",
+    "敏感数据",
+    "sensitive data",
+    "default credential",
+    "默认凭据",
 )
 _CREDENTIAL_OBSERVATION_MARKERS = (
     "password",
@@ -70,6 +80,10 @@ _TYPE_ALIASES: dict[str, str] = {
     "remote code execution": "rce",
     "远程代码执行": "rce",
     "command injection": "rce",
+    "sql injection": "sqli",
+    "sqli": "sqli",
+    "sql 注入": "sqli",
+    "sql注入": "sqli",
     "os command injection": "rce",
     "可写文件上传": "writable_file_upload",
     "文件上传": "writable_file_upload",
@@ -92,6 +106,8 @@ _TYPE_ALIASES: dict[str, str] = {
     "metadata capable ssrf": "ssrf_metadata",
     "authentication bypass": "authentication_bypass",
     "认证绕过": "authentication_bypass",
+    "authentication or authorization bypass": "authentication_or_authorization_bypass",
+    "认证或授权绕过": "authentication_or_authorization_bypass",
     "authorization bypass": "authorization_bypass",
     "access control bypass": "authorization_bypass",
     "越权": "authorization_bypass",
@@ -129,25 +145,48 @@ _TYPE_ALIASES: dict[str, str] = {
     "可获取到权限的漏洞": "privilege_acquisition",
     "可获取权限": "privilege_acquisition",
     "权限提升": "privilege_acquisition",
+    "default credentials": "default_credentials",
+    "默认凭据": "default_credentials",
+    "session issue": "session_management",
+    "session management": "session_management",
+    "会话问题": "session_management",
+    "file read": "file_read_write",
+    "file write": "file_read_write",
+    "file read write": "file_read_write",
+    "文件读取": "file_read_write",
+    "文件写入": "file_read_write",
+    "文件读写": "file_read_write",
+    "invalid certificate": "invalid_certificate",
+    "certificate invalid": "invalid_certificate",
+    "证书无效": "invalid_certificate",
+    "banner": "banner_disclosure",
+    "服务版本暴露": "banner_disclosure",
+    "captcha bypass": "captcha_bypass",
+    "验证码绕过": "captcha_bypass",
+    "rate limit bypass": "rate_limit_bypass",
+    "限流绕过": "rate_limit_bypass",
+    "cors": "cors_misconfiguration",
+    "跨域配置": "cors_misconfiguration",
+    "open redirect": "open_redirect",
+    "开放重定向": "open_redirect",
 }
 
-_BLACKLISTED_TYPES = frozenset(
+_LOW_PRIORITY_TYPES = frozenset(
     {
+        "invalid_certificate",
+        "weak_tls",
+        "tls_weakness",
+        "banner_disclosure",
+        "missing_security_headers",
+        "clickjacking",
         "xss",
         "dom_xss",
         "reflected_xss",
         "stored_xss",
-        "csrf",
-        "clickjacking",
-        "weak_tls",
-        "tls_weakness",
-        "sensitive_information_disclosure",
-        "path_traversal",
-        "missing_security_headers",
     }
 )
 
-_BLACKLIST_ALIASES: dict[str, str] = {
+_LOW_PRIORITY_ALIASES: dict[str, str] = {
     "xss": "xss",
     "dom xss": "dom_xss",
     "dom-based xss": "dom_xss",
@@ -181,6 +220,58 @@ _BLACKLIST_ALIASES: dict[str, str] = {
     "missing security header": "missing_security_headers",
 }
 
+_CONDITIONAL_PRIORITY_TYPES = frozenset(
+    {
+        "captcha_bypass",
+        "rate_limit_bypass",
+        "cors_misconfiguration",
+        "csrf",
+        "open_redirect",
+        "writable_file_upload",
+        "path_traversal",
+    }
+)
+
+_HIGH_PRIORITY_TYPES = frozenset(
+    {
+        "rce",
+        "injection",
+        "sqli",
+        "stacked_query_sqli",
+        "deserialization",
+        "ssrf_metadata",
+        "authentication_bypass",
+        "authorization_bypass",
+        "authentication_or_authorization_bypass",
+        "idor_bola",
+        "exposed_admin_function",
+        "cloud_storage_unauthorized_access",
+        "cloud_storage_writable",
+        "business_logic_unauthorized_action",
+        "credential_exposure_observed",
+        "privilege_acquisition",
+        "default_credentials",
+        "session_management",
+        "sensitive_information_disclosure",
+        "file_read_write",
+    }
+)
+
+_ATTACK_CHAIN_TYPES = _HIGH_PRIORITY_TYPES | _CONDITIONAL_PRIORITY_TYPES
+_DESTRUCTIVE_ACTION_MARKERS = (
+    "delete",
+    "destroy",
+    "drop",
+    "purge",
+    "shutdown",
+    "terminate",
+    "wipe",
+    "删除",
+    "销毁",
+    "清空",
+    "停机",
+)
+
 
 def normalize_mode(value: object) -> SecurityMode:
     """Normalize a configured security mode or reject an invalid value."""
@@ -197,12 +288,12 @@ def _normalize_label(value: object) -> str:
 
 
 def normalize_vulnerability_type(value: object) -> str | None:
-    """Return a canonical type, a canonical blacklist type, or ``None``."""
+    """Return a canonical type or ``None`` when classification is unavailable."""
     normalized = _normalize_label(value)
     if not normalized:
         return None
-    if normalized in _BLACKLIST_ALIASES:
-        return _BLACKLIST_ALIASES[normalized]
+    if normalized in _LOW_PRIORITY_ALIASES:
+        return _LOW_PRIORITY_ALIASES[normalized]
     if normalized in _TYPE_ALIASES:
         return _TYPE_ALIASES[normalized]
     compact = normalized.replace(" ", "")
@@ -220,6 +311,8 @@ def normalize_vulnerability_type(value: object) -> str | None:
         return "reflected_xss"
     if compact in {"storedxss", "存储型xss"}:
         return "stored_xss"
+    if "injection" in compact or "注入" in compact:
+        return "injection"
     if compact in {"pathtraversal", "路径遍历"}:
         return "path_traversal"
     if compact in {"csrf"} or "跨站请求伪造" in compact:
@@ -234,6 +327,14 @@ def normalize_vulnerability_type(value: object) -> str | None:
         return "path_traversal"
     if "disclosure" in compact or "泄露" in compact or "泄漏" in compact:
         return "sensitive_information_disclosure"
+    if "captcha" in compact or "验证码" in compact:
+        return "captcha_bypass"
+    if "rate" in compact and "limit" in compact:
+        return "rate_limit_bypass"
+    if "cors" in compact or "跨域" in compact:
+        return "cors_misconfiguration"
+    if "redirect" in compact or "重定向" in compact:
+        return "open_redirect"
     return None
 
 
@@ -265,55 +366,153 @@ def has_credential_observation(impact: object) -> bool:
     )
 
 
+def assess_action_risk(
+    method: object,
+    url: object,
+    *,
+    mode: SecurityMode = NORMAL_MODE,
+) -> dict[str, object]:
+    """Apply the red-team action boundary independently of finding labels.
+
+    Ordinary in-scope requests remain allowed even when their finding type is
+    unknown.  Clearly destructive HTTP actions are denied in red-team mode;
+    scope enforcement is performed by the proxy layer because it owns the
+    authoritative target patterns.
+    """
+    resolved_mode = normalize_mode(mode)
+    if resolved_mode != REDTEAM_MODE:
+        return {"allowed": True, "risk": "unrestricted", "reason": "非红队专项模式"}
+    method_text = str(method or "").strip().upper()
+    url_text = str(url or "").strip().lower()
+    is_dry_run = any(marker in url_text for marker in ("dry-run", "dry_run", "preview"))
+    path_is_destructive = any(
+        (
+            re.search(rf"(?<![a-z]){re.escape(marker)}(?![a-z])", url_text) is not None
+            if marker.isascii()
+            else marker in url_text
+        )
+        for marker in _DESTRUCTIVE_ACTION_MARKERS
+    )
+    if method_text == "DELETE" or (path_is_destructive and not is_dry_run):
+        return {
+            "allowed": False,
+            "risk": "destructive",
+            "reason": "红队专项策略拒绝不可逆或明显破坏性操作；请改用 dry-run 或单个可清理测试对象",
+        }
+    return {
+        "allowed": True,
+        "risk": "bounded",
+        "reason": "请求未命中破坏性动作边界，仍需通过目标作用域检查",
+    }
+
+
+def classify_test_priority(
+    vulnerability_type: object,
+    *,
+    impact: str | None = None,
+) -> dict[str, object]:
+    """Classify testing value without authorizing or rejecting a request.
+
+    The result is intentionally advisory.  An unknown type gets normal
+    priority so the agent can still test it when the action is safe and in
+    scope.  Conditional types become high priority only when their impact
+    reaches authentication, authorization, or sensitive data.
+    """
+    normalized = normalize_vulnerability_type(vulnerability_type)
+    if normalized in _LOW_PRIORITY_TYPES:
+        return {
+            "priority": "low",
+            "reason": "效率策略：低价值配置或展示类问题，默认延后验证",
+            "canonical_type": normalized,
+        }
+    if normalized in _CONDITIONAL_PRIORITY_TYPES:
+        escalated = has_verified_access_impact(impact) or has_verified_privilege_impact(impact)
+        return {
+            "priority": "high" if escalated else "low",
+            "reason": (
+                "条件升级：影响认证、授权或敏感数据访问"
+                if escalated
+                else "效率策略：除非影响认证、授权或敏感数据，否则延后验证"
+            ),
+            "canonical_type": normalized,
+        }
+    if normalized in _HIGH_PRIORITY_TYPES:
+        return {
+            "priority": "high",
+            "reason": "专项策略：可能形成权限获取或高影响攻击链",
+            "canonical_type": normalized,
+        }
+    if has_verified_access_impact(impact) or has_verified_privilege_impact(impact):
+        return {
+            "priority": "high",
+            "reason": "影响证明显示该问题可能形成权限或敏感数据攻击链",
+            "canonical_type": normalized,
+        }
+    return {
+        "priority": "normal",
+        "reason": "未分类问题：保留测试和报告资格，由请求风险及目标范围决定是否执行",
+        "canonical_type": normalized,
+    }
+
+
+def is_attack_chain_eligible(
+    vulnerability_type: object,
+    *,
+    severity: str | None = None,
+    impact: str | None = None,
+) -> bool:
+    """Return whether a finding may enter the red-team attack-chain view."""
+    if str(severity or "").strip().lower() not in {"critical", "high"}:
+        return False
+    normalized = normalize_vulnerability_type(vulnerability_type)
+    if normalized not in _ATTACK_CHAIN_TYPES:
+        return False
+    if normalized in _LOW_PRIORITY_TYPES:
+        return False
+    if normalized in {"privilege_acquisition"} and not has_verified_privilege_impact(impact):
+        return False
+    if normalized in {
+        "authentication_bypass",
+        "authorization_bypass",
+        "authentication_or_authorization_bypass",
+        "idor_bola",
+        "exposed_admin_function",
+        "cloud_storage_unauthorized_access",
+        "cloud_storage_writable",
+        "business_logic_unauthorized_action",
+        "default_credentials",
+        "session_management",
+        "captcha_bypass",
+        "rate_limit_bypass",
+        "cors_misconfiguration",
+        "csrf",
+        "open_redirect",
+        "path_traversal",
+        "writable_file_upload",
+        "sensitive_information_disclosure",
+        "file_read_write",
+    } and not (has_verified_access_impact(impact) or has_verified_privilege_impact(impact)):
+        return False
+    if normalized == "credential_exposure_observed" and not has_credential_observation(impact):
+        return False
+    return True
+
+
 def should_ignore(
     vuln_type: str,
     *,
     mode: SecurityMode = NORMAL_MODE,
     impact: str | None = None,
 ) -> bool:
-    """Return whether a test intent or finding must be discarded.
+    """Compatibility helper for the attack-chain projection only.
 
-    Normal mode retains existing behaviour.  Red-team mode permits only known
-    allowlisted types; unknown types and privilege claims without a concrete
-    impact proof are rejected.
+    This function must not be used to gate network actions or report writes.
+    Call :func:`classify_test_priority` for scheduling and
+    :func:`is_attack_chain_eligible` for the final chain projection.
     """
-    resolved_mode = normalize_mode(mode)
-    if resolved_mode in {NORMAL_MODE, VERIFY_MODE}:
+    if normalize_mode(mode) in {NORMAL_MODE, VERIFY_MODE}:
         return False
-
-    normalized = normalize_vulnerability_type(vuln_type)
-    if normalized is None or normalized in _BLACKLISTED_TYPES:
-        return True
-    if normalized == "privilege_acquisition" and not has_verified_privilege_impact(impact):
-        return True
-    if normalized in {
-        "authentication_bypass",
-        "authorization_bypass",
-        "idor_bola",
-        "exposed_admin_function",
-        "cloud_storage_unauthorized_access",
-        "cloud_storage_writable",
-        "business_logic_unauthorized_action",
-    } and not has_verified_access_impact(impact):
-        return True
-    if normalized == "credential_exposure_observed" and not has_credential_observation(impact):
-        return True
-    return normalized not in {
-        "rce",
-        "writable_file_upload",
-        "stacked_query_sqli",
-        "deserialization",
-        "ssrf_metadata",
-        "privilege_acquisition",
-        "authentication_bypass",
-        "authorization_bypass",
-        "idor_bola",
-        "exposed_admin_function",
-        "cloud_storage_unauthorized_access",
-        "cloud_storage_writable",
-        "business_logic_unauthorized_action",
-        "credential_exposure_observed",
-    }
+    return not is_attack_chain_eligible(vuln_type, severity="high", impact=impact)
 
 
 def policy_context(mode: SecurityMode) -> dict[str, object]:
@@ -322,6 +521,8 @@ def policy_context(mode: SecurityMode) -> dict[str, object]:
     return {
         "security_mode": resolved_mode,
         "redteam_policy_version": POLICY_VERSION if resolved_mode == REDTEAM_MODE else None,
-        "redteam_fail_closed": resolved_mode == REDTEAM_MODE,
+        "redteam_fail_closed": False,
+        "redteam_action_policy": "scope-and-action-risk",
+        "redteam_priority_policy": "impact-aware",
         "verification_mode": resolved_mode == VERIFY_MODE,
     }

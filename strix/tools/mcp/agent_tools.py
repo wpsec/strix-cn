@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from agents import RunContextWrapper, function_tool
 
-from strix.redteam.policy import normalize_mode, should_ignore
+from strix.core.proxy_scope import host_matches_scope
+from strix.redteam.policy import assess_action_risk, normalize_mode
 from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import MCP_REGISTRY_CONTEXT_KEY, McpRegistry
@@ -55,6 +57,32 @@ def _format_tool(tool: MCPTool) -> str:
     schema = json.dumps(tool.inputSchema or {"type": "object"}, indent=2, ensure_ascii=False)
     description = (tool.description or "").strip() or "(no description)"
     return f"- {tool.name}: {description}\n  input schema:\n{schema}"
+
+
+def _mcp_scope_error(context: dict[str, Any], arguments: dict[str, Any]) -> str | None:
+    """Check URL-like MCP arguments when the run supplied explicit host scope."""
+    allowlist = [
+        str(pattern)
+        for pattern in context.get("caido_scope_allowlist", []) or []
+        if isinstance(pattern, str) and pattern
+    ]
+    denylist = [
+        str(pattern)
+        for pattern in context.get("caido_scope_denylist", []) or []
+        if isinstance(pattern, str) and pattern
+    ]
+    if not (allowlist or denylist):
+        return None
+    for key in ("url", "target_url", "endpoint", "target"):
+        value = arguments.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        parsed = urlparse(value.strip())
+        if not parsed.hostname:
+            continue
+        if not host_matches_scope(parsed.hostname, allowlist=allowlist, denylist=denylist):
+            return f"MCP 目标主机 {parsed.hostname} 不在当前 Strix 作用域内，已拒绝调用"
+    return None
 
 
 @function_tool(timeout=60)
@@ -141,27 +169,15 @@ async def call_mcp(
             takes none. Pass an object, not a stringified one. Its shape is
             whatever ``describe_mcp`` showed for the tool rather than a shape this
             tool fixes in advance.
-        vulnerability_type: Canonical red-team vulnerability type for a target-side
-            action. Required in red-team mode; unknown and denied types are skipped.
-        impact: Concrete identity or privilege proof when the type is privilege
-            acquisition.
+        vulnerability_type: Optional finding label used for correlation and
+            prioritization. It does not authorize or deny the MCP call.
+        impact: Optional impact context used to prioritize the associated finding.
     """
     context = ctx.context if isinstance(ctx.context, dict) else {}
     try:
         mode = normalize_mode(context.get("security_mode", "normal"))
     except ValueError:
         mode = "redteam"
-    if mode == "redteam" and should_ignore(
-        vulnerability_type or "",
-        mode=mode,
-        impact=impact,
-    ):
-        return {
-            "success": False,
-            "skipped": True,
-            "error": "红队专项策略已拒绝该 MCP 测试意图，未发送请求",
-        }
-
     registry = _registry_from_ctx(ctx)
     if registry is None or not registry:
         return _NO_CONNECTIONS
@@ -184,6 +200,21 @@ async def call_mcp(
             return invalid_arguments
     if arguments is not None and not isinstance(arguments, dict):
         return invalid_arguments
+    scope_error = _mcp_scope_error(context, arguments or {})
+    if scope_error is not None:
+        return {"success": False, "skipped": True, "error": scope_error, "risk": "out_of_scope"}
+    action = assess_action_risk(
+        tool,
+        json.dumps(arguments or {}, ensure_ascii=False, sort_keys=True, default=str),
+        mode=mode,
+    )
+    if not bool(action["allowed"]):
+        return {
+            "success": False,
+            "skipped": True,
+            "error": str(action["reason"]),
+            "risk": action["risk"],
+        }
     try:
         available = await entry.session.list_tools()
     except McpConnectionUnavailableError as exc:

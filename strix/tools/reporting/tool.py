@@ -934,10 +934,14 @@ async def _do_create(  # noqa: PLR0912
     else:
         if not report_id:
             return {
-                "success": True,
-                "skipped": True,
-                "message": "该结果不符合当前安全策略，已静默跳过",
+                "success": False,
+                "error": "报告状态未返回 report_id，无法确认是否已落盘；未静默跳过",
             }
+        stored_report = next(
+            (report for report in report_state.get_existing_vulnerabilities()
+             if report.get("id") == report_id),
+            {},
+        )
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
             report_id,
@@ -951,6 +955,7 @@ async def _do_create(  # noqa: PLR0912
             "report_id": report_id,
             "severity": severity,
             "cvss_score": cvss_score,
+            "redteam_policy": stored_report.get("redteam_policy"),
         }
 
 
@@ -967,6 +972,45 @@ def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
             raw_agent_name = names.get(agent_id)
             agent_name = raw_agent_name if isinstance(raw_agent_name, str) else None
     return agent_id, agent_name
+
+
+@function_tool(timeout=30)
+async def record_redteam_skip(
+    ctx: RunContextWrapper,
+    reason: str,
+    vulnerability_type: str | None = None,
+    target: str | None = None,
+    impact: str | None = None,
+) -> str:
+    """Record a deferred low-priority red-team check without filing a finding.
+
+    Use this when efficiency policy postpones a check before any target request
+    is sent.  A check that produced evidence must use
+    ``create_vulnerability_report`` instead, even when its type is unknown or
+    its severity is medium/low.
+    """
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return json.dumps(
+            {"success": False, "error": "报告状态不可用，无法记录红队专项跳过项"},
+            ensure_ascii=False,
+        )
+    agent_id, agent_name = _caller_identity(ctx)
+    try:
+        entry = await asyncio.to_thread(
+            report_state.record_redteam_skip,
+            vulnerability_type=vulnerability_type,
+            reason=reason,
+            target=target,
+            impact=impact,
+            agent_id=agent_id,
+            agent_name=agent_name,
+        )
+    except (TypeError, ValueError) as exc:
+        return json.dumps({"success": False, "error": str(exc)}, ensure_ascii=False)
+    return json.dumps({"success": True, "skip": entry}, ensure_ascii=False, default=str)
 
 
 @function_tool(timeout=180, strict_mode=False)
@@ -1366,7 +1410,7 @@ async def create_vulnerability_report(
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
         cvss_4_vector: Optional validated CVSS 4.0 base vector. If omitted,
-            the Markdown report explicitly marks CVSS 4.0 as unavailable.
+            the Markdown report explicitly marks CVSS 4.0 as not calculated.
         discovery_trace: Ordered discovery chain from the first page or JS
             observation through extracted routes, the vulnerability hypothesis
             and the supporting evidence. Each row may contain ``stage``,
@@ -2260,6 +2304,9 @@ _REPORT_SUMMARY_FIELDS = (
     "fix_effort",
     "agent_name",
     "timestamp",
+    "vulnerability_type_raw",
+    "vulnerability_type",
+    "redteam_policy",
 )
 
 

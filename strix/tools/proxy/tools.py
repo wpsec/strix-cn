@@ -10,11 +10,12 @@ import re
 from dataclasses import is_dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlparse
 
 from agents import RunContextWrapper, function_tool
 
 from strix.core.proxy_scope import host_matches_scope
-from strix.redteam.policy import normalize_mode, should_ignore
+from strix.redteam.policy import assess_action_risk, normalize_mode
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy import caido_api
@@ -94,32 +95,6 @@ def _ctx_scope_patterns(ctx: RunContextWrapper) -> tuple[list[str], list[str]]:
     allow = [str(pattern) for pattern in allowlist if isinstance(pattern, str) and pattern]
     deny = [str(pattern) for pattern in denylist if isinstance(pattern, str) and pattern]
     return allow, deny
-
-
-def _redteam_request_denial(
-    ctx: RunContextWrapper,
-    vulnerability_type: str | None,
-    impact: str | None,
-) -> str | None:
-    inner = ctx.context if isinstance(ctx.context, dict) else {}
-    try:
-        mode = normalize_mode(inner.get("security_mode", "normal"))
-    except ValueError:
-        mode = "redteam"
-    if mode != "redteam" or not should_ignore(
-        vulnerability_type or "",
-        mode=mode,
-        impact=impact,
-    ):
-        return None
-    return json.dumps(
-        {
-            "success": False,
-            "skipped": True,
-            "error": "红队专项策略已拒绝该测试意图，未发送请求",
-        },
-        ensure_ascii=False,
-    )
 
 
 def _ctx_proxy_feature_cutoff(ctx: RunContextWrapper) -> str | None:
@@ -515,15 +490,10 @@ async def repeat_request(
             - ``headers`` — dict of headers to add/update.
             - ``body`` — replace the body string entirely.
             - ``cookies`` — dict of cookies to add/update.
-        vulnerability_type: Canonical red-team vulnerability type for the replay.
-            Required in red-team mode; unknown and denied types are skipped.
-        impact: Concrete identity or privilege proof when the type is privilege
-            acquisition.
+        vulnerability_type: Optional finding label used for report correlation.
+            It does not authorize or deny the replay.
+        impact: Optional impact context used to prioritize the associated finding.
     """
-    denial = _redteam_request_denial(ctx, vulnerability_type, impact)
-    if denial is not None:
-        return denial
-
     client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
@@ -549,6 +519,30 @@ async def repeat_request(
         components = caido_api.parse_raw_request(raw_str)
         full_url = caido_api.full_url_from_components(original, components, mods)
         modified = caido_api.apply_modifications(components, mods, full_url)
+        try:
+            mode = normalize_mode(
+                ctx.context.get("security_mode", "normal")
+                if isinstance(ctx.context, dict)
+                else "normal"
+            )
+        except ValueError:
+            mode = "redteam"
+        action = assess_action_risk(
+            modified["method"],
+            modified["url"],
+            mode=mode,
+        )
+        if not bool(action["allowed"]):
+            raise ValueError(str(action["reason"]))
+        modified_host = urlparse(str(modified["url"])).hostname or ""
+        if (allowlist or denylist) and not host_matches_scope(
+            modified_host,
+            allowlist=allowlist,
+            denylist=denylist,
+        ):
+            raise ValueError(
+                f"修改后的目标主机 {modified_host} 不在当前 Strix 代理作用域内，已拒绝重放"
+            )
         connection, raw = caido_api.build_raw_request(
             method=modified["method"],
             url=modified["url"],

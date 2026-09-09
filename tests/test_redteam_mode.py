@@ -13,7 +13,7 @@ from strix.agents import factory
 from strix.agents.prompt import render_system_prompt
 from strix.redteam.attack_chain import build_attack_chain
 from strix.redteam.depth import RedTeamDepthController, RedTeamDepthError
-from strix.redteam.policy import should_ignore
+from strix.redteam.policy import assess_action_risk, classify_test_priority, should_ignore
 from strix.report.html_report import render_html_report
 from strix.report.state import ReportState
 from strix.report.writer import render_complete_report, render_vulnerability_md
@@ -26,7 +26,7 @@ from strix.tools.reporting.tool import _calculate_cvss4
     ("vulnerability_type", "expected_ignore"),
     [
         ("RCE", False),
-        ("writable_file_upload", False),
+        ("writable_file_upload", True),
         ("堆叠查询 SQL 注入", False),
         ("反序列化", False),
         ("可窃取元数据的 SSRF", False),
@@ -36,7 +36,7 @@ from strix.tools.reporting.tool import _calculate_cvss4
         ("unknown finding", True),
     ],
 )
-def test_redteam_policy_is_allowlist_and_fail_closed(
+def test_redteam_chain_projection_keeps_unknown_and_low_value_out(
     vulnerability_type: str, expected_ignore: bool
 ) -> None:
     assert should_ignore(vulnerability_type, mode="redteam") is expected_ignore
@@ -69,6 +69,32 @@ def test_redteam_expanded_scope_requires_concrete_safe_impact(
 
 def test_normal_mode_preserves_existing_report_selection() -> None:
     assert should_ignore("未知类型", mode="normal") is False
+
+
+@pytest.mark.parametrize(
+    ("vulnerability_type", "impact", "priority"),
+    [
+        ("证书无效", None, "low"),
+        ("验证码绕过", "普通表单提交被接受", "low"),
+        ("验证码绕过", "绕过后成功登录后台", "high"),
+        ("未知业务问题", None, "normal"),
+        ("认证绕过", "成功登录后台并访问管理接口", "high"),
+    ],
+)
+def test_redteam_priority_guides_without_becoming_a_gate(
+    vulnerability_type: str, impact: str | None, priority: str
+) -> None:
+    result = classify_test_priority(vulnerability_type, impact=impact)
+    assert result["priority"] == priority
+
+
+def test_redteam_action_policy_is_independent_of_finding_type() -> None:
+    assert assess_action_risk("POST", "https://target.test/api/unknown", mode="redteam")[
+        "allowed"
+    ] is True
+    assert assess_action_risk("DELETE", "https://target.test/api/item", mode="redteam")[
+        "allowed"
+    ] is False
 
 
 def test_resuming_stale_redteam_policy_is_rejected() -> None:
@@ -129,10 +155,12 @@ def test_depth_controller_records_complete_credential_proofs() -> None:
 def test_redteam_prompt_is_versioned_and_safe() -> None:
     prompt = render_system_prompt(mode="redteam", scan_mode="quick", is_root=True)
     assert "REDTEAM SPECIAL MODE IS ACTIVE" in prompt
-    assert "redteam-v3" in prompt
+    assert "redteam-v4" in prompt
     assert "Never create or deploy Webshells" in prompt
     assert "reverse-shell" in prompt
     assert "exact field or file location" in prompt
+    assert "Unknown categories remain testable" in prompt
+    assert "Every observed finding must be reported" in prompt
 
 
 @pytest.mark.asyncio
@@ -159,7 +187,7 @@ async def test_shell_network_requests_are_blocked_before_transport() -> None:
 
 
 @pytest.mark.asyncio
-async def test_proxy_replay_denies_unknown_type_before_client_lookup() -> None:
+async def test_proxy_replay_does_not_deny_unknown_type_before_client_lookup() -> None:
     result = await proxy_tools.repeat_request.on_invoke_tool(
         cast(
             "Any",
@@ -172,12 +200,12 @@ async def test_proxy_replay_denies_unknown_type_before_client_lookup() -> None:
         json.dumps({"request_id": "request-1"}),
     )
     parsed = json.loads(result)
-    assert parsed["skipped"] is True
-    assert "未发送请求" in parsed["error"]
+    assert parsed["success"] is False
+    assert "红队专项策略" not in parsed["error"]
 
 
 @pytest.mark.asyncio
-async def test_mcp_target_action_denies_unknown_type_before_dispatch() -> None:
+async def test_mcp_target_action_does_not_deny_unknown_type_before_dispatch() -> None:
     result = await mcp_agent_tools.call_mcp.on_invoke_tool(
         cast(
             "Any",
@@ -195,24 +223,28 @@ async def test_mcp_target_action_denies_unknown_type_before_dispatch() -> None:
             }
         ),
     )
-    assert result["skipped"] is True
-    assert "未发送请求" in result["error"]
+    assert isinstance(result, str)
+    assert "红队专项策略" not in result
 
 
-def test_report_state_filters_and_builds_redteam_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_report_state_persists_all_findings_and_builds_separate_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     state = ReportState(run_name="redteam-test")
     state.set_scan_config({"mode": "redteam", "targets": [], "scan_mode": "quick"})
     monkeypatch.setattr(state, "save_run_data", lambda: None)
 
-    assert (
-        state.add_vulnerability_report(
-            "ignored xss",
-            "high",
-            vulnerability_type="stored xss",
-            evidence="should not persist",
-        )
-        == ""
+    low_report_id = state.add_vulnerability_report(
+        "observed xss",
+        "high",
+        vulnerability_type="stored xss",
+        evidence="observed marker in response",
     )
+    assert low_report_id == "vuln-0001"
+    low_report = state.vulnerability_reports[0]
+    assert low_report["vulnerability_type_raw"] == "stored xss"
+    assert low_report["redteam_policy"]["priority"] == "low"
+
     report_id = state.add_vulnerability_report(
         "Verified RCE",
         "high",
@@ -223,9 +255,39 @@ def test_report_state_filters_and_builds_redteam_chain(monkeypatch: pytest.Monke
         request="Authorization: Bearer placeholder-value\nGET /run",
         response='{"token":"placeholder-value","ok":true}',
     )
-    assert report_id == "vuln-0001"
-    assert len(state.vulnerability_reports) == 1
+    assert report_id == "vuln-0002"
+    assert len(state.vulnerability_reports) == 2
     assert "placeholder-value" in json.dumps(state.vulnerability_reports)
+    assert len(build_attack_chain(state.vulnerability_reports)["nodes"]) == 1
+
+    markdown = render_complete_report(
+        "# 执行摘要\n\n已完成",
+        run_record={"mode": "redteam", "policy_version": "redteam-v4"},
+        vulnerability_reports=state.vulnerability_reports,
+    )
+    html = render_html_report(
+        final_scan_result="# 执行摘要\n\n已完成",
+        run_record={"mode": "redteam", "policy_version": "redteam-v4"},
+        vulnerability_reports=state.vulnerability_reports,
+    )
+    assert "observed xss" in markdown
+    assert "已落盘，暂未纳入攻击链" in markdown
+    assert "observed xss" in html
+
+    skip = state.record_redteam_skip(
+        vulnerability_type="证书无效",
+        reason="低价值传输配置检查，当前优先验证认证和授权边界",
+        target="https://staging.example.invalid",
+    )
+    assert skip["status"] == "not_executed"
+    assert state.run_record["redteam_skipped_tests"][0]["reason"].startswith("低价值")
+    markdown = render_complete_report(
+        "# 执行摘要\n\n已完成",
+        run_record=state.run_record,
+        vulnerability_reports=state.vulnerability_reports,
+    )
+    assert "效率策略跳过项" in markdown
+    assert "低价值传输配置检查" in markdown
 
 
 def test_normal_mode_preserves_report_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -313,6 +375,7 @@ def test_attack_chain_and_delivery_renderers_filter_and_preserve_redteam_evidenc
         "title": "Verified upload",
         "severity": "high",
         "vulnerability_type": "writable_file_upload",
+        "impact": "验证未授权写入随机 marker 并已清理",
         "evidence": "marker persisted",
         "request": "Cookie: session=placeholder-value",
         "response": "HTTP/1.1 201 Created",
@@ -336,7 +399,7 @@ def test_attack_chain_and_delivery_renderers_filter_and_preserve_redteam_evidenc
         run_record=redteam_record,
         vulnerability_reports=[report],
     )
-    assert "红队专项攻击链报告" in markdown
+    assert "红队专项安全验证报告" in markdown
     for heading in (
         "一、漏洞名称",
         "二、漏洞等级与 CVSS 4.0",
@@ -351,7 +414,7 @@ def test_attack_chain_and_delivery_renderers_filter_and_preserve_redteam_evidenc
         "十一、证据限制与待确认事项",
     ):
         assert heading in markdown
-    assert "CVSS 4.0：未提供真实 CVSS 4.0" in markdown
+    assert "CVSS 4.0：未计算真实 CVSS 4.0" in markdown
     assert "攻击链路图" in html
     assert "placeholder-value" in markdown
     assert "placeholder-value" in html

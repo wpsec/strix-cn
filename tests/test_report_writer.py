@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from strix.report.html_report import render_html_report
+from strix.report.state import ReportState
 from strix.report.writer import (
     atomic_write_text,
     read_run_record,
@@ -139,6 +140,93 @@ def test_render_vulnerability_md_includes_discovery_matrix_and_replay_request() 
         assert "Cookie: sid=demo-cookie" in rendered
     assert '{"orderId":"other-user-order"}' in markdown
     assert "&quot;orderId&quot;:&quot;other-user-order&quot;" in html
+
+
+def test_report_evidence_uses_replay_rows_and_exposes_gaps_without_fake_http_data() -> None:
+    raw_request = "GET /api/profile HTTP/1.1\nHost: app.example.com\n\n"
+    report = _sample_report(
+        request=None,
+        response=None,
+        reproduction_requests=[
+            {
+                "name": "主验证",
+                "request": raw_request,
+                "observed_response": "HTTP 200 with another user's profile",
+            }
+        ],
+    )
+
+    markdown = render_vulnerability_md(report)
+    html = render_html_report(
+        final_scan_result=None,
+        run_record={"run_name": "evidence-gap", "status": "completed"},
+        vulnerability_reports=[report],
+    )
+
+    assert "GET /api/profile HTTP/1.1\nHost: app.example.com" in markdown
+    assert "HTTP 200 with another user's profile" in markdown
+    assert "未提供请求数据" not in markdown
+    assert "证据缺口" not in markdown
+    assert "GET /api/profile HTTP/1.1" in html
+    assert "HTTP 200 with another user&#x27;s profile" in html or "HTTP 200 with another user's profile" in html
+
+    incomplete = _sample_report(request=None, response=None)
+    incomplete_markdown = render_vulnerability_md(incomplete)
+    incomplete_html = render_html_report(
+        final_scan_result=None,
+        run_record={"run_name": "incomplete-evidence", "status": "completed"},
+        vulnerability_reports=[incomplete],
+    )
+    assert "证据缺口" in incomplete_markdown
+    assert "未提供请求数据" not in incomplete_markdown
+    assert "证据缺口" in incomplete_html
+
+
+def test_dependency_report_marks_http_evidence_not_applicable() -> None:
+    report = _sample_report(
+        finding_class="dependency_cve",
+        dependency_metadata={"package_name": "demo", "installed_version": "1.0.0"},
+        request=None,
+        response=None,
+    )
+
+    markdown = render_vulnerability_md(report)
+    html = render_html_report(
+        final_scan_result=None,
+        run_record={"run_name": "dependency-evidence", "status": "completed"},
+        vulnerability_reports=[report],
+    )
+
+    assert "不适用：该发现基于依赖公告和版本证据" in markdown
+    assert "未提供请求数据" not in markdown
+    assert "不适用：该发现基于依赖公告和版本证据" in html
+
+
+def test_report_state_backfills_top_level_http_evidence_from_replay_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = ReportState(run_name="replay-backfill")
+    state.set_scan_config({"mode": "normal", "targets": [], "scan_mode": "quick"})
+    monkeypatch.setattr(state, "save_run_data", lambda: None)
+
+    state.add_vulnerability_report(
+        "Object access control",
+        "high",
+        endpoint="/api/profile",
+        request="未提供请求数据。",
+        response="未提供响应或运行时现象。",
+        reproduction_requests=[
+            {
+                "request": "GET /api/profile HTTP/1.1\nHost: app.example.com",
+                "observed_response": "HTTP 200 with another user's profile",
+            }
+        ],
+    )
+
+    report = state.vulnerability_reports[0]
+    assert report["request"].startswith("GET /api/profile HTTP/1.1")
+    assert report["response"] == "HTTP 200 with another user's profile"
+    assert "未提供" not in json.dumps(report, ensure_ascii=False)
 
 
 def test_token_boundary_reports_completed_and_uncovered_tasks() -> None:

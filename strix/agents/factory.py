@@ -53,6 +53,7 @@ from strix.tools.reporting.tool import (
     create_vulnerability_report,
     get_report,
     list_reports,
+    record_redteam_skip,
     update_vulnerability_report,
 )
 from strix.tools.respond.tool import respond_to_user
@@ -108,8 +109,8 @@ _REDTEAM_NETWORK_COMMAND_RE = re.compile(
 )
 _REDTEAM_NETWORK_COMMAND_MESSAGE = (
     "exec_command: 红队专项模式禁止通过 Shell 直接发起网络请求。"
-    "请先声明已知的白名单 vulnerability_type，并使用受策略保护的请求工具；"
-    "未知类型或黑名单类型会在传输前被拒绝。"
+    "请使用受策略保护的请求工具；请求是否发送由目标作用域和动作风险决定，"
+    "vulnerability_type 只用于优先级和报告归档，未知类型不会单独阻断安全请求。"
 )
 
 
@@ -674,6 +675,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     web_search,
     create_vulnerability_report,
     create_dependency_report,
+    record_redteam_skip,
     update_vulnerability_report,
     list_reports,
     get_report,

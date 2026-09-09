@@ -165,7 +165,7 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 
 ### 红队专项模式
 
-红队专项模式只对已授权目标执行高风险、无害且可审计的安全验证。它使用白名单策略拦截未知和不在专项范围内的测试意图，并将最终 Markdown 报告整理为结构化攻击链和漏洞验证章节。
+红队专项模式只对已授权目标执行受范围和动作风险约束、无害且可审计的安全验证。它按潜在影响安排测试优先级，并将完整发现清单与证据充分的攻击链分别呈现。
 
 ```bash
 # 使用 --red 启动红队专项模式
@@ -180,9 +180,11 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 
 模式选择优先级为：CLI 参数 > `STRIX_MODE` > 持久化配置 > `normal`。扫描开始后模式不可切换，使用 `--resume` 时必须沿用原运行记录中的模式。
 
-报告生成遵循原生 Strix 行为：`normal` 和 `redteam` 的 Markdown、HTML、JSON 及攻击链保留完整验证证据，不替换 Request、Response、PoC 或凭据字段。SARIF 默认只保留 PoC 描述和脚本存在标记；红队专项 SARIF 额外保留完整复核字段。
+报告生成遵循原生 Strix 行为：`normal` 和 `redteam` 的 Markdown、HTML、JSON 及攻击链保留真实验证证据，不用说明性占位文本冒充 Request、Response、PoC 或凭据字段。`reproduction_requests` 中的原始请求和实际响应会回填到报告主证据；静态/依赖发现会明确标记 HTTP 字段不适用，动态发现缺少数据时会标记证据缺口并保留在报告中。SARIF 默认只保留 PoC 描述和脚本存在标记；红队专项 SARIF 额外保留完整复核字段。
 
-红队专项模式允许 RCE、可写文件上传、堆叠查询 SQL 注入、反序列化、受控 SSRF 元数据验证、认证/授权绕过、IDOR/BOLA、暴露的管理功能、云存储未授权访问或可写、高影响业务逻辑和有实际权限影响证明的漏洞类型。凭据类问题记录完整获取材料、原始值、验证结果和权限影响；XSS、CSRF、点击劫持、弱 SSL/TLS、普通敏感信息泄露、缺少安全头和未知类型仍会在请求发出前被拦截。
+红队专项模式优先验证认证绕过、越权/IDOR、默认凭据、会话问题、敏感信息访问、注入、文件读写、命令执行，以及可能获得权限的业务逻辑。无效证书、弱 TLS、Banner、缺少安全响应头、普通 CAPTCHA 绕过和低影响限流问题默认跳过或延后；CAPTCHA、限流、CORS、CSRF、开放重定向、文件上传等问题一旦影响登录、找回密码、权限变更或敏感数据访问，会自动提升优先级。未知类型不因分类缺失而阻断，是否发起请求由目标作用域、动作风险和破坏性决定。
+
+所有已观察到的漏洞都会落盘并进入 Markdown、HTML、JSON、CSV 和 SARIF 产物，即使类型未知、严重度暂低或暂未满足攻击链条件。攻击链只是 High/Critical 且证据充分的独立归档视图；被效率策略跳过的检查会记录“未执行/低优先级”及原因，不会伪装成漏洞或静默丢失。
 
 验证深度限定为身份确认、随机 marker 文件/对象上传并清理、只读 SQL 查询、单个测试对象、dry-run 业务动作和受控 Canary；凭据验证应记录实际验证结果和权限范围。不会生成或投递 Webshell、反弹 Shell、持久化、批量数据收集或真实自动提权流程。
 
@@ -191,7 +193,7 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 ```json
 {
   "mode": "redteam",
-  "policy_version": "redteam-v3"
+  "policy_version": "redteam-v4"
 }
 ```
 
