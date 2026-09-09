@@ -19,11 +19,15 @@ if TYPE_CHECKING:
 
 from strix.interface import cli_args
 from strix.verification import (
+    IntentGenerationError,
+    IntentProbe,
     VerificationCase,
+    VerificationIntent,
     VerificationResult,
     build_verification_plan,
     compare_results,
     executor,
+    parse_intent_response,
     parse_request_text,
 )
 from strix.verification.executor import HttpObservation, execute_plan
@@ -64,7 +68,7 @@ Content-Length: 42
     assert "body.ids[0]" in list_candidate_fields(inferred)
     mutated = set_field(inferred, "body.ids[0]", "1' OR '1'='1")
     assert get_field(mutated, "body.ids[0]") == "1' OR '1'='1"
-    assert '"ids":["1\' OR \'1\'=\'1"]' in mutated.body
+    assert "\"ids\":[\"1' OR '1'='1\"]" in mutated.body
 
     query_secret = parse_request_text(
         "GET https://app.test/search?access_token=query-secret HTTP/1.1\nHost: app.test\n\n"
@@ -143,6 +147,101 @@ def test_planner_infers_supported_types_and_blocks_unsafe_boundaries() -> None:
     )
     assert upload_plan.probes[0].cleanup_required is True
     assert upload_plan.blocked_reason is not None
+
+
+def test_description_driven_intent_uses_request_field_allow_list() -> None:
+    request = parse_request_text(
+        "POST https://app.test/items HTTP/1.1\n"
+        "Host: app.test\n"
+        "Content-Type: application/json\n"
+        "Cookie: session=secret-cookie\n\n"
+        '{"ids":["1"],"note":"hello"}'
+    )
+    raw_intent = json.dumps(
+        {
+            "vulnerability_type": "sqli",
+            "target_fields": ["body.ids[0]"],
+            "probes": [
+                {
+                    "field": "body.ids[0]",
+                    "value": "1' OR '1'='1",
+                    "action": "set",
+                    "role": "true",
+                    "pair_id": "boolean-check",
+                },
+                {
+                    "field": "body.ids[0]",
+                    "value": "1' AND '1'='2",
+                    "action": "set",
+                    "role": "false",
+                    "pair_id": "boolean-check",
+                },
+            ],
+            "oracle_kind": "response_difference",
+            "oracle_description": "真值和假值的响应结构应产生稳定差异。",
+            "rationale": "描述指向 ids 数组中的对象筛选值。",
+            "confidence": 0.91,
+        },
+        ensure_ascii=False,
+    )
+    intent = parse_intent_response(
+        raw_intent,
+        candidate_fields=["body.ids[0]", "body.note", "cookie.session"],
+    )
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="ids 存在 SQL 注入"),
+        intent=intent,
+    )
+    assert plan.planner_source == "llm"
+    assert plan.target_fields == ["body.ids[0]"]
+    assert plan.probes[0].pair_id == "boolean-check"
+    assert plan.probes[0].role == "true"
+    assert plan.max_requests == 3
+    assert "secret-cookie" not in json.dumps(
+        {"request": request.to_dict(redact=True), "intent": intent.rationale}
+    )
+
+
+def test_description_driven_intent_rejects_unknown_fields_and_exfiltration() -> None:
+    base = {
+        "vulnerability_type": "sqli",
+        "target_fields": ["body.ids[0]"],
+        "oracle_kind": "response_difference",
+        "oracle_description": "响应差异",
+        "rationale": "需要对照测试",
+        "confidence": 0.8,
+    }
+    unknown_field = dict(
+        base,
+        probes=[
+            {
+                "field": "body.missing",
+                "value": "1",
+                "action": "set",
+            }
+        ],
+    )
+    with pytest.raises(IntentGenerationError, match="白名单"):
+        parse_intent_response(
+            json.dumps(unknown_field),
+            candidate_fields=["body.ids[0]"],
+        )
+
+    exfiltration = dict(
+        base,
+        probes=[
+            {
+                "field": "body.ids[0]",
+                "value": "1 UNION SELECT password FROM users",
+                "action": "set",
+            }
+        ],
+    )
+    with pytest.raises(IntentGenerationError, match="禁止"):
+        parse_intent_response(
+            json.dumps(exfiltration),
+            candidate_fields=["body.ids[0]"],
+        )
 
 
 def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
@@ -292,11 +391,37 @@ def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
             "Content-Type: application/json\n\n"
             '{"RegId":"1","PatId":"1","ids":["1"]}'
         )
+        intent = VerificationIntent(
+            vulnerability_type="sqli",
+            target_fields=("body.ids[0]",),
+            probes=(
+                IntentProbe(
+                    field="body.ids[0]",
+                    value="1' OR '1'='1",
+                    action="set",
+                    role="true",
+                    pair_id="model-boolean",
+                ),
+                IntentProbe(
+                    field="body.ids[0]",
+                    value="1' AND '1'='2",
+                    action="set",
+                    role="false",
+                    pair_id="model-boolean",
+                ),
+            ),
+            oracle_kind="response_difference",
+            oracle_description="真值和假值的响应结构应产生稳定差异。",
+            rationale="描述指向 ids 数组中的筛选值。",
+            confidence=0.9,
+        )
         plan = build_verification_plan(
-            VerificationCase(request=request, issue_description="ids 存在 SQL 注入")
+            VerificationCase(request=request, issue_description="ids 存在 SQL 注入"),
+            intent=intent,
         )
         assert plan.target_fields[0] == "body.ids[0]"
-        assert plan.max_requests == 7
+        assert plan.planner_source == "llm"
+        assert plan.max_requests == 3
         result = execute_plan(
             plan,
             request,
@@ -307,10 +432,10 @@ def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
         assert result.status == "verified_vulnerable"
         assert [item.probe_id for item in result.evidence][:3] == [
             "control",
-            "sqli-boolean-true",
-            "sqli-boolean-false",
+            "intent-1",
+            "intent-2",
         ]
-        assert '"ids":["1\' OR \'1\'=\'1"]' in result.evidence[1].request
+        assert "\"ids\":[\"1' OR '1'='1\"]" in result.evidence[1].request
     finally:
         server.shutdown()
         thread.join(timeout=5)

@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from strix.core.paths import run_dir_for
 from strix.report.writer import read_run_record, safe_fence, write_run_record
@@ -26,7 +26,11 @@ from strix.verification.planner import build_verification_plan
 from strix.verification.request import parse_request_file
 
 
-VERIFICATION_POLICY_VERSION = "verification-v1"
+if TYPE_CHECKING:
+    from strix.verification.intent import VerificationIntent
+
+
+VERIFICATION_POLICY_VERSION = "verification-v2"
 
 
 def _run_name() -> str:
@@ -105,6 +109,10 @@ def _load_plan(run_dir: Path) -> VerificationPlan:
             requires_side_effect_approval=bool(data.get("requires_side_effect_approval", False)),
             blocked_reason=data.get("blocked_reason"),
             plan_sha256=str(data.get("plan_sha256", "")),
+            planner_source=str(data.get("planner_source", "rules")),
+            intent_rationale=str(data.get("intent_rationale", "")),
+            intent_confidence=float(data.get("intent_confidence", 0.0)),
+            oracle_kind=str(data.get("oracle_kind", "response_difference")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"验证计划格式无效：{exc}") from exc
@@ -137,7 +145,7 @@ def _load_result(run_dir: Path) -> VerificationResult:
         raise ValueError(f"验证结果格式无效：{exc}") from exc
 
 
-def _render_report(
+def _render_report(  # noqa: PLR0912
     *,
     run_name: str,
     plan: VerificationPlan,
@@ -160,19 +168,33 @@ def _render_report(
     lines.extend([f"{original_fence}http", original_request, original_fence, ""])
     lines.extend(
         [
-        "## 问题描述",
-        "",
-        plan.issue_description,
-        "",
-        "## 验证计划",
-        "",
-        f"- 目标字段：{', '.join(plan.target_fields) or '未识别'}",
-        f"- 预计请求数：{plan.max_requests}",
-        f"- 计划哈希：`{plan.plan_sha256}`",
-        f"- 副作用确认：{'需要' if plan.requires_side_effect_approval else '不需要'}",
-        "",
+            "## 问题描述",
+            "",
+            plan.issue_description,
+            "",
+            "## 验证计划",
+            "",
+            f"- 目标字段：{', '.join(plan.target_fields) or '未识别'}",
+            f"- 预计请求数：{plan.max_requests}",
+            f"- 计划哈希：`{plan.plan_sha256}`",
+            f"- 计划来源：{plan.planner_source}"
+            + (f"（置信度 {plan.intent_confidence:.2f}）" if plan.planner_source == "llm" else ""),
+            f"- 副作用确认：{'需要' if plan.requires_side_effect_approval else '不需要'}",
+            "",
         ]
     )
+    if plan.intent_rationale:
+        lines.extend(["## 计划理由", "", plan.intent_rationale, ""])
+    lines.extend(["## 计划探针", ""])
+    if plan.probes:
+        for probe in plan.probes:
+            target = probe.field or "请求级动作"
+            relation = f"，对照组 {probe.pair_id}" if probe.pair_id else ""
+            role = f"，角色 {probe.role}" if probe.role else ""
+            lines.append(f"- {probe.probe_id}：动作 {probe.action}，目标 {target}{relation}{role}")
+    else:
+        lines.append("没有可执行探针。")
+    lines.append("")
     if plan.blocked_reason:
         lines.extend(["## 阻断原因", "", plan.blocked_reason, ""])
     lines.extend(["## 证据要求", ""])
@@ -182,6 +204,31 @@ def _render_report(
         lines.append("没有可用的证据要求。")
     lines.append("")
     lines.extend(["## 验证结论", "", result.summary, ""])
+    if result.status in {"verified_vulnerable", "still_vulnerable"}:
+        lines.extend(
+            [
+                "## 可复现 PoC",
+                "",
+                "以下已执行请求是本次结论对应的最小复现材料；响应状态码、长度和指纹见下方证据摘要。",
+                "；".join(
+                    evidence.probe_id
+                    for evidence in result.evidence
+                    if evidence.probe_id != "control"
+                )
+                or "没有可复制的探针请求",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "## 未复现证明",
+                "",
+                "本次没有形成确认漏洞的证据。下方保留控制请求和全部已执行探针，"
+                "可据此复核请求是否到达目标、响应是否稳定以及判定条件为何未满足。",
+                "",
+            ]
+        )
     if result.comparison:
         lines.extend(["## 修复复测对比", "", result.comparison, ""])
     lines.extend(["## 证据摘要", ""])
@@ -261,6 +308,9 @@ def _persist(
         "verification_baseline_run": baseline_run,
         "verification_type": plan.vulnerability_type,
         "verification_issue": plan.issue_description,
+        "verification_planner_source": plan.planner_source,
+        "verification_oracle": plan.oracle_kind,
+        "verification_intent_confidence": plan.intent_confidence,
     }
     write_run_record(run_dir, record)
     return run_dir
@@ -277,6 +327,7 @@ def run_verification_case(
     secondary_request_file: str | None = None,
     scheme: str | None = None,
     secondary_scheme: str | None = None,
+    intent: VerificationIntent | None = None,
 ) -> tuple[Path, VerificationPlan, VerificationResult]:
     """Build or load a plan, execute it when approved, and persist artifacts."""
     selected_run_name = run_name or _run_name()
@@ -325,7 +376,8 @@ def run_verification_case(
                 request=request,
                 issue_description=issue,
                 supporting_requests=[secondary] if secondary else [],
-            )
+            ),
+            intent=intent,
         )
         result = execute_plan(
             plan,

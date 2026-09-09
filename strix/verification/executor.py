@@ -156,7 +156,7 @@ def _responses_differ(first: HttpObservation, second: HttpObservation) -> bool:
     if abs(len(first.body) - len(second.body)) > 32:
         return True
     try:
-        return _json_shape(json.loads(first.body)) != _json_shape(json.loads(second.body))
+        return bool(_json_shape(json.loads(first.body)) != _json_shape(json.loads(second.body)))
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
 
@@ -165,6 +165,19 @@ def _response_label(observation: HttpObservation | None) -> str:
     if observation is None:
         return "未获得响应"
     return f"HTTP {observation.status_code} / {len(observation.body.encode('utf-8'))} bytes"
+
+
+def _effective_oracle_kind(plan: VerificationPlan) -> str:
+    if plan.schema_version >= 2:
+        return plan.oracle_kind
+    return {
+        "sqli": "response_difference",
+        "idor_bola": "authorization_boundary",
+        "authz_bypass": "authorization_boundary",
+        "command_injection": "identity_marker",
+        "ssrf": "canary_echo",
+        "file_upload": "canary_echo",
+    }.get(plan.vulnerability_type, plan.oracle_kind)
 
 
 def _probe_result(
@@ -184,34 +197,46 @@ def _probe_result(
     )
 
 
-def _assess(  # noqa: PLR0911, PLR0912
-    vulnerability_type: str,
+def _assess(  # noqa: PLR0911, PLR0912, PLR0915
+    plan: VerificationPlan,
     probes: list[ProbeResult],
     observations: dict[str, HttpObservation],
     *,
     issue_description: str,
     probe_values: dict[str, str | None],
 ) -> tuple[VerificationStatus, str]:
+    vulnerability_type = plan.vulnerability_type
+    oracle_kind = _effective_oracle_kind(plan)
     if not probes:
         return "inconclusive", "没有可执行的验证探针"
     if any(result.error for result in probes):
         return "inconclusive", "部分验证请求执行失败，无法形成完整证据"
 
-    if vulnerability_type == "sqli":
+    if oracle_kind == "response_difference" and vulnerability_type == "sqli":
         control_response = observations.get("control")
-        variant_names = (
-            "boolean",
-            "numeric",
-            "parenthesized",
-        )
+        pairs: dict[str, dict[str, str]] = {}
+        for probe in plan.probes:
+            role = probe.role
+            pair_id = probe.pair_id
+            if not pair_id or role not in {"true", "false"}:
+                legacy_match = re.fullmatch(r"sqli-(.+)-(true|false)", probe.probe_id)
+                if legacy_match:
+                    pair_id = pair_id or legacy_match.group(1)
+                    role = role or legacy_match.group(2)
+            if pair_id and role in {"true", "false"}:
+                pairs.setdefault(pair_id, {})[role] = probe.probe_id
         evidence_lines: list[str] = []
-        for variant_name in variant_names:
-            true_response = observations.get(f"sqli-{variant_name}-true")
-            false_response = observations.get(f"sqli-{variant_name}-false")
+        for pair_id, pair in pairs.items():
+            true_probe_id = pair.get("true")
+            false_probe_id = pair.get("false")
+            if not true_probe_id or not false_probe_id:
+                continue
+            true_response = observations.get(true_probe_id)
+            false_response = observations.get(false_probe_id)
             if not true_response or not false_response:
                 continue
             evidence_lines.append(
-                f"{variant_name}: 真值 {_response_label(true_response)}，"
+                f"{pair_id}: 真值 {_response_label(true_response)}，"
                 f"假值 {_response_label(false_response)}"
             )
             differs = _responses_differ(true_response, false_response)
@@ -240,7 +265,10 @@ def _assess(  # noqa: PLR0911, PLR0912
             f"未观察到足以确认 SQL 注入的响应差异；基线 {baseline}；{details}",
         )
 
-    if vulnerability_type in {"idor_bola", "authz_bypass"}:
+    if oracle_kind == "authorization_boundary" and vulnerability_type in {
+        "idor_bola",
+        "authz_bypass",
+    }:
         for result in probes:
             if result.probe_id == "control":
                 continue
@@ -251,7 +279,7 @@ def _assess(  # noqa: PLR0911, PLR0912
                 return "verified_vulnerable", "移除认证信息后仍返回了非空成功响应"
         return "not_reproduced", "未观察到未授权成功访问"
 
-    if vulnerability_type == "command_injection":
+    if oracle_kind == "identity_marker" and vulnerability_type == "command_injection":
         for result in probes:
             if result.probe_id == "control":
                 continue
@@ -259,18 +287,24 @@ def _assess(  # noqa: PLR0911, PLR0912
                 return "verified_vulnerable", "响应包含受控身份确认结果"
         return "not_reproduced", "未观察到身份确认结果"
 
-    if vulnerability_type == "file_upload":
-        marker = probe_values.get("upload-benign-marker")
-        response = observations.get("upload-benign-marker")
-        if marker and response and marker in response.body:
-            return "verified_vulnerable", "响应中返回了上传 marker，可继续复核对象访问边界"
+    if oracle_kind == "canary_echo" and vulnerability_type == "file_upload":
+        for probe in plan.probes:
+            if probe.action != "multipart_marker":
+                continue
+            marker = probe_values.get(probe.probe_id)
+            response = observations.get(probe.probe_id)
+            if marker and response and marker in response.body:
+                return "verified_vulnerable", "响应中返回了上传 marker，可继续复核对象访问边界"
         return "inconclusive", "上传请求已执行，但响应未提供可确认的 marker 证据"
 
-    if vulnerability_type == "ssrf":
-        canary = probe_values.get("ssrf-controlled-canary")
-        response = observations.get("ssrf-controlled-canary")
-        if canary and response and canary in response.body:
-            return "verified_vulnerable", "响应包含受控 Canary 地址"
+    if oracle_kind == "canary_echo" and vulnerability_type == "ssrf":
+        for probe in plan.probes:
+            if probe.action != "set":
+                continue
+            canary = probe_values.get(probe.probe_id)
+            response = observations.get(probe.probe_id)
+            if canary and response and canary in response.body:
+                return "verified_vulnerable", "响应包含受控 Canary 地址"
         return "inconclusive", "未观察到受控 Canary 命中证据"
 
     return "inconclusive", f"未支持的验证类型：{issue_description[:80]}"
@@ -358,7 +392,7 @@ def execute_plan(
             results.append(ProbeResult(probe_id=probe.probe_id, status="error", error=str(exc)))
 
     status, summary = _assess(
-        plan.vulnerability_type,
+        plan,
         results,
         observations,
         issue_description=plan.issue_description,

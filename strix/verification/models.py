@@ -142,7 +142,9 @@ def render_raw_request(request: CanonicalRequest) -> str:
         target = f"{target}?{urlencode(request.query, doseq=True)}"
     headers = dict(request.headers)
     if not any(name.lower() == "host" for name in headers):
-        headers["Host"] = request.host if request.port in {80, 443} else f"{request.host}:{request.port}"
+        headers["Host"] = (
+            request.host if request.port in {80, 443} else f"{request.host}:{request.port}"
+        )
     lines = [f"{request.method} {target} HTTP/1.1"]
     lines.extend(f"{name}: {value}" for name, value in headers.items())
     return "\r\n".join(lines) + "\r\n\r\n" + request.body
@@ -167,6 +169,9 @@ class VerificationProbe:
     requires_secondary_identity: bool = False
     requires_side_effect_approval: bool = False
     cleanup_required: bool = False
+    pair_id: str = ""
+    role: str = ""
+    rationale: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -195,21 +200,41 @@ class VerificationPlan:
     blocked_reason: str | None = None
     plan_sha256: str = ""
     assertions: list[VerificationAssertion] = field(default_factory=list)
+    planner_source: str = "rules"
+    intent_rationale: str = ""
+    intent_confidence: float = 0.0
+    oracle_kind: str = "response_difference"
 
     def payload(self) -> dict[str, Any]:
-        return {
+        probes = [probe.to_dict() for probe in self.probes]
+        if self.schema_version < 2:
+            for probe in probes:
+                probe.pop("pair_id", None)
+                probe.pop("role", None)
+                probe.pop("rationale", None)
+        payload = {
             "schema_version": self.schema_version,
             "vulnerability_type": self.vulnerability_type,
             "issue_description": self.issue_description,
             "request_template": self.request_template,
             "request_shape_sha256": self.request_shape_sha256,
             "target_fields": self.target_fields,
-            "probes": [probe.to_dict() for probe in self.probes],
+            "probes": probes,
             "assertions": [assertion.to_dict() for assertion in self.assertions],
             "max_requests": self.max_requests,
             "requires_side_effect_approval": self.requires_side_effect_approval,
             "blocked_reason": self.blocked_reason,
         }
+        if self.schema_version >= 2:
+            payload.update(
+                {
+                    "planner_source": self.planner_source,
+                    "intent_rationale": self.intent_rationale,
+                    "intent_confidence": self.intent_confidence,
+                    "oracle_kind": self.oracle_kind,
+                }
+            )
+        return payload
 
     def finalize_hash(self) -> str:
         encoded = json.dumps(

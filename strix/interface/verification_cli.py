@@ -13,6 +13,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from strix.verification.intent import (
+    IntentGenerationError,
+    infer_verification_intent,
+)
+from strix.verification.models import VerificationCase
 from strix.verification.planner import VerificationPlanError
 from strix.verification.request import RequestParseError, parse_request_text
 from strix.verification.runner import run_verification_case
@@ -85,6 +90,8 @@ def _plan_text(plan: Any) -> str:
             f"识别类型：{plan.vulnerability_type}",
             f"目标字段：{fields}",
             f"预计请求数：{plan.max_requests}",
+            f"计划来源：{plan.planner_source}"
+            + (f"（置信度 {plan.intent_confidence:.2f}）" if plan.planner_source == "llm" else ""),
             f"副作用确认：{'需要' if plan.requires_side_effect_approval else '不需要'}",
             "",
             "验证动作：",
@@ -92,6 +99,7 @@ def _plan_text(plan: Any) -> str:
             "",
             "证据要求：",
             "\n".join(f"- {item.description}" for item in plan.assertions) or "- 无法生成证据要求",
+            *(["", f"计划理由：{plan.intent_rationale}"] if plan.intent_rationale else []),
             *(["", f"阻断原因：{plan.blocked_reason}"] if plan.blocked_reason else []),
         ]
     )
@@ -126,7 +134,7 @@ def _write_temp_request(text: str) -> Path:
     return path
 
 
-async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912
+async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
     console = Console()
     temporary_requests: list[Path] = []
     try:
@@ -142,6 +150,14 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912
             non_interactive=bool(getattr(args, "non_interactive", False)),
         )
         issue = _issue_or_prompt(args, console)
+        intent = None
+        if issue is not None and not getattr(args, "verification_baseline", None):
+            intent = await infer_verification_intent(
+                VerificationCase(
+                    request=parse_request_text(request_text, scheme=request_scheme),
+                    issue_description=issue,
+                )
+            )
         approved = bool(getattr(args, "verification_approve", False))
         side_effect_approved = approved
         secondary_path: str | None = None
@@ -162,6 +178,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912
             secondary_request_file=secondary_path,
             scheme=request_scheme,
             secondary_scheme=secondary_scheme,
+            intent=intent,
         )
         plan_displayed = False
         if not getattr(args, "non_interactive", False) and result.status in {
@@ -187,6 +204,15 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912
                 console=console,
                 non_interactive=False,
             )
+            intent = await infer_verification_intent(
+                VerificationCase(
+                    request=parse_request_text(request_text, scheme=request_scheme),
+                    issue_description=issue or "",
+                    supporting_requests=[
+                        parse_request_text(secondary_text, scheme=secondary_scheme)
+                    ],
+                )
+            )
             run_dir, plan, result = run_verification_case(
                 request_file=request_path,
                 issue=issue,
@@ -196,6 +222,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912
                 secondary_request_file=secondary_path,
                 scheme=request_scheme,
                 secondary_scheme=secondary_scheme,
+                intent=intent,
             )
             plan_displayed = False
         if (
@@ -221,6 +248,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912
                     secondary_request_file=secondary_path,
                     scheme=request_scheme,
                     secondary_scheme=secondary_scheme,
+                    intent=intent,
                 )
         console.print(Panel(_result_text(result, run_dir), title="漏洞验证结果"))
         if result.status in {"verified_vulnerable", "still_vulnerable"}:
@@ -228,7 +256,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912
         if result.status in {"blocked", "needs_secondary_identity", "inconclusive"}:
             return 1
         return 0  # noqa: TRY300
-    except (OSError, ValueError, VerificationPlanError) as exc:
+    except (OSError, ValueError, VerificationPlanError, IntentGenerationError) as exc:
         console.print(Panel(str(exc), title="漏洞验证失败", border_style="red"))
         return 1
     finally:

@@ -14,6 +14,10 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+from strix.verification.intent import (
+    SUPPORTED_VULNERABILITY_TYPES,
+    VerificationIntent,
+)
 from strix.verification.models import (
     VerificationAssertion,
     VerificationCase,
@@ -110,6 +114,9 @@ def _probe(
     secondary: bool = False,
     side_effect: bool = False,
     cleanup: bool = False,
+    pair_id: str = "",
+    role: str = "",
+    rationale: str = "",
 ) -> VerificationProbe:
     return VerificationProbe(
         probe_id=probe_id,
@@ -121,6 +128,9 @@ def _probe(
         requires_secondary_identity=secondary,
         requires_side_effect_approval=side_effect,
         cleanup_required=cleanup,
+        pair_id=pair_id,
+        role=role,
+        rationale=rationale,
     )
 
 
@@ -167,12 +177,163 @@ def _assertions(vulnerability_type: str) -> list[VerificationAssertion]:
     ]
 
 
+def _oracle_kind(vulnerability_type: str) -> str:
+    return {
+        "sqli": "response_difference",
+        "idor_bola": "authorization_boundary",
+        "authz_bypass": "authorization_boundary",
+        "command_injection": "identity_marker",
+        "ssrf": "canary_echo",
+        "file_upload": "canary_echo",
+    }.get(vulnerability_type, "response_difference")
+
+
+def _build_plan_from_intent(  # noqa: PLR0912, PLR0915
+    case: VerificationCase,
+    intent: VerificationIntent,
+) -> VerificationPlan:
+    """Turn model output into a plan after enforcing request-local invariants."""
+    candidate_fields = list_candidate_fields(case.request)
+    candidates = set(candidate_fields)
+    invalid_targets = [field for field in intent.target_fields if field not in candidates]
+    if invalid_targets:
+        raise VerificationPlanError("验证意图引用了请求中不存在的目标字段")
+    if intent.vulnerability_type not in SUPPORTED_VULNERABILITY_TYPES:
+        raise VerificationPlanError(f"验证意图包含不支持的漏洞类型：{intent.vulnerability_type}")
+    expected_oracle = _oracle_kind(intent.vulnerability_type)
+    if intent.oracle_kind != expected_oracle:
+        raise VerificationPlanError(
+            f"{intent.vulnerability_type} 只能使用 {expected_oracle} 判定器"
+        )
+
+    probes: list[VerificationProbe] = []
+    blocked_reasons: list[str] = []
+    requires_side_effect_approval = case.request.method.upper() not in {
+        "GET",
+        "HEAD",
+        "OPTIONS",
+    }
+    for index, proposed in enumerate(intent.probes, start=1):
+        if proposed.field is not None and proposed.field not in candidates:
+            raise VerificationPlanError("验证意图引用了请求中不存在的探针字段")
+        if proposed.action in {"set", "secondary_value"} and proposed.field is None:
+            raise VerificationPlanError("字段变异探针缺少目标字段")
+        requires_secondary = proposed.action == "secondary_value"
+        side_effect = proposed.action in {"multipart_marker"}
+        cleanup = proposed.action == "multipart_marker"
+        probes.append(
+            _probe(
+                f"intent-{index}",
+                f"描述驱动探针 {index}",
+                proposed.rationale or "由漏洞描述和请求结构生成的验证探针。",
+                field=proposed.field,
+                value=proposed.value,
+                action=proposed.action,
+                secondary=requires_secondary,
+                side_effect=side_effect,
+                cleanup=cleanup,
+                pair_id=proposed.pair_id,
+                role=proposed.role,
+                rationale=proposed.rationale,
+            )
+        )
+
+    if intent.vulnerability_type == "idor_bola" and not any(
+        probe.requires_secondary_identity for probe in probes
+    ):
+        blocked_reasons.append("IDOR/BOLA 意图必须包含第二身份对象替换探针")
+    if (
+        intent.vulnerability_type == "idor_bola"
+        and any(probe.requires_secondary_identity for probe in probes)
+        and not case.supporting_requests
+    ):
+        blocked_reasons.append("IDOR/BOLA 验证需要第二个授权身份的请求包")
+    if intent.vulnerability_type == "sqli":
+        pairs = {
+            probe.pair_id for probe in probes if probe.pair_id and probe.role in {"true", "false"}
+        }
+        complete_pairs = {
+            pair_id
+            for pair_id in pairs
+            if {probe.role for probe in probes if probe.pair_id == pair_id} >= {"true", "false"}
+        }
+        if not complete_pairs:
+            blocked_reasons.append("SQL 注入意图必须包含同一对照组的真值和假值探针")
+    if intent.vulnerability_type == "authz_bypass" and not any(
+        probe.action == "remove_authentication" for probe in probes
+    ):
+        blocked_reasons.append("认证/授权绕过意图必须包含移除认证信息探针")
+    if intent.vulnerability_type == "ssrf" and not any(probe.action == "set" for probe in probes):
+        blocked_reasons.append("SSRF 意图必须包含 URL 字段替换探针")
+    if intent.vulnerability_type == "command_injection" and not any(
+        probe.action == "set" for probe in probes
+    ):
+        blocked_reasons.append("命令注入意图必须包含输入字段探针")
+    if intent.vulnerability_type == "ssrf":
+        for probe in probes:
+            if probe.action != "set" or not probe.value:
+                continue
+            if not _is_safe_canary(probe.value):
+                blocked_reasons.append(
+                    "SSRF 探针必须使用描述中提供的受控公网 Canary，禁止内网、本机和云元数据地址"
+                )
+                break
+    if intent.vulnerability_type == "file_upload":
+        if not any(probe.action == "multipart_marker" for probe in probes):
+            blocked_reasons.append("文件上传验证需要 multipart marker 探针")
+        else:
+            blocked_reasons.append("当前请求没有可靠的清理动作，已阻止上传 marker 探针")
+    if not probes:
+        blocked_reasons.append(intent.rationale or "模型未生成足够信息来执行验证")
+
+    target_fields = list(
+        dict.fromkeys(
+            (*intent.target_fields, *[probe.field for probe in probes if probe.field is not None])
+        )
+    )
+    assertions = _assertions(intent.vulnerability_type)
+    if intent.oracle_description:
+        assertions.append(
+            VerificationAssertion(
+                assertion_id="intent-oracle",
+                description=intent.oracle_description,
+            )
+        )
+    plan = VerificationPlan(
+        schema_version=2,
+        vulnerability_type=intent.vulnerability_type,
+        issue_description=case.issue_description.strip(),
+        request_template=case.request.to_dict(redact=False),
+        request_shape_sha256=request_shape_sha256(case.request),
+        target_fields=target_fields[:10],
+        probes=probes[:20],
+        assertions=assertions,
+        max_requests=min(20, len(probes[:20]) + 1),
+        requires_side_effect_approval=requires_side_effect_approval
+        or any(probe.requires_side_effect_approval for probe in probes),
+        blocked_reason="；".join(dict.fromkeys(blocked_reasons)) or None,
+        planner_source=intent.source,
+        intent_rationale=intent.rationale,
+        intent_confidence=intent.confidence,
+        oracle_kind=intent.oracle_kind,
+    )
+    plan.finalize_hash()
+    return plan
+
+
 def build_verification_plan(  # noqa: PLR0912, PLR0915
     case: VerificationCase,
+    *,
+    intent: VerificationIntent | None = None,
 ) -> VerificationPlan:
     issue = case.issue_description.strip()
     if not issue:
         raise VerificationPlanError("请提供一句漏洞描述")
+
+    if intent is not None:
+        if intent.rationale and intent.vulnerability_type not in SUPPORTED_VULNERABILITY_TYPES:
+            raise VerificationPlanError("验证意图类型不受支持")
+        return _build_plan_from_intent(case, intent)
 
     vulnerability_type = infer_vulnerability_type(issue)
     safe_issue = issue
@@ -180,7 +341,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
     request_hash = request_shape_sha256(case.request)
     if vulnerability_type is None:
         plan = VerificationPlan(
-            schema_version=1,
+            schema_version=2,
             vulnerability_type="unknown",
             issue_description=safe_issue,
             request_template=case.request.to_dict(redact=False),
@@ -193,6 +354,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
                 "无法从描述中识别首版支持的漏洞类型。请在描述中补充 SQL 注入、IDOR、"
                 "认证/授权绕过、SSRF、命令注入或文件上传等关键词。"
             ),
+            oracle_kind="response_difference",
         )
         plan.finalize_hash()
         return plan
@@ -216,6 +378,8 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
                             "向指定字段加入低副作用的真值条件，并与原始响应进行差异比较。",
                             field=field,
                             value=true_value,
+                            pair_id=f"sqli-{variant_name}",
+                            role="true",
                         ),
                         _probe(
                             f"sqli-{variant_name}-false",
@@ -223,6 +387,8 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
                             "向指定字段加入低副作用的假值条件，作为对照。",
                             field=field,
                             value=false_value,
+                            pair_id=f"sqli-{variant_name}",
+                            role="false",
                         ),
                     ]
                 )
@@ -316,7 +482,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
     if len(probes) > 20:
         probes = probes[:20]
     plan = VerificationPlan(
-        schema_version=1,
+        schema_version=2,
         vulnerability_type=vulnerability_type,
         issue_description=safe_issue,
         request_template=case.request.to_dict(redact=False),
@@ -331,6 +497,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
         requires_side_effect_approval=requires_side_effect_approval
         or any(probe.requires_side_effect_approval for probe in probes),
         blocked_reason=blocked_reason,
+        oracle_kind=_oracle_kind(vulnerability_type),
     )
     plan.finalize_hash()
     return plan
