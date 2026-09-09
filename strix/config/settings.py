@@ -15,6 +15,8 @@ DEFAULT_MAX_TURNS = 500
 
 _BASE_CONFIG = SettingsConfigDict(
     case_sensitive=False,
+    env_file=".env",
+    env_file_encoding="utf-8",
     populate_by_name=True,
     extra="ignore",
 )

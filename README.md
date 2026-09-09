@@ -114,6 +114,11 @@ export STRIX_LLM="openai/your-compatible-model"
 export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="https://your-gateway.example/v1"
 
+# 也可以将配置写入项目目录的 .env；已 export 的变量优先级更高
+# STRIX_LLM=openai/your-compatible-model
+# LLM_API_KEY=your-api-key
+# LLM_API_BASE=https://your-gateway.example/v1
+
 # 可选：额外路由头
 export LLM_EXTRA_HEADERS='{"X-Tenant":"acme"}'
 
@@ -128,6 +133,9 @@ export HTTP_PROXY="http://127.0.0.1:7897"
 export HTTPS_PROXY="http://127.0.0.1:7897"
 export ALL_PROXY="socks5://127.0.0.1:7897"
 ```
+
+配置优先级为：已 `export` 的环境变量 > 项目目录 `.env` > `~/.strix/cli-config.json` > 默认值。
+`.env` 不应提交到 Git；请使用 `.env.example` 保存变量名和占位符。
 
 ### 第一条命令
 

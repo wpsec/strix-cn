@@ -36,6 +36,14 @@ description: "安装 Strix 并完成第一次安全扫描"
     export LLM_API_KEY="your-api-key"
     export LLM_API_BASE="https://your-gateway.example/v1"
     ```
+
+    也可以在项目目录创建 `.env`，写入同名变量后直接运行 `strix`。已 `export` 的变量优先于 `.env`。
+
+    ```dotenv
+    STRIX_LLM=openai/your-compatible-model
+    LLM_API_KEY=your-api-key
+    LLM_API_BASE=https://your-gateway.example/v1
+    ```
   </Tab>
   <Tab title="本地模型">
     ```bash
@@ -44,6 +52,8 @@ description: "安装 Strix 并完成第一次安全扫描"
     ```
   </Tab>
 </Tabs>
+
+配置优先级为：已 `export` 的环境变量 > `.env` > `~/.strix/cli-config.json` > 默认值。不要将包含真实密钥的 `.env` 提交到仓库。
 
 <Tip>
 如果你已经有 OpenAI-compatible 中转、企业网关、LM Studio、vLLM 或 Ollama，这个分支会优先围绕这些接入方式做兼容性维护。

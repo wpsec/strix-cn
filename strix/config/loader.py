@@ -34,9 +34,10 @@ _LINKED_LLM_FIELDS = ("model", "api_key", "api_base")
 
 
 def load_settings() -> Settings:
-    """Resolve settings from env + JSON file + defaults. Memoized.
+    """Resolve settings from exported env, ``.env``, JSON, and defaults.
 
-    Precedence: env vars win, then the JSON file, then field defaults.
+    Precedence: exported environment variables win, then ``.env``, then the
+    persisted JSON file, then field defaults.
     """
     global _cached  # noqa: PLW0603
     if _cached is None:

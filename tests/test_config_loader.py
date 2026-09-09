@@ -126,6 +126,56 @@ def test_security_mode_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -
     assert loader.load_settings().security.mode == "redteam"
 
 
+def test_dotenv_values_are_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text(
+        "STRIX_LLM=dotenv-model\n"
+        "LLM_API_KEY=dotenv-key\n"
+        "LLM_API_BASE=https://dotenv.example/v1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    loader.apply_config_override(tmp_path / "missing-config.json")
+
+    settings = loader.load_settings()
+
+    assert settings.llm.model == "dotenv-model"
+    assert settings.llm.api_key == "dotenv-key"
+    assert settings.llm.api_base == "https://dotenv.example/v1"
+
+
+def test_exported_environment_overrides_dotenv_and_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "STRIX_LLM=dotenv-model\n"
+        "LLM_API_KEY=dotenv-key\n"
+        "LLM_API_BASE=https://dotenv.example/v1\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "cli-config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "STRIX_LLM": "json-model",
+                    "LLM_API_KEY": "json-key",
+                    "LLM_API_BASE": "https://json.example/v1",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("STRIX_LLM", "export-model")
+    loader.apply_config_override(config)
+
+    settings = loader.load_settings()
+
+    assert settings.llm.model == "export-model"
+    assert settings.llm.api_key == "dotenv-key"
+    assert settings.llm.api_base == "https://dotenv.example/v1"
+
+
 def test_tool_output_max_bytes_rejects_sub_notice_values() -> None:
     with pytest.raises(ValidationError):
         ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=64)
