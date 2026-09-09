@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from caido_sdk_client.errors.base import BaseError
@@ -35,6 +36,31 @@ def _project(
         size=0,
         read_only=read_only,
     )
+
+
+def test_graphql_sync_bypasses_environment_proxies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opener = MagicMock()
+    response = MagicMock()
+    response.read.return_value = b'{"data":{"upstreamProxiesHttp":[]}}'
+    opener.open.return_value.__enter__.return_value = response
+    build_opener = Mock(return_value=opener)
+    monkeypatch.setattr(caido_bootstrap.urllib_request, "build_opener", build_opener)
+
+    result = caido_bootstrap._graphql_sync(
+        "http://127.0.0.1:64392",
+        "guest-token",
+        "query { upstreamProxiesHttp { id } }",
+        {},
+    )
+
+    assert result == {"upstreamProxiesHttp": []}
+    build_opener.assert_called_once()
+    proxy_handler = build_opener.call_args.args[0]
+    assert isinstance(proxy_handler, caido_bootstrap.urllib_request.ProxyHandler)
+    assert proxy_handler.proxies == {}
+    opener.open.assert_called_once()
 
 
 @dataclass

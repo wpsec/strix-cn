@@ -396,7 +396,7 @@ def _graphql_sync(
 ) -> dict[str, Any]:
     base_url = host_url.rstrip("/")
     body = json.dumps({"query": query, "variables": variables}).encode("utf-8")
-    req = urllib_request.Request(
+    req = urllib_request.Request(  # noqa: S310
         f"{base_url}/graphql",
         data=body,
         headers={
@@ -405,7 +405,12 @@ def _graphql_sync(
         },
         method="POST",
     )
-    with urllib_request.urlopen(req, timeout=20) as resp:  # noqa: S310  # nosec B310
+    # Caido is a local runtime sidecar. It must not inherit the operator's
+    # outbound proxy, otherwise a proxy such as Burp can return 502 before the
+    # bootstrap request reaches Caido. Target traffic is configured separately
+    # through Caido's upstream proxy and is intentionally unaffected here.
+    opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
+    with opener.open(req, timeout=20) as resp:  # nosec B310
         payload = json.loads(resp.read())
     errors = payload.get("errors") or []
     if errors:
