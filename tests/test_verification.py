@@ -31,7 +31,7 @@ from strix.verification.models import redact_response_body, request_shape_sha256
 from strix.verification.runner import run_verification_case
 
 
-def test_raw_and_curl_requests_are_normalized_and_credentials_are_redacted() -> None:
+def test_raw_and_curl_requests_preserve_replay_credentials() -> None:
     raw = """GET /orders?orderId=42 HTTP/1.1
 Host: app.test
 Authorization: Bearer raw-secret
@@ -43,13 +43,14 @@ Cookie: session=secret-cookie
 
     request = parse_request_text(raw, scheme="https")
     assert request.url == "https://app.test/orders?orderId=42"
-    assert request.to_dict()["headers"]["Authorization"] == "<redacted>"
-    assert "raw-secret" not in json.dumps(request.to_dict())
+    assert request.to_dict()["headers"]["Authorization"] == "Bearer raw-secret"
+    assert "raw-secret" in json.dumps(request.to_dict())
+    assert request.to_dict(redact=True)["headers"]["Authorization"] == "<redacted>"
 
     query_secret = parse_request_text(
         "GET https://app.test/search?access_token=query-secret HTTP/1.1\nHost: app.test\n\n"
     )
-    assert "query-secret" not in json.dumps(query_secret.to_dict())
+    assert "query-secret" in json.dumps(query_secret.to_dict())
     assert "response-secret" not in redact_response_body(
         '{"access_token":"response-secret"}',
         "application/json",
@@ -64,7 +65,7 @@ Cookie: session=secret-cookie
     assert curl.method == "POST"
     assert curl.scheme == "https"
     assert curl.body == '{"id":1}'
-    assert curl.to_dict()["headers"]["Authorization"] == "<redacted>"
+    assert curl.to_dict()["headers"]["Authorization"] == "Bearer curl-secret"
 
     multipart = parse_request_text("curl 'https://app.test/upload' -F 'file=@sample.txt'")
     assert multipart.method == "POST"
@@ -237,7 +238,7 @@ def test_command_injection_verification_uses_local_http_fixture() -> None:
         server.server_close()
 
 
-def test_runner_persists_redacted_artifacts_and_retest_comparison(
+def test_runner_persists_replayable_artifacts_and_retest_comparison(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -259,7 +260,9 @@ def test_runner_persists_redacted_artifacts_and_retest_comparison(
     artifacts = "\n".join(
         path.read_text(encoding="utf-8") for path in run_dir.iterdir() if path.is_file()
     )
-    assert "top-secret" not in artifacts
+    assert "top-secret" in artifacts
+    assert "Authorization: Bearer top-secret" in artifacts
+    assert "原始 Burp 请求" in artifacts
 
     baseline = VerificationResult(
         status="verified_vulnerable",

@@ -1,9 +1,4 @@
-"""Data models and redaction helpers for verification runs.
-
-Verification artifacts are deliberately built from redacted request and
-response representations. The live request stays in memory for the duration
-of one execution and is never copied into ``run.json``.
-"""
+"""Data models and request/response helpers for verification runs."""
 
 from __future__ import annotations
 
@@ -115,7 +110,7 @@ class CanonicalRequest:
             netloc = f"{netloc}:{self.port}"
         return urlunsplit((self.scheme, netloc, self.path or "/", query, ""))
 
-    def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
+    def to_dict(self, *, redact: bool = False) -> dict[str, Any]:
         content_type = next(
             (value for name, value in self.headers.items() if name.lower() == "content-type"),
             "",
@@ -138,6 +133,19 @@ class CanonicalRequest:
             "headers": redact_headers(self.headers) if redact else dict(self.headers),
             "body": redact_body(self.body, content_type) if redact else self.body,
         }
+
+
+def render_raw_request(request: CanonicalRequest) -> str:
+    """Render a canonical request as a Burp-compatible raw HTTP request."""
+    target = request.path or "/"
+    if request.query:
+        target = f"{target}?{urlencode(request.query, doseq=True)}"
+    headers = dict(request.headers)
+    if not any(name.lower() == "host" for name in headers):
+        headers["Host"] = request.host if request.port in {80, 443} else f"{request.host}:{request.port}"
+    lines = [f"{request.method} {target} HTTP/1.1"]
+    lines.extend(f"{name}: {value}" for name, value in headers.items())
+    return "\r\n".join(lines) + "\r\n\r\n" + request.body
 
 
 @dataclass(slots=True)
@@ -229,6 +237,7 @@ class ProbeResult:
     response_summary: str = ""
     evidence: str = ""
     error: str | None = None
+    request: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

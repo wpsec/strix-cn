@@ -10,15 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from strix.core.paths import run_dir_for
-from strix.report.writer import read_run_record, write_run_record
+from strix.report.writer import read_run_record, safe_fence, write_run_record
 from strix.verification.executor import compare_results, execute_plan
 from strix.verification.models import (
+    CanonicalRequest,
     ProbeResult,
     VerificationAssertion,
     VerificationCase,
     VerificationPlan,
     VerificationProbe,
     VerificationResult,
+    render_raw_request,
 )
 from strix.verification.planner import build_verification_plan
 from strix.verification.request import parse_request_file
@@ -38,6 +40,35 @@ def _write_json(path: Path, payload: object) -> None:
 def _validate_run_name(run_name: str) -> None:
     if not run_name or Path(run_name).name != run_name or run_name in {".", ".."}:
         raise ValueError("验证运行名无效")
+
+
+def _request_from_template(template: dict[str, Any]) -> CanonicalRequest:
+    raw_query = template.get("query")
+    query = (
+        [
+            (str(item[0]), str(item[1]))
+            for item in raw_query
+            if isinstance(item, list) and len(item) == 2
+        ]
+        if isinstance(raw_query, list)
+        else []
+    )
+    raw_headers = template.get("headers")
+    headers = (
+        {str(name): str(value) for name, value in raw_headers.items()}
+        if isinstance(raw_headers, dict)
+        else {}
+    )
+    return CanonicalRequest(
+        method=str(template.get("method") or "GET"),
+        scheme=str(template.get("scheme") or "https"),
+        host=str(template.get("host") or ""),
+        port=int(template.get("port") or 443),
+        path=str(template.get("path") or "/"),
+        query=query,
+        headers=headers,
+        body=str(template.get("body") or ""),
+    )
 
 
 def _same_authority(first: object, second: object) -> bool:
@@ -121,6 +152,14 @@ def _render_report(
         f"- 目标：`{plan.request_template.get('scheme')}://"
         f"{plan.request_template.get('host')}:{plan.request_template.get('port')}`",
         "",
+        "## 原始 Burp 请求",
+        "",
+    ]
+    original_request = render_raw_request(_request_from_template(plan.request_template))
+    original_fence = safe_fence(original_request)
+    lines.extend([f"{original_fence}http", original_request, original_fence, ""])
+    lines.extend(
+        [
         "## 问题描述",
         "",
         plan.issue_description,
@@ -132,7 +171,8 @@ def _render_report(
         f"- 计划哈希：`{plan.plan_sha256}`",
         f"- 副作用确认：{'需要' if plan.requires_side_effect_approval else '不需要'}",
         "",
-    ]
+        ]
+    )
     if plan.blocked_reason:
         lines.extend(["## 阻断原因", "", plan.blocked_reason, ""])
     lines.extend(["## 证据要求", ""])
@@ -156,18 +196,30 @@ def _render_report(
                 f"- 响应状态码：`{evidence.response_status or '未获得'}`",
                 f"- 响应长度：`{evidence.response_length}`",
                 f"- 响应指纹：`{evidence.response_sha256 or '未获得'}`",
-                "- 证据："
-                f"{evidence.evidence or evidence.response_summary or evidence.error or '未提供'}",
+                "- 证据：",
+                evidence.evidence or evidence.response_summary or evidence.error or "未提供",
                 "",
             ]
         )
+        if evidence.request:
+            evidence_fence = safe_fence(evidence.request)
+            lines.extend(
+                [
+                    "- 可复制到 Burp Repeater 的请求：",
+                    "",
+                    f"{evidence_fence}http",
+                    evidence.request,
+                    evidence_fence,
+                    "",
+                ]
+            )
     lines.extend(
         [
             "## 复测方式",
             "",
             f"`strix --verify --baseline {run_name} --request ./request-after-fix.txt`",
             "",
-            "请求中的 Cookie、Authorization、Token 和密码不会写入本报告。",
+            "报告中的请求保留完整 Header、Token、Cookie 和 Body，可直接复制到 Burp Repeater 复现。",
             "",
         ]
     )

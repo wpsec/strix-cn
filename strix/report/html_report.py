@@ -11,6 +11,7 @@ from markdown_it import MarkdownIt
 
 from strix.redteam.attack_chain import build_attack_chain
 from strix.redteam.policy import normalize_vulnerability_type, should_ignore
+from strix.report.evidence import render_structured_evidence_markdown
 
 
 _MARKDOWN = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": False})
@@ -95,9 +96,13 @@ def _metadata(report: dict[str, Any]) -> str:
 
 
 def _finding_sections(report: dict[str, Any]) -> str:
+    structured_process = None
+    if str(report.get("finding_class") or "dynamic").lower() != "dependency_cve":
+        structured_process = "\n".join(render_structured_evidence_markdown(report))
     fields = [
         ("漏洞类型", report.get("vulnerability_type")),
         ("结论速览", report.get("description")),
+        ("发现与复现过程", structured_process),
         ("影响", report.get("impact")),
         ("技术细节", report.get("technical_analysis")),
         ("证据", report.get("evidence")),

@@ -28,6 +28,7 @@ from strix.redteam.policy import (
     should_ignore,
 )
 from strix.report.coverage import write_coverage
+from strix.report.evidence import STRUCTURED_EVIDENCE_FIELDS, normalize_evidence_rows
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.writer import (
@@ -106,6 +107,9 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "fix_verification",
         "fix_pr_body",
         "credential_provenance",
+        "discovery_trace",
+        "endpoint_matrix",
+        "reproduction_requests",
     }
 )
 
@@ -449,6 +453,9 @@ class ReportState:
         permission_proof: str | None = None,
         request: str | None = None,
         response: str | None = None,
+        discovery_trace: list[dict[str, Any]] | None = None,
+        endpoint_matrix: list[dict[str, Any]] | None = None,
+        reproduction_requests: list[dict[str, Any]] | None = None,
         credential_provenance: dict[str, str] | None = None,
         cvss_4_vector: str | None = None,
         cvss_4_score: float | None = None,
@@ -482,6 +489,14 @@ class ReportState:
             report["request"] = request.strip()
         if response:
             report["response"] = response.strip()
+        for field_name, raw_value in (
+            ("discovery_trace", discovery_trace),
+            ("endpoint_matrix", endpoint_matrix),
+            ("reproduction_requests", reproduction_requests),
+        ):
+            normalized, _errors = normalize_evidence_rows(raw_value, field_name)
+            if normalized:
+                report[field_name] = normalized
         report_credential_provenance = (
             dict(credential_provenance) if isinstance(credential_provenance, dict) else {}
         )
@@ -591,6 +606,10 @@ class ReportState:
             value = raw_value
             if key == "credential_provenance":
                 value = dict(value) if isinstance(value, dict) else {}
+                if not value:
+                    continue
+            if key in STRUCTURED_EVIDENCE_FIELDS:
+                value, _errors = normalize_evidence_rows(value, key)
                 if not value:
                     continue
             if isinstance(value, str):

@@ -19,7 +19,6 @@ from strix.verification.models import (
     VerificationCase,
     VerificationPlan,
     VerificationProbe,
-    redact_text,
     request_shape_sha256,
 )
 from strix.verification.request import list_candidate_fields, prioritize_fields
@@ -155,7 +154,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
         raise VerificationPlanError("请提供一句漏洞描述")
 
     vulnerability_type = infer_vulnerability_type(issue)
-    safe_issue = redact_text(issue)
+    safe_issue = issue
     fields = prioritize_fields(list_candidate_fields(case.request), issue)
     request_hash = request_shape_sha256(case.request)
     if vulnerability_type is None:
@@ -163,7 +162,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
             schema_version=1,
             vulnerability_type="unknown",
             issue_description=safe_issue,
-            request_template=case.request.to_dict(),
+            request_template=case.request.to_dict(redact=False),
             request_shape_sha256=request_hash,
             target_fields=fields[:5],
             probes=[],
@@ -297,7 +296,7 @@ def build_verification_plan(  # noqa: PLR0912, PLR0915
         schema_version=1,
         vulnerability_type=vulnerability_type,
         issue_description=safe_issue,
-        request_template=case.request.to_dict(),
+        request_template=case.request.to_dict(redact=False),
         request_shape_sha256=request_hash,
         target_fields=fields[:10],
         probes=probes,

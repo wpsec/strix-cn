@@ -1,4 +1,7 @@
 import type {
+  DiscoveryTraceRow,
+  EndpointMatrixRow,
+  ReproductionRequest,
   Vulnerability,
   VulnerabilitySeverity,
   VulnerabilityStatus,
@@ -65,6 +68,25 @@ function asStringOrNull(v: unknown): string | null {
 
 function asNumberOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function parseStringRows<T extends object>(
+  raw: unknown,
+  fields: readonly string[]
+): T[] | null {
+  if (!Array.isArray(raw)) return null;
+  const rows: T[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const source = item as Record<string, unknown>;
+    const row: Record<string, string> = {};
+    for (const field of fields) {
+      const value = source[field];
+      if (typeof value === "string" && value.length > 0) row[field] = value;
+    }
+    if (Object.keys(row).length > 0) rows.push(row as T);
+  }
+  return rows.length > 0 ? rows : null;
 }
 
 function parseJson(text: string, label: string): unknown {
@@ -173,6 +195,9 @@ function emptyVulnerabilityDefaults(): Omit<
     assumptions: null,
     fix_effort: null,
     cvss_breakdown: null,
+    discovery_trace: null,
+    endpoint_matrix: null,
+    reproduction_requests: null,
     status_changed_at: null,
     status_changed_by: null,
     status_note: null,
@@ -230,6 +255,31 @@ function parseOneVulnerability(
     assumptions: asStringOrNull(raw.assumptions),
     fix_effort: (asStringOrNull(raw.fix_effort) as Vulnerability["fix_effort"]) ?? null,
     cvss_breakdown: (raw.cvss_breakdown as Vulnerability["cvss_breakdown"]) ?? null,
+    discovery_trace: parseStringRows<DiscoveryTraceRow>(raw.discovery_trace, [
+      "stage",
+      "source",
+      "location",
+      "observation",
+      "inference",
+      "evidence",
+    ]),
+    endpoint_matrix: parseStringRows<EndpointMatrixRow>(raw.endpoint_matrix, [
+      "method",
+      "path",
+      "purpose",
+      "baseline",
+      "variant",
+      "result",
+      "evidence",
+    ]),
+    reproduction_requests: parseStringRows<ReproductionRequest>(raw.reproduction_requests, [
+      "name",
+      "purpose",
+      "request",
+      "expected_response",
+      "observed_response",
+      "notes",
+    ]),
   };
 }
 

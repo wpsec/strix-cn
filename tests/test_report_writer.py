@@ -82,6 +82,65 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
     assert "**接口：** /api/login" in md
 
 
+def test_render_vulnerability_md_includes_discovery_matrix_and_replay_request() -> None:
+    raw_request = (
+        "POST /api/orders HTTP/1.1\n"
+        "Host: app.example.com\n"
+        "Authorization: Bearer demo-token\n"
+        "Cookie: sid=demo-cookie\n"
+        "Content-Type: application/json\n\n"
+        '{"orderId":"other-user-order"}'
+    )
+    report = _sample_report(
+        discovery_trace=[
+            {
+                "stage": "JS 分析",
+                "source": "app.js",
+                "location": "app.js:120",
+                "observation": "提取订单查询接口",
+                "inference": "orderId 可能影响授权对象",
+                "evidence": "fetch('/api/orders')",
+            }
+        ],
+        endpoint_matrix=[
+            {
+                "method": "POST",
+                "path": "/api/orders",
+                "purpose": "验证对象级授权",
+                "baseline": "当前订单返回 200",
+                "variant": "替换为其他订单 ID",
+                "result": "仍返回订单数据",
+                "evidence": "响应包含其他用户订单字段",
+            }
+        ],
+        reproduction_requests=[
+            {
+                "name": "跨对象读取",
+                "purpose": "复制到 Burp Repeater 验证 IDOR",
+                "request": raw_request,
+                "expected_response": "返回当前账号无权访问的订单",
+                "observed_response": "返回订单详情",
+            }
+        ],
+    )
+
+    markdown = render_vulnerability_md(report)
+    html = render_html_report(
+        final_scan_result=None,
+        run_record={"run_name": "evidence-run", "status": "completed"},
+        vulnerability_reports=[report],
+    )
+
+    for rendered in (markdown, html):
+        assert "发现入口与推理链" in rendered
+        assert "接口验证矩阵" in rendered
+        assert "Burp Repeater" in rendered
+        assert "Authorization: Bearer demo-token" in rendered
+        assert "Cookie: sid=demo-cookie" in rendered
+    assert '{"orderId":"other-user-order"}' in markdown
+    assert "&quot;orderId&quot;:&quot;other-user-order&quot;" in html
+
+
 def test_token_boundary_reports_completed_and_uncovered_tasks() -> None:
     record = {
         "run_name": "token-run",

@@ -120,6 +120,36 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         cwe="CWE-79",
         code_locations=None,
         fix_pr_body="## Fix\nEncode output.",
+        discovery_trace=[
+            {
+                "stage": "JS 分析",
+                "source": "main.js",
+                "location": "main.js:42",
+                "observation": "发现 /api/search 请求",
+                "inference": "q 参数进入 HTML 响应",
+                "evidence": "fetch('/api/search')",
+            }
+        ],
+        endpoint_matrix=[
+            {
+                "method": "GET",
+                "path": "/search",
+                "purpose": "验证反射",
+                "baseline": "200，无 marker",
+                "variant": "q=marker",
+                "result": "确认回显",
+                "evidence": "响应包含 marker",
+            }
+        ],
+        reproduction_requests=[
+            {
+                "name": "浏览器请求",
+                "purpose": "复现 XSS",
+                "request": "GET /search?q=marker HTTP/1.1\nHost: app.example.com\nAuthorization: Bearer demo-token\nCookie: sid=demo-cookie\n\n",
+                "expected_response": "响应中出现 marker",
+                "observed_response": "响应中出现 marker",
+            }
+        ],
     )
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
@@ -132,6 +162,9 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["counterevidence"] == "No output encoding or CSP observed on this response."
     assert report["confidence"] == "high"
     assert report["severity_change_conditions"] == "A strict CSP would lower the severity."
+    assert report["discovery_trace"][0]["location"] == "main.js:42"
+    assert report["endpoint_matrix"][0]["path"] == "/search"
+    assert "Authorization: Bearer demo-token" in report["reproduction_requests"][0]["request"]
 
 
 async def test_create_report_requires_evidence_and_assumptions(
@@ -1142,6 +1175,9 @@ def test_vuln_tool_exposes_new_params() -> None:
         "assumptions",
         "fix_effort",
         "fix_pr_body",
+        "discovery_trace",
+        "endpoint_matrix",
+        "reproduction_requests",
     ):
         assert field in props
 

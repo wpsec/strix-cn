@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.report.evidence import STRUCTURED_EVIDENCE_FIELDS, normalize_evidence_rows
 from strix.tools.nullish import clean_optional
 
 
@@ -383,6 +384,14 @@ def _collect_update_changes(  # noqa: PLR0912
     if cwe:
         changes["cwe"] = cwe
 
+    for field_name in STRUCTURED_EVIDENCE_FIELDS:
+        if field_name not in fields or fields[field_name] is None:
+            continue
+        value, field_errors = normalize_evidence_rows(fields[field_name], field_name)
+        errors.extend(field_errors)
+        if value:
+            changes[field_name] = value
+
     return changes, errors
 
 
@@ -393,6 +402,9 @@ _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "method",
     "poc_description",
     "poc_script_code",
+    "discovery_trace",
+    "endpoint_matrix",
+    "reproduction_requests",
 )
 
 # A dependency finding is rated in the context of the codebase that pins it, and
@@ -749,6 +761,9 @@ async def _do_create(  # noqa: PLR0912
     permission_proof: str | None = None,
     request: str | None = None,
     response: str | None = None,
+    discovery_trace: list[dict[str, Any]] | None = None,
+    endpoint_matrix: list[dict[str, Any]] | None = None,
+    reproduction_requests: list[dict[str, Any]] | None = None,
     credential_provenance: dict[str, str] | None = None,
     cvss_4_vector: str | None = None,
 ) -> dict[str, Any]:
@@ -791,6 +806,16 @@ async def _do_create(  # noqa: PLR0912
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
     errors.extend(identifier_errors)
+
+    structured_evidence: dict[str, list[dict[str, str]] | None] = {}
+    for field_name, raw_value in (
+        ("discovery_trace", discovery_trace),
+        ("endpoint_matrix", endpoint_matrix),
+        ("reproduction_requests", reproduction_requests),
+    ):
+        normalized, field_errors = normalize_evidence_rows(raw_value, field_name)
+        errors.extend(field_errors)
+        structured_evidence[field_name] = normalized
 
     errors.extend(
         _validate_runtime_evidence(
@@ -871,6 +896,7 @@ async def _do_create(  # noqa: PLR0912
             "permission_proof": permission_proof,
             "request": request,
             "response": response,
+            **structured_evidence,
             "credential_provenance": credential_provenance,
             "cvss_4_vector": cvss_4_vector,
             "cvss_4_score": cvss_4_score,
@@ -974,6 +1000,9 @@ async def create_vulnerability_report(
     permission_proof: str | None = None,
     request: str | None = None,
     response: str | None = None,
+    discovery_trace: list[dict[str, Any]] | None = None,
+    endpoint_matrix: list[dict[str, Any]] | None = None,
+    reproduction_requests: list[dict[str, Any]] | None = None,
     credential_provenance: dict[str, str] | None = None,
     cvss_4_vector: str | None = None,
 ) -> str:
@@ -1338,6 +1367,20 @@ async def create_vulnerability_report(
             black-box findings.
         cvss_4_vector: Optional validated CVSS 4.0 base vector. If omitted,
             the Markdown report explicitly marks CVSS 4.0 as unavailable.
+        discovery_trace: Ordered discovery chain from the first page or JS
+            observation through extracted routes, the vulnerability hypothesis
+            and the supporting evidence. Each row may contain ``stage``,
+            ``source``, ``location``, ``observation``, ``inference`` and
+            ``evidence``.
+        endpoint_matrix: Representative endpoint verification rows. Each row
+            may contain ``method``, ``path``, ``purpose``, ``baseline``,
+            ``variant``, ``result`` and ``evidence``. Include representative
+            rows when the endpoint set is large.
+        reproduction_requests: Raw HTTP requests for direct Burp Repeater
+            reproduction. Each row may contain ``name``, ``purpose``,
+            ``request``, ``expected_response``, ``observed_response`` and
+            ``notes``. The request is preserved as provided, including all
+            headers, tokens, cookies and body.
         credential_provenance: Optional structured metadata describing where
             credential material was observed and how its impact was validated.
             Use only provenance fields such as source, response location,
@@ -1420,6 +1463,9 @@ async def create_vulnerability_report(
         permission_proof=permission_proof,
         request=request,
         response=response,
+        discovery_trace=discovery_trace,
+        endpoint_matrix=endpoint_matrix,
+        reproduction_requests=reproduction_requests,
         credential_provenance=credential_provenance,
         cvss_4_vector=cvss_4_vector,
         agent_id=agent_id,
@@ -1457,6 +1503,9 @@ async def update_vulnerability_report(
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     contextual_cvss_reasoning: str | None = None,
+    discovery_trace: list[dict[str, Any]] | None = None,
+    endpoint_matrix: list[dict[str, Any]] | None = None,
+    reproduction_requests: list[dict[str, Any]] | None = None,
     credential_provenance: dict[str, str] | None = None,
 ) -> str:
     """Revise a vulnerability report that is already filed, keeping its id.
@@ -1532,6 +1581,13 @@ async def update_vulnerability_report(
         contextual_cvss_reasoning: Dependency findings only. What you
             observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
+        discovery_trace: Replacement ordered discovery chain from the first
+            page or JS observation through the vulnerability hypothesis.
+        endpoint_matrix: Replacement representative endpoint verification
+            rows, including baseline, variant and result.
+        reproduction_requests: Replacement raw HTTP requests for Burp
+            Repeater. Requests are preserved as provided, including headers,
+            tokens, cookies and body.
         credential_provenance: Replacement source, location and validation
             metadata for observed credential material; raw values are not
             accepted into the report.
@@ -1566,6 +1622,9 @@ async def update_vulnerability_report(
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "contextual_cvss_reasoning": contextual_cvss_reasoning,
+            "discovery_trace": discovery_trace,
+            "endpoint_matrix": endpoint_matrix,
+            "reproduction_requests": reproduction_requests,
             "credential_provenance": credential_provenance,
         },
         agent_id=agent_id,

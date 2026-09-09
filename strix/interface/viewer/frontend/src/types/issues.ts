@@ -95,6 +95,34 @@ export interface CVSSBreakdown {
   availability: string | null;
 }
 
+export interface DiscoveryTraceRow {
+  stage?: string;
+  source?: string;
+  location?: string;
+  observation?: string;
+  inference?: string;
+  evidence?: string;
+}
+
+export interface EndpointMatrixRow {
+  method?: string;
+  path?: string;
+  purpose?: string;
+  baseline?: string;
+  variant?: string;
+  result?: string;
+  evidence?: string;
+}
+
+export interface ReproductionRequest {
+  name?: string;
+  purpose?: string;
+  request?: string;
+  expected_response?: string;
+  observed_response?: string;
+  notes?: string;
+}
+
 export interface Vulnerability {
   id: string;
   scan_id: string | null;
@@ -127,6 +155,9 @@ export interface Vulnerability {
   assumptions: string | null;
   fix_effort: FixEffort | null;
   cvss_breakdown: CVSSBreakdown | null;
+  discovery_trace: DiscoveryTraceRow[] | null;
+  endpoint_matrix: EndpointMatrixRow[] | null;
+  reproduction_requests: ReproductionRequest[] | null;
   status_changed_at: string | null;
   status_changed_by: string | null;
   status_note: string | null;

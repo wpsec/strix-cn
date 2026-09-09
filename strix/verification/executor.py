@@ -18,7 +18,7 @@ from strix.verification.models import (
     VerificationPlan,
     VerificationResult,
     VerificationStatus,
-    redact_response_body,
+    render_raw_request,
     request_shape_sha256,
 )
 from strix.verification.request import (
@@ -132,19 +132,19 @@ def _fingerprint(observation: HttpObservation) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _probe_result(probe: Any, observation: HttpObservation) -> ProbeResult:
-    content_type = next(
-        (value for name, value in observation.headers.items() if name.lower() == "content-type"),
-        "",
-    )
-    summary = redact_response_body(observation.body, content_type)
+def _probe_result(
+    probe: Any,
+    request: CanonicalRequest,
+    observation: HttpObservation,
+) -> ProbeResult:
     return ProbeResult(
         probe_id=probe.probe_id,
         status="observed",
         response_status=observation.status_code,
         response_length=len(observation.body.encode("utf-8")),
         response_sha256=_fingerprint(observation),
-        response_summary=summary,
+        response_summary=observation.body[:2048],
+        request=render_raw_request(request),
     )
 
 
@@ -285,7 +285,7 @@ def execute_plan(
             mutated = _apply_probe(request, probe, secondary=secondary)
             observation = send_request(mutated)
             observations[probe.probe_id] = observation
-            results.append(_probe_result(probe, observation))
+            results.append(_probe_result(probe, mutated, observation))
         except (VerificationExecutionError, ValueError) as exc:
             results.append(ProbeResult(probe_id=probe.probe_id, status="error", error=str(exc)))
 

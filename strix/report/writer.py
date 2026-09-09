@@ -20,6 +20,7 @@ from strix.core.paths import run_record_path
 from strix.redteam.attack_chain import (
     build_attack_chain,
 )
+from strix.report.evidence import render_structured_evidence_markdown
 
 
 if TYPE_CHECKING:
@@ -325,6 +326,10 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
         "",
         "## 五、漏洞定位过程",
         "",
+        *render_structured_evidence_markdown(report),
+        "",
+        "补充定位说明：",
+        "",
         _redteam_text(location_trace),
         "",
         "代码或资源定位：",
@@ -338,13 +343,12 @@ def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
         "- 请求：",
         "",
     ]
-    request = _redteam_text(report.get("request"), "未提供请求数据。")
+    request = str(report.get("request") or "未提供请求数据。").strip()
     request_fence = safe_fence(request)
     lines.extend([f"{request_fence}http", request, request_fence, "", "- 响应现象："])
-    response = _redteam_text(
-        report.get("response") or report.get("validation_evidence"),
-        "未提供响应或运行时现象。",
-    )
+    response = str(
+        report.get("response") or report.get("validation_evidence") or "未提供响应或运行时现象。"
+    ).strip()
     response_fence = safe_fence(response)
     lines.extend(["", f"{response_fence}http", response, response_fence, ""])
     provenance = report.get("credential_provenance")
@@ -865,6 +869,11 @@ def render_vulnerability_md(
     lines.append("## 漏洞描述\n")
     lines.append(report.get("description") or "未提供漏洞描述。")
     lines.append("")
+
+    if str(report.get("finding_class") or "dynamic").lower() != "dependency_cve":
+        lines.append("## 发现与复现过程\n")
+        lines.extend(render_structured_evidence_markdown(report))
+        lines.append("")
 
     if report.get("evidence"):
         lines.append("## 证据\n")
