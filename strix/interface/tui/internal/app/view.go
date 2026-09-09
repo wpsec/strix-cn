@@ -753,11 +753,15 @@ func (m Model) statsView() string {
 		}
 	}
 	total := numberValue(m.snapshot.Usage["total_tokens"])
-	if total > 0 {
+	if total > 0 || m.snapshot.TokenLimit != nil {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(w.Render(fmt.Sprintf("%s tokens", formatCount(total))))
+		tokenText := fmt.Sprintf("%s tokens", formatCount(total))
+		if m.snapshot.TokenLimit != nil {
+			tokenText = fmt.Sprintf("%s / %s tokens", formatCount(total), formatCount(int64(*m.snapshot.TokenLimit)))
+		}
+		b.WriteString(w.Render(tokenText))
 		if cost := floatValue(m.snapshot.Usage["cost"]); !m.snapshot.Subscription && cost > 0 {
 			b.WriteString(w.Render(fmt.Sprintf(" · $%.2f", cost)))
 		}

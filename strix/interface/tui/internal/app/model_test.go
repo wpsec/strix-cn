@@ -1611,6 +1611,24 @@ func TestStatsViewShowsSubscription(t *testing.T) {
 	}
 }
 
+func TestStatsViewShowsTokenLimit(t *testing.T) {
+	model := New(nil)
+	model.snapshot.Usage = map[string]any{"total_tokens": float64(1200)}
+	limit := 5000
+	model.snapshot.TokenLimit = &limit
+
+	stats := ansi.Strip(model.statsView())
+	if !strings.Contains(stats, "1.2K / 5.0K tokens") {
+		t.Fatalf("stats missing token limit: %q", stats)
+	}
+
+	model.snapshot.Usage = nil
+	stats = ansi.Strip(model.statsView())
+	if !strings.Contains(stats, "0 / 5.0K tokens") {
+		t.Fatalf("stats should show zero usage with a token limit: %q", stats)
+	}
+}
+
 func TestVulnerabilityMarkdownReport(t *testing.T) {
 	report := vulnerabilityMarkdownReport(map[string]any{
 		"title":             "SQLi in login",

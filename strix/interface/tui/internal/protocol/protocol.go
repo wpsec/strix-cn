@@ -70,6 +70,7 @@ type Snapshot struct {
 	RedTeamPolicyVersion      string           `json:"redteam_policy_version"`
 	MaxBudgetUSD              *float64         `json:"max_budget_usd"`
 	MaxTurns                  int              `json:"max_turns"`
+	TokenLimit                *int             `json:"token_limit"`
 	ScopeMode                 string           `json:"scope_mode"`
 	DiffBase                  string           `json:"diff_base"`
 	Model                     string           `json:"model"`

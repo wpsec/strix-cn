@@ -11,10 +11,11 @@ import re
 from typing import Literal
 
 
-SecurityMode = Literal["normal", "redteam"]
+SecurityMode = Literal["normal", "redteam", "verify"]
 
 NORMAL_MODE: SecurityMode = "normal"
 REDTEAM_MODE: SecurityMode = "redteam"
+VERIFY_MODE: SecurityMode = "verify"
 POLICY_VERSION = "redteam-v3"
 
 _PRIVILEGE_IMPACT_MARKERS = (
@@ -184,8 +185,8 @@ _BLACKLIST_ALIASES: dict[str, str] = {
 def normalize_mode(value: object) -> SecurityMode:
     """Normalize a configured security mode or reject an invalid value."""
     mode = str(value or NORMAL_MODE).strip().lower()
-    if mode not in {NORMAL_MODE, REDTEAM_MODE}:
-        raise ValueError("mode 必须是 normal 或 redteam")
+    if mode not in {NORMAL_MODE, REDTEAM_MODE, VERIFY_MODE}:
+        raise ValueError("mode 必须是 normal、redteam 或 verify")
     return mode
 
 
@@ -277,7 +278,7 @@ def should_ignore(
     impact proof are rejected.
     """
     resolved_mode = normalize_mode(mode)
-    if resolved_mode == NORMAL_MODE:
+    if resolved_mode in {NORMAL_MODE, VERIFY_MODE}:
         return False
 
     normalized = normalize_vulnerability_type(vuln_type)
@@ -322,4 +323,5 @@ def policy_context(mode: SecurityMode) -> dict[str, object]:
         "security_mode": resolved_mode,
         "redteam_policy_version": POLICY_VERSION if resolved_mode == REDTEAM_MODE else None,
         "redteam_fail_closed": resolved_mode == REDTEAM_MODE,
+        "verification_mode": resolved_mode == VERIFY_MODE,
     }

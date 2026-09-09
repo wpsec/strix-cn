@@ -209,6 +209,31 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--request",
+        dest="verification_request",
+        metavar="PATH",
+        help="漏洞验证模式使用的 Burp Raw HTTP 或 Copy as cURL 请求文件。",
+    )
+    parser.add_argument(
+        "--issue",
+        dest="verification_issue",
+        metavar="TEXT|@FILE",
+        help="漏洞验证模式的问题描述；使用 @文件路径可从文件读取。",
+    )
+    parser.add_argument(
+        "--baseline",
+        dest="verification_baseline",
+        metavar="RUN_NAME",
+        help="漏洞验证模式使用的历史运行名，用于修复后复测。",
+    )
+    parser.add_argument(
+        "--yes",
+        dest="verification_approve",
+        action="store_true",
+        help="非交互漏洞验证模式确认执行当前验证计划。",
+    )
+
+    parser.add_argument(
         "--auth-username",
         type=str,
         metavar="USERNAME",
@@ -267,10 +292,16 @@ def parse_arguments() -> argparse.Namespace:
         help="启用红队专项模式：仅验证白名单高风险类型，并生成攻击链报告。",
     )
     mode_group.add_argument(
+        "--verify",
+        dest="verify",
+        action="store_true",
+        help="启用漏洞验证模式：根据 Burp 请求和自然语言描述复现或复测单个漏洞。",
+    )
+    mode_group.add_argument(
         "--mode",
-        choices=["normal", "redteam"],
+        choices=["normal", "redteam", "verify"],
         default=None,
-        help="安全策略模式：normal 或 redteam。默认读取 STRIX_MODE 或配置文件。",
+        help="安全策略模式：normal、redteam 或 verify。默认读取 STRIX_MODE 或配置文件。",
     )
 
     parser.add_argument(
@@ -375,7 +406,7 @@ def parse_arguments() -> argparse.Namespace:
     args.workspace_mount = None
     args.workspace_subdir = None
     args.target_credentials = None
-    args.mode_explicit = "redteam" if args.redteam else args.mode
+    args.mode_explicit = "redteam" if args.redteam else ("verify" if args.verify else args.mode)
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
@@ -385,6 +416,45 @@ def parse_arguments() -> argparse.Namespace:
     except (AttributeError, ValueError) as exc:
         parser.error(f"安全策略模式配置无效：{exc}")
     args.mode = normalize_mode(args.mode_explicit or configured_mode)
+
+    has_verification_args = any(
+        (
+            args.verification_request,
+            args.verification_issue,
+            args.verification_baseline,
+            args.verification_approve,
+        )
+    )
+    if args.mode != "verify" and has_verification_args:
+        parser.error("--request、--issue、--baseline 和 --yes 只能用于 --verify。")
+
+    if args.mode == "verify":
+        if args.redteam or args.burp_port is not None:
+            parser.error("漏洞验证模式不能与 --red 或 --burp-port 同时使用。")
+        if args.target or args.target_list or args.mount:
+            parser.error("漏洞验证模式使用 --request，不支持 --target/--target-list/--mount。")
+        if args.resume:
+            parser.error("漏洞验证模式使用 --baseline 复测，不支持 --resume。")
+        if args.verification_baseline and args.verification_issue:
+            parser.error("使用 --baseline 复测时不需要再次提供 --issue。")
+        if args.verification_issue and args.verification_issue.startswith("@"):
+            issue_path = Path(args.verification_issue[1:]).expanduser()
+            try:
+                args.verification_issue = issue_path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError) as exc:
+                parser.error(f"读取漏洞描述失败：{exc}")
+        if not args.verification_request:
+            if args.non_interactive:
+                parser.error("漏洞验证模式需要 --request <Burp请求文件>。")
+        else:
+            request_path = Path(args.verification_request).expanduser()
+            if not request_path.is_file():
+                parser.error(f"请求文件不存在：{args.verification_request}")
+            args.verification_request = str(request_path)
+        if args.non_interactive and not args.verification_baseline and not args.verification_issue:
+            parser.error("首次漏洞验证模式需要 --issue <问题描述>。")
+        if args.verification_approve and not args.non_interactive:
+            parser.error("--yes 只能用于非交互模式。")
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()
@@ -459,6 +529,9 @@ def parse_arguments() -> argparse.Namespace:
         mount_targets = list(args.mount or [])
         if mount_targets:
             args.target = list(args.target or []) + mount_targets
+
+        if args.mode == "verify":
+            return args
 
         if not args.target and not args.target_list and args.burp_port is None:
             if args.non_interactive:

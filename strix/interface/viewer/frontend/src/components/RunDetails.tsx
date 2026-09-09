@@ -105,6 +105,7 @@ export function RunDetails({
   const outputTokens = num(usage.output_tokens);
   const reasoning = num(rec(arr(usage.output_tokens_details)[0]).reasoning_tokens);
   const totalTokens = num(usage.total_tokens);
+  const tokenLimit = num(raw.token_limit);
   const cost = num(usage.cost);
   const subscription = str(raw.auth_mode) === "subscription";
 
@@ -199,7 +200,7 @@ export function RunDetails({
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#555]">
             用量与费用
           </h3>
-          {hasUsage ? (
+          {hasUsage || tokenLimit != null ? (
             <dl className="space-y-2.5 tabular-nums">
               <Field label="模型">{models.length ? models.join(", ") : "暂无"}</Field>
               {subscription && (
@@ -225,7 +226,13 @@ export function RunDetails({
                   {reasoning != null && sub(reasoning, "推理")}
                 </Field>
               )}
-              {totalTokens != null && <Field label="总 Token">{formatNumber(totalTokens)}</Field>}
+              {tokenLimit != null ? (
+                <Field label="Token 用量 / 限额">
+                  {formatNumber(totalTokens ?? 0)} / {formatNumber(tokenLimit)}
+                </Field>
+              ) : (
+                totalTokens != null && <Field label="总 Token">{formatNumber(totalTokens)}</Field>
+              )}
               {subscription ? (
                 <Field label="费用">
                   <span className="text-[#22c55e]">$0.00</span>

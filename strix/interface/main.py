@@ -462,6 +462,11 @@ def main() -> None:
 
     args = parse_arguments()
 
+    if args.mode == "verify":
+        from strix.interface.verification_cli import run_verification_cli
+
+        sys.exit(asyncio.run(run_verification_cli(args)))
+
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
         if is_binary_install() and sys.platform != "win32":
