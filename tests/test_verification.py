@@ -47,6 +47,20 @@ Cookie: session=secret-cookie
     assert "raw-secret" in json.dumps(request.to_dict())
     assert request.to_dict(redact=True)["headers"]["Authorization"] == "<redacted>"
 
+    browser_raw = """POST /api/MedicareDict/GetItemList HTTP/1.1
+Host: ygt.arrmyy.cn:4443
+Content-Type: application/json
+Origin: https://ygt.arrmyy.cn:4443
+Referer: https://ygt.arrmyy.cn:4443/
+X-Requested-With: XMLHttpRequest
+Content-Length: 42
+
+{"RegId":"1","PatId":"1","ids":["1"]}
+"""
+    inferred = parse_request_text(browser_raw)
+    assert inferred.scheme == "https"
+    assert inferred.url == "https://ygt.arrmyy.cn:4443/api/MedicareDict/GetItemList"
+
     query_secret = parse_request_text(
         "GET https://app.test/search?access_token=query-secret HTTP/1.1\nHost: app.test\n\n"
     )

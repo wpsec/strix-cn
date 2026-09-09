@@ -115,15 +115,16 @@ def _build_request(
     else:
         if not host_header:
             raise RequestParseError("请求缺少 Host，无法确定目标")
-        try:
-            host, port = _split_host_header(host_header, scheme)
-        except ValueError as exc:
-            raise RequestParseError("Host 端口无效") from exc
-        if scheme is None:
+        resolved_scheme = scheme or _infer_scheme_from_headers(headers, host_header)
+        if resolved_scheme is None:
             raise RequestParseError("请求缺少 Scheme，请明确使用 HTTP 还是 HTTPS")
-        resolved_scheme = scheme.lower()
+        resolved_scheme = resolved_scheme.lower()
         if resolved_scheme not in {"http", "https"}:
             raise RequestParseError("Scheme 只支持 http 或 https")
+        try:
+            host, port = _split_host_header(host_header, resolved_scheme)
+        except ValueError as exc:
+            raise RequestParseError("Host 端口无效") from exc
 
     if not host or any(char.isspace() for char in host):
         raise RequestParseError("目标 Host 无效")
@@ -139,6 +140,28 @@ def _build_request(
         headers=headers,
         body=body,
     )
+
+
+def _infer_scheme_from_headers(headers: dict[str, str], host_header: str) -> str | None:
+    candidates: set[str] = set()
+    for header_name in ("origin", "referer"):
+        value = _header_value(headers, header_name)
+        if not value:
+            continue
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            continue
+        try:
+            target_host, target_port = _split_host_header(host_header, parsed.scheme)
+            header_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError as exc:
+            raise RequestParseError(f"{header_name} URL 端口无效") from exc
+        if parsed.hostname.lower() == target_host and header_port == target_port:
+            candidates.add(parsed.scheme)
+
+    if len(candidates) > 1:
+        raise RequestParseError("Origin 和 Referer 中的 Scheme 不一致")
+    return next(iter(candidates), None)
 
 
 def _split_host_header(value: str, scheme: str | None) -> tuple[str, int]:

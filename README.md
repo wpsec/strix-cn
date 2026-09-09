@@ -184,6 +184,31 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 
 完整设计和报告章节说明见 [`docs/plan/100-红队专项模式设计与实现方案.md`](docs/plan/100-红队专项模式设计与实现方案.md)。
 
+### 单个漏洞验证模式
+
+`--verify` 用于复核一个具体漏洞，不启动普通扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才发送受限探针请求。
+
+```bash
+# 交互模式：按提示粘贴请求和漏洞描述
+.venv/bin/strix --verify
+
+# 非交互模式：请求文件和描述均由参数提供
+.venv/bin/strix --verify \
+  --request ./burp-request.txt \
+  --issue "疑似 IDOR，修改订单 ID 后可能读取其他用户订单" \
+  -n --yes
+
+# 修复后复测：沿用历史验证计划和探针
+.venv/bin/strix --verify \
+  --baseline <历史运行名> \
+  --request ./burp-request-after-fix.txt \
+  -n --yes
+```
+
+交互模式中，请求内容以单独一行 `__STRIX_END__` 结束。执行前会展示识别出的漏洞类型、目标字段、验证动作、预计请求数和副作用提示；IDOR/BOLA 等需要第二身份的场景会继续要求提供第二个请求包。Raw 请求缺少 Scheme 时，如果同源 `Origin` 或 `Referer` 已明确给出协议，验证模式会自动采用；否则交互模式只询问一次使用 `http` 还是 `https`，非交互模式会直接阻断。
+
+验证结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。验证模式与 `--target`、`--red`、`--mode redteam`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
+
 ## 常见用法
 
 ### 基础扫描
