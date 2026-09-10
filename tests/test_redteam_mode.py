@@ -13,10 +13,19 @@ from strix.agents import factory
 from strix.agents.prompt import render_system_prompt
 from strix.redteam.attack_chain import build_attack_chain
 from strix.redteam.depth import RedTeamDepthController, RedTeamDepthError
-from strix.redteam.policy import assess_action_risk, classify_test_priority, should_ignore
+from strix.redteam.policy import (
+    assess_action_risk,
+    classify_test_priority,
+    is_attack_chain_eligible,
+    should_ignore,
+)
 from strix.report.html_report import render_html_report
 from strix.report.state import ReportState
-from strix.report.writer import render_complete_report, render_vulnerability_md
+from strix.report.writer import (
+    render_complete_report,
+    render_vulnerability_md,
+    write_vulnerabilities,
+)
 from strix.tools.mcp import agent_tools as mcp_agent_tools
 from strix.tools.proxy import tools as proxy_tools
 from strix.tools.reporting.tool import _calculate_cvss4
@@ -97,6 +106,135 @@ def test_redteam_action_policy_is_independent_of_finding_type() -> None:
     ] is False
 
 
+def test_redteam_action_policy_checks_operation_semantics_without_blocking_host_names() -> None:
+    assert assess_action_risk(
+        "POST", "https://delete.example/api/item", mode="redteam"
+    )["allowed"] is True
+    assert assess_action_risk(
+        "POST",
+        "https://target.test/api/item",
+        body='{"operation":"delete","id":"test-object"}',
+        mode="redteam",
+    )["allowed"] is False
+    assert assess_action_risk(
+        "POST",
+        "https://target.test/api/item",
+        body='{"operation":"delete","dry_run":true}',
+        mode="redteam",
+    )["allowed"] is True
+
+
+def test_high_impact_unknown_and_natural_language_findings_can_enter_chain() -> None:
+    assert is_attack_chain_eligible(
+        "unknown finding", severity="high", impact="返回其他租户账单"
+    )
+    assert is_attack_chain_eligible(
+        "IDOR", severity="high", impact="访问管理员接口"
+    )
+
+
+def test_redteam_skip_only_accepts_low_priority_checks() -> None:
+    state = ReportState(run_name="redteam-skip-policy")
+    state.set_scan_config({"mode": "redteam", "targets": [], "scan_mode": "quick"})
+
+    with pytest.raises(ValueError, match="只有低优先级检查"):
+        state.record_redteam_skip(
+            vulnerability_type="认证绕过",
+            reason="暂缓",
+        )
+
+
+def test_mcp_scope_checks_nested_urls_and_requires_scope_for_target_urls() -> None:
+    assert mcp_agent_tools._mcp_scope_error(
+        {"caido_scope_allowlist": ["target.test"]},
+        {"request": {"url": "https://evil.test/api"}},
+    )
+    assert mcp_agent_tools._mcp_scope_error(
+        {},
+        {"request": {"url": "https://target.test/api"}},
+    )
+    assert mcp_agent_tools._mcp_scope_error(
+        {"caido_scope_allowlist": ["target.test"]},
+        {"path": "./fixture.json"},
+    ) is None
+
+
+def test_attack_chain_uses_structured_http_evidence_and_explicit_edges() -> None:
+    reports = [
+        {
+            "id": "vuln-0001",
+            "title": "Verified RCE",
+            "severity": "high",
+            "vulnerability_type": "rce",
+            "evidence": "identity proof",
+            "reproduction_requests": [
+                {
+                    "request": "POST /probe HTTP/1.1",
+                    "observed_response": "uid=1000(app)",
+                }
+            ],
+        },
+        {
+            "id": "vuln-0002",
+            "title": "Verified admin access",
+            "severity": "high",
+            "vulnerability_type": "authentication bypass",
+            "impact": "访问管理员接口",
+            "evidence": "admin response",
+            "attack_chain_parent_id": "vuln-0001",
+            "reproduction_requests": [
+                {
+                    "request": "GET /admin HTTP/1.1",
+                    "observed_response": "HTTP/1.1 200 OK",
+                }
+            ],
+        },
+    ]
+
+    chain = build_attack_chain(reports)
+    assert chain["nodes"][0]["request"] == "POST /probe HTTP/1.1"
+    assert chain["nodes"][0]["response"] == "uid=1000(app)"
+    assert chain["edges"] == [
+        {
+            "source": "vuln-0001",
+            "target": "vuln-0002",
+            "relationship": "prerequisite",
+        }
+    ]
+
+
+def test_hydrated_backfilled_evidence_rewrites_legacy_markdown(tmp_path: Any) -> None:
+    run_dir = tmp_path / "run"
+    vuln_dir = run_dir / "vulnerabilities"
+    vuln_dir.mkdir(parents=True)
+    report = {
+        "id": "vuln-0001",
+        "title": "Legacy finding",
+        "severity": "high",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "reproduction_requests": [
+            {
+                "request": "POST /legacy HTTP/1.1",
+                "observed_response": "HTTP/1.1 200 OK",
+            }
+        ],
+    }
+    (run_dir / "vulnerabilities.json").write_text(
+        json.dumps([report]), encoding="utf-8"
+    )
+    (vuln_dir / "vuln-0001.md").write_text("stale report", encoding="utf-8")
+
+    state = ReportState(run_name="legacy-hydration")
+    state._run_dir = run_dir
+    state.hydrate_from_run_dir()
+    assert "vuln-0001" not in state._saved_vuln_ids
+
+    write_vulnerabilities(run_dir, state.vulnerability_reports, state._saved_vuln_ids)
+    assert "POST /legacy HTTP/1.1" in (vuln_dir / "vuln-0001.md").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_resuming_stale_redteam_policy_is_rejected() -> None:
     state = ReportState(run_name="stale-redteam")
     state._hydrated_from_disk = True
@@ -155,7 +293,7 @@ def test_depth_controller_records_complete_credential_proofs() -> None:
 def test_redteam_prompt_is_versioned_and_safe() -> None:
     prompt = render_system_prompt(mode="redteam", scan_mode="quick", is_root=True)
     assert "REDTEAM SPECIAL MODE IS ACTIVE" in prompt
-    assert "redteam-v4" in prompt
+    assert "redteam-v5" in prompt
     assert "Never create or deploy Webshells" in prompt
     assert "reverse-shell" in prompt
     assert "exact field or file location" in prompt
@@ -262,12 +400,12 @@ def test_report_state_persists_all_findings_and_builds_separate_chain(
 
     markdown = render_complete_report(
         "# 执行摘要\n\n已完成",
-        run_record={"mode": "redteam", "policy_version": "redteam-v4"},
+        run_record={"mode": "redteam", "policy_version": "redteam-v5"},
         vulnerability_reports=state.vulnerability_reports,
     )
     html = render_html_report(
         final_scan_result="# 执行摘要\n\n已完成",
-        run_record={"mode": "redteam", "policy_version": "redteam-v4"},
+        run_record={"mode": "redteam", "policy_version": "redteam-v5"},
         vulnerability_reports=state.vulnerability_reports,
     )
     assert "observed xss" in markdown

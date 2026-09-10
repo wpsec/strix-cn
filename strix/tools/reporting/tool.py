@@ -765,6 +765,7 @@ async def _do_create(  # noqa: PLR0912
     endpoint_matrix: list[dict[str, Any]] | None = None,
     reproduction_requests: list[dict[str, Any]] | None = None,
     credential_provenance: dict[str, str] | None = None,
+    attack_chain_parent_id: str | None = None,
     cvss_4_vector: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
@@ -898,6 +899,7 @@ async def _do_create(  # noqa: PLR0912
             "response": response,
             **structured_evidence,
             "credential_provenance": credential_provenance,
+            "attack_chain_parent_id": attack_chain_parent_id,
             "cvss_4_vector": cvss_4_vector,
             "cvss_4_score": cvss_4_score,
             "cvss_4_severity": cvss_4_severity,
@@ -1048,6 +1050,7 @@ async def create_vulnerability_report(
     endpoint_matrix: list[dict[str, Any]] | None = None,
     reproduction_requests: list[dict[str, Any]] | None = None,
     credential_provenance: dict[str, str] | None = None,
+    attack_chain_parent_id: str | None = None,
     cvss_4_vector: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
@@ -1430,6 +1433,9 @@ async def create_vulnerability_report(
             Use only provenance fields such as source, response location,
             validation status, identity, scope, fingerprint, and length; do
             not place raw credential values in this field.
+        attack_chain_parent_id: Optional id of the verified finding that is a
+            prerequisite for this finding. Edges are rendered only when this
+            relationship is explicitly provided.
 
     Example (abbreviated — mirror this structure)::
 
@@ -1511,6 +1517,7 @@ async def create_vulnerability_report(
         endpoint_matrix=endpoint_matrix,
         reproduction_requests=reproduction_requests,
         credential_provenance=credential_provenance,
+        attack_chain_parent_id=attack_chain_parent_id,
         cvss_4_vector=cvss_4_vector,
         agent_id=agent_id,
         agent_name=agent_name,

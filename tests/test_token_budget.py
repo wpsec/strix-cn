@@ -53,6 +53,26 @@ def test_empty_token_limit_is_unlimited() -> None:
     assert reason == "unlimited"
 
 
+def test_redteam_priority_phases_are_enforced_without_token_limit() -> None:
+    plan = TokenBudgetPlan(enforce_priority_phases=True)
+
+    blocked, reason = plan.admit_task(task_id="medium", priority="P2")
+    assert blocked is False
+    assert reason == "priority_gate_closed:P0_P1_incomplete"
+
+    assert plan.admit_task(task_id="scope", priority="P0")[0] is True
+    blocked, reason = plan.admit_task(task_id="validation", priority="P1")
+    assert blocked is False
+    assert reason == "priority_gate_closed:P0_incomplete"
+
+    plan.mark_task_completed("scope")
+    plan.mark_priority_completed("P0")
+    assert plan.admit_task(task_id="validation", priority="P1")[0] is True
+    blocked, reason = plan.admit_task(task_id="medium-again", priority="P2")
+    assert blocked is False
+    assert reason == "priority_gate_closed:P0_P1_incomplete"
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

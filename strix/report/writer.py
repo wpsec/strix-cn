@@ -444,7 +444,7 @@ def _render_redteam_report(
         f"- 运行：{_escape_inline(run_record.get('run_name') or '未命名运行')}",
         f"- 目标：{_escape_inline('、'.join(targets) if targets else '当前运行未记录目标')}",
         "- 模式：redteam",
-        f"- 策略版本：{_escape_inline(run_record.get('policy_version') or 'redteam-v4')}",
+        f"- 策略版本：{_escape_inline(run_record.get('policy_version') or 'redteam-v5')}",
         "",
         "## 攻击链路摘要",
         "",

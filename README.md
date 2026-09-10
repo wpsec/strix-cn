@@ -193,7 +193,7 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 ```json
 {
   "mode": "redteam",
-  "policy_version": "redteam-v4"
+  "policy_version": "redteam-v5"
 }
 ```
 

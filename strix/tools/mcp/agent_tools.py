@@ -22,6 +22,7 @@ automatically.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -71,18 +72,47 @@ def _mcp_scope_error(context: dict[str, Any], arguments: dict[str, Any]) -> str 
         for pattern in context.get("caido_scope_denylist", []) or []
         if isinstance(pattern, str) and pattern
     ]
-    if not (allowlist or denylist):
+    hosts = sorted(set(_mcp_argument_hosts(arguments)))
+    if not hosts:
         return None
-    for key in ("url", "target_url", "endpoint", "target"):
-        value = arguments.get(key)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        parsed = urlparse(value.strip())
-        if not parsed.hostname:
-            continue
-        if not host_matches_scope(parsed.hostname, allowlist=allowlist, denylist=denylist):
-            return f"MCP 目标主机 {parsed.hostname} 不在当前 Strix 作用域内，已拒绝调用"
+    if not (allowlist or denylist):
+        return "MCP 请求包含目标 URL，但当前运行没有可用的 Strix 作用域，已拒绝调用"
+    for hostname in hosts:
+        if not host_matches_scope(hostname, allowlist=allowlist, denylist=denylist):
+            return f"MCP 目标主机 {hostname} 不在当前 Strix 作用域内，已拒绝调用"
     return None
+
+
+def _mcp_argument_hosts(value: object, *, key_hint: str = "") -> list[str]:
+    """Find absolute and raw-request hosts at any nesting level."""
+    if isinstance(value, dict):
+        hosts: list[str] = []
+        for key, nested in value.items():
+            hosts.extend(_mcp_argument_hosts(nested, key_hint=str(key).lower()))
+        return hosts
+    if isinstance(value, list):
+        nested_hosts: list[str] = []
+        for nested in value:
+            nested_hosts.extend(_mcp_argument_hosts(nested, key_hint=key_hint))
+        return nested_hosts
+    if not isinstance(value, str) or not value.strip():
+        return []
+
+    text = value.strip()
+    candidates = [text]
+    candidates.extend(re.findall(r"https?://[^\s\"'<>]+", text, flags=re.IGNORECASE))
+    if key_hint in {"host", "hostname"} and "://" not in text:
+        candidates.append(f"https://{text}")
+    candidates.extend(
+        f"https://{host}"
+        for host in re.findall(r"(?im)^host:\s*([^\s]+)", text)
+    )
+    parsed_hosts: list[str] = []
+    for candidate in candidates:
+        parsed = urlparse(candidate.rstrip(".,);"))
+        if parsed.hostname:
+            parsed_hosts.append(parsed.hostname)
+    return parsed_hosts
 
 
 @function_tool(timeout=60)
@@ -204,9 +234,11 @@ async def call_mcp(
     if scope_error is not None:
         return {"success": False, "skipped": True, "error": scope_error, "risk": "out_of_scope"}
     action = assess_action_risk(
-        tool,
-        json.dumps(arguments or {}, ensure_ascii=False, sort_keys=True, default=str),
+        "MCP",
+        "",
         mode=mode,
+        action_name=f"{connection}.{tool}",
+        body=arguments or {},
     )
     if not bool(action["allowed"]):
         return {

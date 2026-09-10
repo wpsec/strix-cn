@@ -8,8 +8,10 @@ remain testable and reportable; only the action boundary can deny a request.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Literal
+from urllib.parse import parse_qs, urlparse
 
 
 SecurityMode = Literal["normal", "redteam", "verify"]
@@ -17,7 +19,7 @@ SecurityMode = Literal["normal", "redteam", "verify"]
 NORMAL_MODE: SecurityMode = "normal"
 REDTEAM_MODE: SecurityMode = "redteam"
 VERIFY_MODE: SecurityMode = "verify"
-POLICY_VERSION = "redteam-v4"
+POLICY_VERSION = "redteam-v5"
 
 _PRIVILEGE_IMPACT_MARKERS = (
     "未授权身份",
@@ -60,6 +62,11 @@ _ACCESS_IMPACT_MARKERS = (
     "找回密码",
     "重置密码",
     "敏感数据",
+    "其他用户",
+    "其他租户",
+    "管理员接口",
+    "管理接口",
+    "后台接口",
     "sensitive data",
     "default credential",
     "默认凭据",
@@ -271,6 +278,83 @@ _DESTRUCTIVE_ACTION_MARKERS = (
     "清空",
     "停机",
 )
+_OPERATION_KEYS = frozenset(
+    {
+        "action",
+        "command",
+        "intent",
+        "method",
+        "mutation",
+        "operation",
+        "op",
+        "requestaction",
+        "resourceaction",
+        "verb",
+    }
+)
+_DRY_RUN_MARKERS = ("dry-run", "dry_run", "preview", "simulate", "simulation")
+
+
+def _contains_action_marker(value: object) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    return any(
+        (
+            re.search(rf"(?<![a-z]){re.escape(marker)}(?![a-z])", text) is not None
+            if marker.isascii()
+            else marker in text
+        )
+        for marker in _DESTRUCTIVE_ACTION_MARKERS
+    )
+
+
+def _has_operation_marker(value: object) -> bool:
+    """Inspect operation-shaped fields without treating arbitrary data as intent."""
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if normalized_key in _OPERATION_KEYS and _contains_action_marker(nested):
+                return True
+            if isinstance(nested, (dict, list)) and _has_operation_marker(nested):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_has_operation_marker(item) for item in value)
+    return False
+
+
+def _parse_action_body(body: object) -> object:
+    if isinstance(body, (dict, list)):
+        return body
+    if not isinstance(body, str):
+        return body
+    stripped = body.strip()
+    if not stripped:
+        return body
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        form = parse_qs(stripped, keep_blank_values=True)
+        return form or body
+    return decoded
+
+
+def _has_dry_run_marker(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if normalized_key in {"dryrun", "preview", "simulate", "simulation"} and (
+                nested is True
+                or str(nested).strip().lower() not in {"", "false", "0", "no"}
+            ):
+                return True
+            if isinstance(nested, (dict, list)) and _has_dry_run_marker(nested):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_has_dry_run_marker(item) for item in value)
+    return any(marker in str(value or "").strip().lower() for marker in _DRY_RUN_MARKERS)
 
 
 def normalize_mode(value: object) -> SecurityMode:
@@ -344,7 +428,15 @@ def has_verified_privilege_impact(impact: object) -> bool:
     return (
         bool(text)
         and not any(marker in text for marker in _SPECULATIVE_IMPACT_MARKERS)
-        and any(marker in text for marker in _PRIVILEGE_IMPACT_MARKERS)
+        and (
+            any(marker in text for marker in _PRIVILEGE_IMPACT_MARKERS)
+            or re.search(
+                r"(?:获得|获取|切换|成为|返回).{0,20}(?:管理员|root|高权限|特权|身份)",
+                text,
+            )
+            is not None
+            or re.search(r"\buid\s*=\s*0\b", text) is not None
+        )
     )
 
 
@@ -354,7 +446,21 @@ def has_verified_access_impact(impact: object) -> bool:
     return (
         bool(text)
         and not any(marker in text for marker in _SPECULATIVE_IMPACT_MARKERS)
-        and any(marker in text for marker in _ACCESS_IMPACT_MARKERS)
+        and (
+            any(marker in text for marker in _ACCESS_IMPACT_MARKERS)
+            or re.search(
+                r"(?:访问|调用|读取|写入|执行|返回).{0,20}"
+                r"(?:管理员|管理|后台|其他用户|其他租户|敏感|受限|admin)",
+                text,
+            )
+            is not None
+            or re.search(
+                r"返回.{0,20}(?:其他用户|其他租户|敏感|受限).{0,20}"
+                r"(?:数据|账单|记录|资源)",
+                text,
+            )
+            is not None
+        )
     )
 
 
@@ -371,6 +477,8 @@ def assess_action_risk(
     url: object,
     *,
     mode: SecurityMode = NORMAL_MODE,
+    body: object = None,
+    action_name: object = None,
 ) -> dict[str, object]:
     """Apply the red-team action boundary independently of finding labels.
 
@@ -384,16 +492,24 @@ def assess_action_risk(
         return {"allowed": True, "risk": "unrestricted", "reason": "非红队专项模式"}
     method_text = str(method or "").strip().upper()
     url_text = str(url or "").strip().lower()
-    is_dry_run = any(marker in url_text for marker in ("dry-run", "dry_run", "preview"))
-    path_is_destructive = any(
-        (
-            re.search(rf"(?<![a-z]){re.escape(marker)}(?![a-z])", url_text) is not None
-            if marker.isascii()
-            else marker in url_text
-        )
-        for marker in _DESTRUCTIVE_ACTION_MARKERS
+    parsed_url = urlparse(url_text)
+    action_url_text = parsed_url.path or (url_text if "://" not in url_text else "")
+    query_parameters = parse_qs(parsed_url.query, keep_blank_values=True)
+    parsed_body = _parse_action_body(body)
+    is_dry_run = (
+        any(marker in action_url_text for marker in _DRY_RUN_MARKERS)
+        or _has_dry_run_marker(query_parameters)
+        or _has_dry_run_marker(parsed_body)
     )
-    if method_text == "DELETE" or (path_is_destructive and not is_dry_run):
+    path_is_destructive = _contains_action_marker(action_url_text)
+    operation_is_destructive = _has_operation_marker(query_parameters) or _has_operation_marker(
+        parsed_body
+    )
+    named_action_is_destructive = _contains_action_marker(action_name)
+    if method_text == "DELETE" or (
+        (path_is_destructive or operation_is_destructive or named_action_is_destructive)
+        and not is_dry_run
+    ):
         return {
             "allowed": False,
             "risk": "destructive",
@@ -465,10 +581,16 @@ def is_attack_chain_eligible(
     if str(severity or "").strip().lower() not in {"critical", "high"}:
         return False
     normalized = normalize_vulnerability_type(vulnerability_type)
+    verified_impact = (
+        has_verified_access_impact(impact)
+        or has_verified_privilege_impact(impact)
+        or has_credential_observation(impact)
+    )
+    if normalized is None:
+        # A missing taxonomy must not erase a demonstrated high-impact finding.
+        return verified_impact
     if normalized not in _ATTACK_CHAIN_TYPES:
-        return False
-    if normalized in _LOW_PRIORITY_TYPES:
-        return False
+        return verified_impact and normalized in _LOW_PRIORITY_TYPES
     if normalized in {"privilege_acquisition"} and not has_verified_privilege_impact(impact):
         return False
     if normalized in {
@@ -491,7 +613,7 @@ def is_attack_chain_eligible(
         "writable_file_upload",
         "sensitive_information_disclosure",
         "file_read_write",
-    } and not (has_verified_access_impact(impact) or has_verified_privilege_impact(impact)):
+    } and not verified_impact:
         return False
     if normalized == "credential_exposure_observed" and not has_credential_observation(impact):
         return False

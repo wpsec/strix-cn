@@ -66,7 +66,7 @@ def normalize_token_priority(value: Any) -> TokenPriority:
     priority = str(value or "P2").strip().upper()
     if priority not in TOKEN_PRIORITIES:
         raise ValueError(f"任务优先级必须是 P0、P1、P2 或 P3: {value!r}")
-    return priority  # type: ignore[return-value]
+    return priority
 
 
 def normalize_task_estimate(value: Any) -> int:
@@ -96,6 +96,7 @@ class TokenBudgetPlan:
     skipped_tasks: list[dict[str, Any]] = field(default_factory=list)
     planned_tasks: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str | None = None
+    enforce_priority_phases: bool = False
 
     def __post_init__(self) -> None:
         self.limit = normalize_token_limit(self.limit)
@@ -170,17 +171,18 @@ class TokenBudgetPlan:
                 }
             )
 
+        if self.enforce_priority_phases or self.limit is not None:
+            priority_gate_reason = self._priority_gate_reason(normalized_priority)
+            if priority_gate_reason is not None:
+                task["status"] = "skipped"
+                task["reason"] = priority_gate_reason
+                self.skipped_tasks.append(task)
+                return False, priority_gate_reason
+
         if self.limit is None:
             reason = "unlimited"
             self.planned_tasks.append(task)
             return True, reason
-
-        priority_gate_reason = self._priority_gate_reason(normalized_priority)
-        if priority_gate_reason is not None:
-            task["status"] = "skipped"
-            task["reason"] = priority_gate_reason
-            self.skipped_tasks.append(task)
-            return False, priority_gate_reason
 
         committed_tokens = sum(
             int(item.get("estimated_tokens", 0) or 0)
@@ -215,7 +217,9 @@ class TokenBudgetPlan:
             if item.get("status") in {"admitted", "running"}
         }
         completed = set(self.completed_priorities)
-        if priority == "P1" and "P0" not in completed:
+        if priority == "P1" and (
+            "P0" not in completed or bool(active_priorities & {"P0"})
+        ):
             return "priority_gate_closed:P0_incomplete"
         if priority == "P2" and (
             not {"P0", "P1"}.issubset(completed)
@@ -269,6 +273,7 @@ class TokenBudgetPlan:
     def to_record(self) -> dict[str, Any]:
         return {
             "token_limit": self.limit,
+            "priority_phase_gating": self.enforce_priority_phases,
             "tokens_used": self.tokens_used,
             "tokens_remaining": self.tokens_remaining,
             "token_limit_status": self.status,
@@ -285,9 +290,13 @@ class TokenBudgetPlan:
         effective_tokens = usage_record.get("effective_total_tokens")
         if effective_tokens is None:
             effective_tokens = usage_record.get("total_tokens", 0)
+        recorded_tokens = record.get("tokens_used", effective_tokens)
+        if not isinstance(recorded_tokens, int):
+            recorded_tokens = 0
         plan = cls(
             limit=record.get("token_limit"),
-            tokens_used=record.get("tokens_used", effective_tokens),
+            enforce_priority_phases=bool(record.get("priority_phase_gating", False)),
+            tokens_used=recorded_tokens,
             estimated_tokens=usage_record.get("estimated_tokens", 0),
         )
         status = record.get("token_limit_status")

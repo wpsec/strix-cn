@@ -531,6 +531,7 @@ async def repeat_request(
             modified["method"],
             modified["url"],
             mode=mode,
+            body=modified.get("body"),
         )
         if not bool(action["allowed"]):
             raise ValueError(str(action["reason"]))

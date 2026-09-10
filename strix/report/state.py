@@ -114,6 +114,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "discovery_trace",
         "endpoint_matrix",
         "reproduction_requests",
+        "attack_chain_parent_id",
     }
 )
 
@@ -332,6 +333,9 @@ class ReportState:
         if data:
             self.run_record.update(data)
             self._token_budget = TokenBudgetPlan.from_record(self.run_record)
+            self._token_budget.enforce_priority_phases = (
+                normalize_mode(self.run_record.get("mode", "normal")) == "redteam"
+            )
             self._hydrated_from_disk = True
             if isinstance(data.get("start_time"), str):
                 self.start_time = data["start_time"]
@@ -407,16 +411,22 @@ class ReportState:
                     r["finding_class"] = (
                         "dependency_cve" if r.get("dependency_metadata") else "dynamic"
                     )
+                evidence_before = (r.get("request"), r.get("response"))
                 backfill_report_http_evidence(r)
+                evidence_changed = evidence_before != (r.get("request"), r.get("response"))
                 title = r.get("title")
-                stale_md = False
+                stale_md = evidence_changed
                 if isinstance(title, str):
                     r["title"] = _clean_title(title)
-                    stale_md = r["title"] != title
+                    stale_md = evidence_changed or r["title"] != title
                 rid = r.get("id")
                 # A finding already on disk keeps its markdown, unless cleaning
                 # changed the title: the heading on disk then needs a rewrite.
-                if isinstance(rid, str) and not stale_md:
+                if (
+                    isinstance(rid, str)
+                    and not stale_md
+                    and (run_dir / "vulnerabilities" / f"{rid}.md").is_file()
+                ):
                     self._saved_vuln_ids.add(rid)
             logger.info(
                 "report state hydrated %d vulnerability report(s)",
@@ -463,6 +473,7 @@ class ReportState:
         endpoint_matrix: list[dict[str, Any]] | None = None,
         reproduction_requests: list[dict[str, Any]] | None = None,
         credential_provenance: dict[str, str] | None = None,
+        attack_chain_parent_id: str | None = None,
         cvss_4_vector: str | None = None,
         cvss_4_score: float | None = None,
         cvss_4_severity: str | None = None,
@@ -492,6 +503,8 @@ class ReportState:
             report["vulnerability_type"] = normalized_type
         if permission_proof:
             report["permission_proof"] = permission_proof.strip()
+        if attack_chain_parent_id:
+            report["attack_chain_parent_id"] = attack_chain_parent_id.strip()
         if request:
             report["request"] = request.strip()
         if response:
@@ -724,6 +737,11 @@ class ReportState:
             raise ValueError("跳过原因不能为空")
         raw_type = str(vulnerability_type or "").strip() or "unknown"
         priority = classify_test_priority(raw_type, impact=impact)
+        if priority["priority"] != "low":
+            raise ValueError(
+                "只有低优先级检查可以记录为效率跳过项；高优先级或未分类问题必须执行、"
+                "形成报告，或记录证据缺口"
+            )
         entry: dict[str, Any] = {
             "vulnerability_type_raw": raw_type,
             "priority": priority["priority"],
@@ -966,6 +984,7 @@ class ReportState:
                     "如需追加额度，请显式提供更大的总上限。"
                 )
             self._token_budget = TokenBudgetPlan.from_record(self.run_record)
+            self._token_budget.enforce_priority_phases = mode == "redteam"
             if persisted_limit is not None and token_limit is None:
                 token_limit = persisted_limit
             if token_limit is not None and token_limit != persisted_limit:
@@ -973,7 +992,10 @@ class ReportState:
                 self._token_budget.stop_reason = None
                 self._token_budget._refresh_status()
         else:
-            self._token_budget = TokenBudgetPlan(limit=token_limit)
+            self._token_budget = TokenBudgetPlan(
+                limit=token_limit,
+                enforce_priority_phases=mode == "redteam",
+            )
         self.scan_config = config
         self.caido_url = None
         self.caido_ui_url = None
