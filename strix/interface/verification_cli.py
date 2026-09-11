@@ -22,7 +22,7 @@ from strix.verification.planner import VerificationPlanError
 from strix.verification.request import RequestParseError, parse_request_text
 from strix.verification.runner import (
     persist_verification_failure,
-    run_verification_case,
+    run_verification_case_in_sandbox,
 )
 
 
@@ -174,6 +174,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
             )
         intent = None
         if issue is not None and not getattr(args, "verification_baseline", None):
+            console.print("[dim]正在生成验证计划（尚未启动容器）...[/]")
             intent = await infer_verification_intent(
                 VerificationCase(
                     request=parse_request_text(request_text, scheme=request_scheme),
@@ -186,7 +187,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
             )
         approved = bool(getattr(args, "verification_approve", False))
         side_effect_approved = approved
-        run_dir, plan, result = run_verification_case(
+        run_dir, plan, result = await run_verification_case_in_sandbox(
             request_file=request_path,
             issue=issue,
             baseline_run=getattr(args, "verification_baseline", None),
@@ -197,6 +198,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
             secondary_scheme=secondary_scheme,
             controlled_canary_url=getattr(args, "verification_canary_url", None),
             intent=intent,
+            status_sink=lambda phase: console.print(f"[dim]{phase}[/]"),
         )
         plan_displayed = False
         if not getattr(args, "non_interactive", False) and result.status in {
@@ -222,6 +224,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                 console=console,
                 non_interactive=False,
             )
+            console.print("[dim]正在根据第二身份请求重新生成验证计划（尚未启动容器）...[/]")
             intent = await infer_verification_intent(
                 VerificationCase(
                     request=parse_request_text(request_text, scheme=request_scheme),
@@ -232,7 +235,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                     controlled_canary_url=getattr(args, "verification_canary_url", None),
                 )
             )
-            run_dir, plan, result = run_verification_case(
+            run_dir, plan, result = await run_verification_case_in_sandbox(
                 request_file=request_path,
                 issue=issue,
                 baseline_run=getattr(args, "verification_baseline", None),
@@ -243,6 +246,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                 secondary_scheme=secondary_scheme,
                 controlled_canary_url=getattr(args, "verification_canary_url", None),
                 intent=intent,
+                status_sink=lambda phase: console.print(f"[dim]{phase}[/]"),
             )
             plan_displayed = False
         if (
@@ -259,7 +263,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                         "该计划可能产生业务副作用，仍然继续？",
                         default=False,
                     )
-                run_dir, plan, result = run_verification_case(
+                run_dir, plan, result = await run_verification_case_in_sandbox(
                     request_file=request_path,
                     issue=issue,
                     baseline_run=getattr(args, "verification_baseline", None),
@@ -270,6 +274,7 @@ async def run_verification_cli(args: Any) -> int:  # noqa: PLR0912, PLR0915
                     secondary_scheme=secondary_scheme,
                     controlled_canary_url=getattr(args, "verification_canary_url", None),
                     intent=intent,
+                    status_sink=lambda phase: console.print(f"[dim]{phase}[/]"),
                 )
         console.print(Panel(_result_text(result, run_dir), title="漏洞验证结果"))
         if result.status in {"verified_vulnerable", "still_vulnerable"}:

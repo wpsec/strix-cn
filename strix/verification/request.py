@@ -34,6 +34,9 @@ _AUTH_HEADERS = frozenset(
 _FIELD_NAME_RE = re.compile(
     r"(?i)(?:id|uuid|key|url|uri|path|file|name|query|search|redirect|callback)"
 )
+_JSON_PATH_SEGMENT_RE = re.compile(r"^([^.\[\]]+)((?:\[\d+\])*)$")
+_MAX_JSON_FIELD_DEPTH = 8
+_MAX_CANDIDATE_FIELDS = 200
 
 
 def parse_request_file(path: str | Path, *, scheme: str | None = None) -> CanonicalRequest:
@@ -97,6 +100,7 @@ def _build_request(
 ) -> CanonicalRequest:
     parsed = urlsplit(target)
     host_header = _header_value(headers, "host")
+    resolved_scheme: str | None
     if parsed.scheme and parsed.netloc:
         resolved_scheme = parsed.scheme.lower()
         if resolved_scheme not in {"http", "https"}:
@@ -324,11 +328,7 @@ def list_candidate_fields(request: CanonicalRequest) -> list[str]:
         fields.append(f"query.{name}")
     body_json = _body_json(request)
     if isinstance(body_json, dict):
-        for name, value in body_json.items():
-            if isinstance(value, list):
-                fields.extend(f"body.{name}[{index}]" for index in range(len(value)))
-            else:
-                fields.append(f"body.{name}")
+        _append_json_leaf_fields(body_json, "body", fields)
     elif "application/x-www-form-urlencoded" in _content_type(request).lower():
         for name, _value in parse_qsl(request.body, keep_blank_values=True):
             fields.append(f"form.{name}")
@@ -346,6 +346,33 @@ def list_candidate_fields(request: CanonicalRequest) -> list[str]:
     return fields
 
 
+def _append_json_leaf_fields(value: Any, path: str, fields: list[str], depth: int = 0) -> None:
+    """Expose bounded JSON leaf paths so nested request parameters remain testable."""
+    if len(fields) >= _MAX_CANDIDATE_FIELDS or depth > _MAX_JSON_FIELD_DEPTH:
+        return
+    if isinstance(value, dict):
+        for name, child in value.items():
+            name_text = str(name)
+            if not name_text or "." in name_text or "[" in name_text or "]" in name_text:
+                continue
+            child_path = f"{path}.{name_text}"
+            if isinstance(child, (dict, list)):
+                _append_json_leaf_fields(child, child_path, fields, depth + 1)
+            else:
+                fields.append(child_path)
+                if len(fields) >= _MAX_CANDIDATE_FIELDS:
+                    return
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            child_path = f"{path}[{index}]"
+            if isinstance(child, (dict, list)):
+                _append_json_leaf_fields(child, child_path, fields, depth + 1)
+            else:
+                fields.append(child_path)
+                if len(fields) >= _MAX_CANDIDATE_FIELDS:
+                    return
+
+
 def prioritize_fields(fields: list[str], issue: str) -> list[str]:
     words = set(re.findall(r"[A-Za-z0-9_-]+", issue.lower()))
 
@@ -361,15 +388,16 @@ def prioritize_fields(fields: list[str], issue: str) -> list[str]:
 
 def get_field(request: CanonicalRequest, field: str) -> str | None:
     location, _, name = field.partition(".")
+    result: str | None = None
     if location == "query":
-        return next((value for key, value in request.query if key == name), None)
-    if location == "header":
-        return _header_value(request.headers, name)
-    if location == "cookie":
+        result = next((value for key, value in request.query if key == name), None)
+    elif location == "header":
+        result = _header_value(request.headers, name)
+    elif location == "cookie":
         cookies = _parse_cookie(_header_value(request.headers, "cookie") or "")
-        return cookies.get(name)
-    if location == "form":
-        return next(
+        result = cookies.get(name)
+    elif location == "form":
+        result = next(
             (
                 value
                 for key, value in parse_qsl(request.body, keep_blank_values=True)
@@ -377,12 +405,17 @@ def get_field(request: CanonicalRequest, field: str) -> str | None:
             ),
             None,
         )
-    if location == "body":
+    elif location == "body":
         payload = _body_json(request)
         if isinstance(payload, dict):
             value = _get_json_field(payload, name)
-            return str(value) if value is not None else None
-    return None
+            if value is not None:
+                result = (
+                    value
+                    if isinstance(value, str)
+                    else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                )
+    return result
 
 
 def set_field(request: CanonicalRequest, field: str, value: str) -> CanonicalRequest:
@@ -424,42 +457,54 @@ def set_field(request: CanonicalRequest, field: str, value: str) -> CanonicalReq
     return result
 
 
-def _json_field_path(name: str) -> tuple[str, list[int]]:
-    match = re.fullmatch(r"([^\[\].]+)((?:\[\d+\])*)", name)
-    if not match:
-        raise RequestParseError(f"不支持的 JSON 字段路径：body.{name}")
-    indexes = [int(item) for item in re.findall(r"\[(\d+)\]", match.group(2))]
-    return match.group(1), indexes
+def _json_field_path(name: str) -> list[str | int]:
+    if not name:
+        raise RequestParseError("不支持的 JSON 字段路径：body.")
+    tokens: list[str | int] = []
+    for segment in name.split("."):
+        match = _JSON_PATH_SEGMENT_RE.fullmatch(segment)
+        if not match:
+            raise RequestParseError(f"不支持的 JSON 字段路径：body.{name}")
+        tokens.append(match.group(1))
+        tokens.extend(int(item) for item in re.findall(r"\[(\d+)\]", match.group(2)))
+    return tokens
 
 
 def _get_json_field(payload: dict[str, Any], name: str) -> Any:
-    root, indexes = _json_field_path(name)
-    if root not in payload:
-        return None
-    value: Any = payload[root]
-    for index in indexes:
-        if not isinstance(value, list) or index >= len(value):
-            return None
-        value = value[index]
+    value: Any = payload
+    for token in _json_field_path(name):
+        if isinstance(token, str):
+            if not isinstance(value, dict) or token not in value:
+                return None
+            value = value[token]
+        else:
+            if not isinstance(value, list) or token >= len(value):
+                return None
+            value = value[token]
     return value
 
 
 def _set_json_field(payload: dict[str, Any], name: str, value: str) -> None:
-    root, indexes = _json_field_path(name)
-    if not indexes:
-        if root not in payload:
+    tokens = _json_field_path(name)
+    current: Any = payload
+    for token in tokens[:-1]:
+        if isinstance(token, str):
+            if not isinstance(current, dict) or token not in current:
+                raise RequestParseError(f"无法修改请求字段：body.{name}")
+            current = current[token]
+        else:
+            if not isinstance(current, list) or token >= len(current):
+                raise RequestParseError(f"无法修改请求字段：body.{name}")
+            current = current[token]
+    final_token = tokens[-1]
+    if isinstance(final_token, str):
+        if not isinstance(current, dict) or final_token not in current:
             raise RequestParseError(f"请求中不存在 JSON 字段：body.{name}")
-        payload[root] = value
-        return
-    current: Any = payload.get(root)
-    for index in indexes[:-1]:
-        if not isinstance(current, list) or index >= len(current):
-            raise RequestParseError(f"无法修改请求字段：body.{name}")
-        current = current[index]
-    final_index = indexes[-1]
-    if not isinstance(current, list) or final_index >= len(current):
+        current[final_token] = value
+    elif not isinstance(current, list) or final_token >= len(current):
         raise RequestParseError(f"无法修改请求字段：body.{name}")
-    current[final_index] = value
+    else:
+        current[final_token] = value
 
 
 def remove_authentication(request: CanonicalRequest) -> CanonicalRequest:

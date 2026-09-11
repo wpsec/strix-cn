@@ -463,6 +463,10 @@ def main() -> None:
     args = parse_arguments()
 
     if args.mode == "verify":
+        # Verification requests run inside the same sandbox runtime as normal
+        # scans. Only reap stale sessions here; defer all Docker startup until
+        # the user has approved the generated verification plan.
+        session_manager.reap_stale_docker_sessions()
         from strix.interface.verification_cli import run_verification_cli
 
         sys.exit(asyncio.run(run_verification_cli(args)))

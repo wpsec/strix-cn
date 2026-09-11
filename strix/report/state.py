@@ -1033,6 +1033,10 @@ class ReportState:
                 "burp_port": config.get("burp_port"),
                 "credential_auth_available": bool(config.get("credential_auth_available", False)),
                 "allow_credential_attacks": bool(config.get("allow_credential_attacks", False)),
+                # Keep only the seed's routing/shape metadata in the run record;
+                # its raw contents stay in the read-only workspace file.
+                "seed_request": config.get("seed_request"),
+                "redteam_hypothesis": config.get("redteam_hypothesis"),
                 "token_limit": token_limit,
             }
         )

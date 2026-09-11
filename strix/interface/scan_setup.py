@@ -264,6 +264,10 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "local_sources": getattr(args, "local_sources", []),
         # Persisted so --resume places the same workspace files again.
         "workspace_files": getattr(args, "workspace_files", []),
+        # Only routing/shape metadata is persisted; the raw request remains in
+        # the read-only workspace-file entry above.
+        "seed_request": getattr(args, "seed_request", None),
+        "redteam_hypothesis": getattr(args, "redteam_hypothesis", None),
         # Persisted so --resume can remount the workspace: it is not a target,
         # so it cannot be rebuilt from targets_info.
         "workspace_mount": getattr(args, "workspace_mount", None),

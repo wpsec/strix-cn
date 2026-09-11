@@ -219,6 +219,38 @@ def test_build_root_task_web_application_with_instructions() -> None:
     assert "Special instructions: Focus on auth." in task
 
 
+def test_build_root_task_renders_redteam_seed_without_request_contents() -> None:
+    task = build_root_task(
+        {
+            "targets": [
+                {
+                    "type": "web_application",
+                    "details": {"target_url": "https://app.example.com"},
+                }
+            ],
+            "mode": "redteam",
+            "seed_request": {
+                "workspace_path": "/workspace/.strix/seed-request.txt",
+                "scheme": "https",
+                "host": "app.example.com",
+                "port": 443,
+                "method": "POST",
+                "path": "/api/items",
+                "query_keys": ["itemId"],
+                "issue": "ignored outside the root task",
+            },
+            "redteam_hypothesis": "检查 itemId 是否存在越权",
+        }
+    )
+
+    assert "Focused Red-Team Seed:" in task
+    assert "/workspace/.strix/seed-request.txt" in task
+    assert "POST https://app.example.com:443/api/items" in task
+    assert "itemId" in task
+    assert "检查 itemId 是否存在越权" in task
+    assert "do not stop after one deterministic mutation" in task
+
+
 def test_target_credentials_are_referenced_by_variable_name_only() -> None:
     config = {
         "targets": [

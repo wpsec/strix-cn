@@ -31,11 +31,13 @@ from strix.verification import (
     executor,
     parse_intent_response,
     parse_request_text,
+    sandbox_transport,
 )
-from strix.verification.executor import HttpObservation, execute_plan
+from strix.verification import runner as verification_runner
+from strix.verification.executor import HttpObservation, execute_plan, execute_plan_in_sandbox
 from strix.verification.models import redact_response_body, request_shape_sha256
 from strix.verification.request import get_field, list_candidate_fields, set_field
-from strix.verification.runner import run_verification_case
+from strix.verification.runner import run_verification_case, run_verification_case_in_sandbox
 
 
 def test_raw_and_curl_requests_preserve_replay_credentials() -> None:
@@ -108,6 +110,139 @@ Content-Length: 42
         scheme="https",
     )
     assert request_shape_sha256(request) == request_shape_sha256(changed_value)
+
+
+def test_nested_json_leaf_fields_are_available_for_description_driven_mutation() -> None:
+    request = parse_request_text(
+        "POST https://app.test/export HTTP/1.1\n"
+        "Host: app.test\n"
+        "Content-Type: application/json\n\n"
+        '{"dataPackage":{"configList":[{"conditionSql":"SAFE","modelId":"model-1"}]}}'
+    )
+
+    field = "body.dataPackage.configList[0].conditionSql"
+    assert field in list_candidate_fields(request)
+    mutated = set_field(request, field, "PROBE")
+    assert get_field(mutated, field) == "PROBE"
+    assert json.loads(mutated.body)["dataPackage"]["configList"][0]["conditionSql"] == "PROBE"
+
+
+def test_intent_parser_normalizes_json_scalar_probe_values() -> None:
+    intent = parse_intent_response(
+        json.dumps(
+            {
+                "vulnerability_type": "输入处理问题",
+                "strategy_kind": "field_mutation",
+                "target_fields": ["body.id"],
+                "probes": [
+                    {"field": "body.id", "value": 7, "action": "set"},
+                    {"field": "body.id", "value": True, "action": "set"},
+                ],
+                "oracle_kind": "response_difference",
+                "oracle_description": "比较响应差异。",
+                "rationale": "验证标量输入。",
+                "confidence": 0.8,
+            },
+            ensure_ascii=False,
+        ),
+        candidate_fields=["body.id"],
+    )
+    assert [probe.value for probe in intent.probes] == ["7", "true"]
+
+
+def test_sandbox_transport_routes_http_and_https_through_container_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeResponse:
+        status = 204
+
+        @staticmethod
+        def getheaders() -> list[tuple[str, str]]:
+            return []
+
+        @staticmethod
+        def read(_limit: int) -> bytes:
+            return b"ok"
+
+    class FakeConnection:
+        def __init__(self, host: str, port: int, **kwargs: Any) -> None:
+            captured["connection"] = (host, port, kwargs)
+
+        def set_tunnel(self, host: str, port: int) -> None:
+            captured["tunnel"] = (host, port)
+
+        def request(
+            self,
+            method: str,
+            target: str,
+            *,
+            body: bytes,
+            headers: dict[str, str],
+        ) -> None:
+            captured["request"] = (method, target, body, headers)
+
+        @staticmethod
+        def getresponse() -> FakeResponse:
+            return FakeResponse()
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    for name in (
+        "http_proxy",
+        "HTTP_PROXY",
+        "https_proxy",
+        "HTTPS_PROXY",
+        "all_proxy",
+        "ALL_PROXY",
+        "no_proxy",
+        "NO_PROXY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:48081")
+    monkeypatch.setattr(sandbox_transport.http.client, "HTTPConnection", FakeConnection)
+    http_result = sandbox_transport._send(
+        {
+            "id": "http",
+            "request": {
+                "scheme": "http",
+                "host": "app.test",
+                "port": 80,
+                "path": "/search",
+                "query": [["q", "one"]],
+                "headers": {},
+                "body": "",
+            },
+        }
+    )
+    assert http_result["status_code"] == 204
+    assert captured["connection"][0:2] == ("127.0.0.1", 48081)
+    assert captured["request"][1] == "http://app.test:80/search?q=one"
+
+    captured.clear()
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:48081")
+    monkeypatch.setattr(sandbox_transport.http.client, "HTTPSConnection", FakeConnection)
+    https_result = sandbox_transport._send(
+        {
+            "id": "https",
+            "request": {
+                "scheme": "https",
+                "host": "app.test",
+                "port": 443,
+                "path": "/search",
+                "query": [],
+                "headers": {},
+                "body": "",
+            },
+        }
+    )
+    assert https_result["status_code"] == 204
+    assert captured["connection"][0:2] == ("127.0.0.1", 48081)
+    assert captured["tunnel"] == ("app.test", 443)
+    assert captured["request"][1] == "/search"
 
 
 def test_planner_requires_model_intent_and_applies_generic_capability_limits() -> None:
@@ -914,6 +1049,295 @@ def test_sqli_verification_preserves_json_array_and_records_baseline() -> None:
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
+
+
+def test_approved_verification_executes_inside_sandbox_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = parse_request_text(
+        "POST http://app.test/items HTTP/1.1\n"
+        "Host: app.test\n"
+        "Content-Type: application/json\n\n"
+        '{"ids":["1"]}'
+    )
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="ids 存在 SQL 注入"),
+        intent=VerificationIntent(
+            vulnerability_type="sqli",
+            strategy_kind="paired_field_mutation",
+            target_fields=("body.ids[0]",),
+            probes=(
+                IntentProbe(
+                    field="body.ids[0]",
+                    value="1' OR '1'='1",
+                    action="set",
+                    role="true",
+                    pair_id="model-boolean",
+                ),
+                IntentProbe(
+                    field="body.ids[0]",
+                    value="1' AND '1'='2",
+                    action="set",
+                    role="false",
+                    pair_id="model-boolean",
+                ),
+            ),
+            oracle_kind="response_difference",
+            oracle_description="真值和假值的响应结构应产生稳定差异。",
+            rationale="使用容器内的受限 HTTP transport 执行。",
+            confidence=0.9,
+        ),
+    )
+
+    class FakeSandboxSession:
+        def __init__(self) -> None:
+            self.files: dict[str, bytes] = {}
+            self.commands: list[tuple[object, ...]] = []
+
+        async def write(self, path: object, data: Any) -> None:
+            self.files[str(path)] = data.read()
+
+        async def exec(self, *command: object, **_kwargs: object) -> SimpleNamespace:
+            self.commands.append(command)
+            if command and command[0] == "python3":
+                payload = json.loads(
+                    self.files["/workspace/.strix-verification-input.json"].decode("utf-8")
+                )
+                responses = []
+                for item in payload["requests"]:
+                    body = json.loads(item["request"]["body"])
+                    value = body["ids"][0]
+                    result_body = (
+                        '{"items":[]}' if " AND '1'='2" in value else '{"items":[{"id":1}]}'
+                    )
+                    responses.append(
+                        {
+                            "id": item["id"],
+                            "status_code": 200,
+                            "headers": {"Content-Type": "application/json"},
+                            "body": result_body,
+                        }
+                    )
+                return SimpleNamespace(
+                    stdout=json.dumps({"results": responses}).encode("utf-8"),
+                    stderr=b"",
+                    exit_code=0,
+                )
+            return SimpleNamespace(stdout=b"", stderr=b"", exit_code=0)
+
+    session = FakeSandboxSession()
+    monkeypatch.setattr(executor, "send_request", lambda _request: pytest.fail("不能从宿主机发包"))
+    result = asyncio.run(
+        execute_plan_in_sandbox(
+            plan,
+            request,
+            session=session,
+            run_name="verify-sandbox",
+            approved=True,
+            side_effect_approved=True,
+        )
+    )
+
+    assert result.status == "verified_vulnerable"
+    assert "/workspace/.strix-verification-transport.py" in session.files
+    assert any(command[0] == "python3" for command in session.commands)
+    assert any(command[0] == "rm" for command in session.commands)
+
+
+def test_failed_probe_keeps_the_generated_request_for_reproduction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = parse_request_text("GET http://app.test/items?id=1 HTTP/1.1\nHost: app.test\n\n")
+    plan = build_verification_plan(
+        VerificationCase(request=request, issue_description="验证输入字段响应差异"),
+        intent=VerificationIntent(
+            vulnerability_type="输入处理边界问题",
+            strategy_kind="field_mutation",
+            target_fields=("query.id",),
+            probes=(IntentProbe(field="query.id", value="probe", action="set"),),
+            oracle_kind="response_difference",
+            oracle_description="比较响应差异。",
+            rationale="保留失败请求以便复核。",
+            confidence=0.8,
+        ),
+    )
+
+    def fail(_request: Any) -> Any:
+        raise executor.VerificationExecutionError("模拟网络失败")
+
+    monkeypatch.setattr(executor, "send_request", fail)
+    result = execute_plan(
+        plan,
+        request,
+        run_name="verify-error-evidence",
+        approved=True,
+    )
+
+    assert result.status == "inconclusive"
+    assert result.evidence[0].request is not None
+    assert result.evidence[0].request.startswith("GET /items?id=1 HTTP/1.1")
+
+
+def test_runner_creates_and_cleans_sandbox_for_approved_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    request_file = tmp_path / "request.txt"
+    request_file.write_text(
+        "GET http://app.test/search?q=hello HTTP/1.1\nHost: app.test\n\n",
+        encoding="utf-8",
+    )
+    intent = VerificationIntent(
+        vulnerability_type="输入处理边界问题",
+        strategy_kind="paired_field_mutation",
+        target_fields=("query.q",),
+        probes=(
+            IntentProbe(
+                field="query.q",
+                value="true-probe",
+                action="set",
+                role="true",
+                pair_id="response-pair",
+            ),
+            IntentProbe(
+                field="query.q",
+                value="false-probe",
+                action="set",
+                role="false",
+                pair_id="response-pair",
+            ),
+        ),
+        oracle_kind="response_difference",
+        oracle_description="真值和假值的响应应产生稳定差异。",
+        rationale="运行器必须把已批准请求交给 sandbox。",
+        confidence=0.8,
+    )
+
+    class FakeSandboxSession:
+        def __init__(self) -> None:
+            self.files: dict[str, bytes] = {}
+
+        async def write(self, path: object, data: Any) -> None:
+            self.files[str(path)] = data.read()
+
+        async def exec(self, *command: object, **_kwargs: object) -> SimpleNamespace:
+            if command and command[0] == "python3":
+                payload = json.loads(
+                    self.files["/workspace/.strix-verification-input.json"].decode("utf-8")
+                )
+                responses = []
+                for item in payload["requests"]:
+                    query = dict(item["request"]["query"])
+                    body = (
+                        '{"result":"changed"}'
+                        if query.get("q") == "true-probe"
+                        else '{"result":"same"}'
+                    )
+                    responses.append(
+                        {
+                            "id": item["id"],
+                            "status_code": 200,
+                            "headers": {},
+                            "body": body,
+                        }
+                    )
+                return SimpleNamespace(
+                    stdout=json.dumps({"results": responses}).encode("utf-8"),
+                    stderr=b"",
+                    exit_code=0,
+                )
+            return SimpleNamespace(stdout=b"", stderr=b"", exit_code=0)
+
+    fake_session = FakeSandboxSession()
+    created: list[dict[str, Any]] = []
+    cleaned: list[str] = []
+
+    async def create_or_reuse(scan_id: str, **kwargs: Any) -> dict[str, Any]:
+        created.append({"scan_id": scan_id, **kwargs})
+        return {"session": fake_session}
+
+    async def cleanup(scan_id: str) -> None:
+        cleaned.append(scan_id)
+
+    monkeypatch.setattr(
+        verification_runner.session_manager,
+        "create_or_reuse",
+        create_or_reuse,
+    )
+    monkeypatch.setattr(verification_runner.session_manager, "cleanup", cleanup)
+    monkeypatch.setattr(
+        verification_runner,
+        "load_settings",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(image="test-sandbox:local")),
+    )
+    monkeypatch.setattr(executor, "send_request", lambda _request: pytest.fail("不能从宿主机发包"))
+
+    run_dir, _plan, result = asyncio.run(
+        run_verification_case_in_sandbox(
+            request_file=str(request_file),
+            issue="验证输入字段的响应边界",
+            run_name="verify-sandbox-runner",
+            approved=True,
+            side_effect_approved=True,
+            intent=intent,
+        )
+    )
+
+    assert result.status == "verified_vulnerable"
+    assert created == [
+        {
+            "scan_id": "verify-sandbox-runner",
+            "image": "test-sandbox:local",
+            "local_sources": [],
+            "status_sink": None,
+        }
+    ]
+    assert cleaned == ["verify-sandbox-runner"]
+    assert "执行环境：`docker-sandbox`" in (
+        run_dir / "penetration_test_report.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_runner_does_not_start_sandbox_before_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    request_file = tmp_path / "request.txt"
+    request_file.write_text(
+        "GET http://app.test/search?q=hello HTTP/1.1\nHost: app.test\n\n",
+        encoding="utf-8",
+    )
+    intent = VerificationIntent(
+        vulnerability_type="输入处理边界问题",
+        strategy_kind="field_mutation",
+        target_fields=("query.q",),
+        probes=(IntentProbe(field="query.q", value="probe", action="set"),),
+        oracle_kind="response_difference",
+        oracle_description="响应应能被重放。",
+        rationale="先展示计划，再等待授权。",
+        confidence=0.8,
+    )
+
+    async def should_not_create(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        pytest.fail("未确认计划前不能启动 sandbox")
+
+    monkeypatch.setattr(verification_runner.session_manager, "create_or_reuse", should_not_create)
+    run_dir, _plan, result = asyncio.run(
+        run_verification_case_in_sandbox(
+            request_file=str(request_file),
+            issue="验证输入字段的响应边界",
+            run_name="verify-before-approval",
+            approved=False,
+            intent=intent,
+        )
+    )
+
+    assert result.status == "waiting_confirmation"
+    assert "执行环境：`not_executed`" in (
+        run_dir / "penetration_test_report.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_runner_persists_replayable_artifacts_and_retest_comparison(

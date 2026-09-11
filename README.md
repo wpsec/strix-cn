@@ -13,7 +13,7 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平�
 
 - 完整吸收上游当前发布版的功能、修复和新架构
 - 保留 `strix-cn` 既有的中文文档、中文提示和中文报告输出
-- 保留 Burp / Caido 被动扫描工作流与本地模型、兼容网关适配
+- 保留 Burp / Caido 流量驱动的常规渗透测试工作流与本地模型、兼容网关适配
 - 保留本地开发者熟悉的 CLI 入口、常用参数和恢复路径
 
 ## 当前版本重点
@@ -29,14 +29,14 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平�
 ## 使用注意
 
 - 只能在你拥有或获得明确书面授权的目标上运行
-- Burp 被动扫描模式下，不要一次性把整站大量接口流量导给 Strix
+- Burp/Caido 流量驱动模式下，不要一次性把整站大量接口流量导给 Strix；按功能点分批测试
 - 对增删改类接口保持谨慎，不建议把高风险破坏性操作直接交给 AI
 - AI 会把任务分发给多个专家代理，复杂扫描通常需要较长时间
 
 ## 核心能力
 
 - 多代理渗透测试：侦察、利用、验证和报告并行协作
-- Web、代码库、API 契约、域名、IP、Burp 被动流量多目标支持
+- Web、代码库、API 契约、域名、IP、Burp/Caido 流量驱动测试支持
 - 真实 PoC 验证：报告包含可复现步骤和证据
 - Burp / Caido 联动：适合“采集一个功能点，再开始测试”的工作流
 - 中文交付体验：CLI、TUI、README、关键 docs、报告默认中文
@@ -68,7 +68,7 @@ source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 
-# 如果要直接在源码仓库里使用交互式 TUI / Burp 被动代理入口
+# 如果要直接在源码仓库里使用交互式 TUI / Burp/Caido 流量入口
 # macOS 可先安装 Go
 brew install go
 
@@ -159,7 +159,7 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 # Web 应用扫描
 .venv/bin/strix --target https://example.com
 
-# Burp 被动扫描
+# Burp/Caido 流量驱动常规渗透测试
 .venv/bin/strix --burp-port 8081
 ```
 
@@ -177,6 +177,29 @@ strix --mode redteam --target https://staging.example.com
 # 使用环境变量
 STRIX_MODE=redteam strix --target https://staging.example.com
 ```
+
+单个数据包如果目的是让 Strix 深入测试并尝试形成有效漏洞，应使用红队种子入口：
+
+```bash
+.venv/bin/strix --red \
+  --request ./burp-request.txt \
+  --issue "检查该请求涉及的参数是否存在越权、注入或可获得更高权限的利用链" \
+  -n --yes
+```
+
+这条命令会启动完整的 AI 红队扫描链路、Docker sandbox、Caido 代理、子 Agent 和原生漏洞报告。请求文件只是起始证据，Agent 会在授权范围内重放基线、分析相关接口和业务流程、变异参数并验证实际影响，不会停在一次固定探针的响应比较上。未指定 `--target` 时，Strix 从请求的 Scheme、Host 和 Port 自动建立目标；指定 `--target` 或 `--target-list` 时，请求的 Host/Port 必须命中授权目标。
+
+模式边界如下：
+
+| 入口 | 适用目的 | 执行引擎 |
+| --- | --- | --- |
+| `--verify --request` | 确定性复测、修复回归、证明已知假设 | 受限验证执行器 |
+| `--red --request` | 以单个数据包为入口的深度专项测试和漏洞利用验证 | 完整 AI 红队 Agent 图 |
+| `--red --target` | 常规目标级红队测试 | 完整 AI 红队 Agent 图 |
+| `--burp-port` | 从 Burp/Caido 流量采集并测试功能点 | 完整目标级扫描链路 |
+| `--target` | 常规目标级渗透测试 | 常规 Agent 图 |
+
+因此，`--verify` 的结果是“复测证据”，不代表它已经完成一次完整的单包红队测试；想让 AI 自主扩展测试面，应使用 `--red --request`。
 
 模式选择优先级为：CLI 参数 > `STRIX_MODE` > 持久化配置 > `normal`。扫描开始后模式不可切换，使用 `--resume` 时必须沿用原运行记录中的模式。
 
@@ -209,7 +232,7 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 
 当前版本没有 OOB 回调确认能力，Canary 回显只记录为证据不足，不会单凭回显确认服务端请求伪造。
 
-`--verify` 用于复核一个具体漏洞，不启动普通扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才发送受限探针请求。
+`--verify` 用于复核一个具体漏洞，不启动普通扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才启动与普通扫描一致的 Docker sandbox，并通过容器内配置的 Caido 代理发送受限探针请求；计划阶段不会启动容器或发送请求。需要 AI 自主探索利用链时，使用上面的 `--red --request`，不要把 `--verify` 当作单包专项扫描入口。
 
 ```bash
 # 交互模式：按提示粘贴请求和漏洞描述
@@ -242,9 +265,9 @@ STRIX_MODE=redteam strix --target https://staging.example.com
   -n --yes
 ```
 
-交互模式中，请求内容以单独一行 `__STRIX_END__` 结束。执行前会展示识别出的漏洞类型、目标字段、验证动作、预计请求数和副作用提示；IDOR/BOLA 等需要第二身份的场景会继续要求提供第二个请求包。Raw 请求缺少 Scheme 时，如果同源 `Origin` 或 `Referer` 已明确给出协议，验证模式会自动采用；否则交互模式只询问一次使用 `http` 还是 `https`，非交互模式会直接阻断。
+交互模式中，请求内容以单独一行 `__STRIX_END__` 结束。执行前会展示识别出的漏洞类型、目标字段、验证动作、预计请求数和副作用提示；JSON 请求会递归暴露叶子字段，例如 `body.dataPackage.configList[0].conditionSql`，不需要手工填写参数路径。IDOR/BOLA 等需要第二身份的场景会继续要求提供第二个请求包。Raw 请求缺少 Scheme 时，如果同源 `Origin` 或 `Referer` 已明确给出协议，验证模式会自动采用；否则交互模式只询问一次使用 `http` 还是 `https`，非交互模式会直接阻断。
 
-验证结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。验证模式与 `--target`、`--red`、`--mode redteam`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
+验证结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。执行环境记录为 `docker-sandbox`，验证完成后会清理临时容器；容器启动或执行失败时不会回退到宿主机直连，而是生成证据不足的报告。验证模式与 `--target`、`--red`、`--mode redteam`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
 
 ## 常见用法
 
@@ -275,10 +298,12 @@ export POSTMAN_API_KEY="PMAK-..."
 strix --target "postman://<collection-uuid>?env=<environment-uuid>"
 ```
 
-### Burp 被动扫描
+### Burp/Caido 流量驱动常规渗透测试
+
+`--burp-port` 使用 `normal` 模式，从 Burp/Caido 进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。它不是 `--verify` 的单漏洞复测，也不启用 `--red` 的红队专项优先级策略。
 
 ```bash
-# 仅使用 Burp 流量建立作用域
+# 仅使用 Burp/Caido 流量建立测试上下文
 strix --burp-port 8081
 
 # 同时显式限制目标主机
@@ -293,7 +318,7 @@ strix --target https://example.com --burp-port 8081
 4. 当前功能点测完后发送 `下一功能点`，重新开启下一轮采集
 5. 全部功能点完成后发送 `结束测试`，生成总报告
 
-这种“单功能采集 -> 开始测试 -> 切换下一功能”的方式，比一次性灌入整站流量更稳定，也更符合当前 `strix-cn` 的 Burp 工作流。
+这种“单功能采集 -> 开始测试 -> 切换下一功能”的方式，比一次性灌入整站流量更稳定；每个功能点都会进入常规 Agent 渗透测试流程，也更符合当前 `strix-cn` 的 Burp/Caido 工作流。
 
 <!-- 这是一张图片，ocr 内容为： -->
 

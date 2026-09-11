@@ -125,6 +125,97 @@ def test_parse_arguments_accepts_burp_port_without_targets(
     assert args.targets_info == []
 
 
+def test_parse_arguments_accepts_redteam_seed_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_file = tmp_path / "request.txt"
+    request_file.write_text(
+        "POST /api/items HTTP/1.1\n"
+        "Host: app.test:8443\n"
+        "Origin: https://app.test:8443\n"
+        "Content-Type: application/json\n\n"
+        '{"id":"1"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "strix",
+            "--red",
+            "--request",
+            str(request_file),
+            "--issue",
+            "检查 id 是否存在越权或注入",
+            "-n",
+            "--yes",
+        ],
+    )
+
+    args = cli_args.parse_arguments()
+
+    assert args.mode == "redteam"
+    assert args.targets_info[0]["details"]["target_url"] == "https://app.test:8443/"
+    assert args.seed_request == {
+        "workspace_path": "/workspace/.strix/seed-request.txt",
+        "target_origin": "https://app.test:8443/",
+        "scheme": "https",
+        "host": "app.test",
+        "port": 8443,
+        "method": "POST",
+        "path": "/api/items",
+        "query_keys": [],
+    }
+    assert args.workspace_files == [
+        {
+            "source_path": str(request_file.resolve()),
+            "workspace_path": "/workspace/.strix/seed-request.txt",
+        }
+    ]
+
+
+def test_redteam_seed_must_match_explicit_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_file = tmp_path / "request.txt"
+    request_file.write_text(
+        "GET https://seed.test/items HTTP/1.1\nHost: seed.test\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "strix",
+            "--red",
+            "--target",
+            "https://other.test",
+            "--request",
+            str(request_file),
+            "-n",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        cli_args.parse_arguments()
+
+
+def test_normal_mode_rejects_seed_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    request_file = tmp_path / "request.txt"
+    request_file.write_text(
+        "GET https://app.test/items HTTP/1.1\nHost: app.test\n\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--request", str(request_file), "-n"],
+    )
+
+    with pytest.raises(SystemExit):
+        cli_args.parse_arguments()
+
+
 def test_parse_arguments_rejects_resume_with_target_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

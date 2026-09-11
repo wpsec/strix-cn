@@ -18,7 +18,7 @@ from strix.verification.models import (
 )
 from strix.verification.planner import build_verification_plan
 from strix.verification.request import parse_request_file, parse_request_text
-from strix.verification.runner import run_verification_case
+from strix.verification.runner import run_verification_case, run_verification_case_in_sandbox
 
 
 __all__ = [
@@ -38,4 +38,5 @@ __all__ = [
     "parse_request_file",
     "parse_request_text",
     "run_verification_case",
+    "run_verification_case_in_sandbox",
 ]

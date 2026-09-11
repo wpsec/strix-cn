@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -104,7 +105,7 @@ INTENT_SYSTEM_PROMPT = """你是 Strix 的漏洞验证计划器。你的工作�
 
 必须遵守：
 1. 只根据问题描述和请求结构选择漏洞标签、目标字段、验证能力和响应判定方式；不要臆造不存在的字段。
-2. target_fields 和 probes[].field 只能使用输入中的 candidate_fields；字段路径必须逐字匹配。
+2. target_fields 和 probes[].field 只能使用输入中的 candidate_fields；字段路径必须逐字匹配。JSON 请求优先选择最深层叶子字段，例如 body.dataPackage.configList[0].conditionSql。
 3. 只能使用支持的验证能力和动作。set 只能修改一个已有字段；remove_authentication、secondary_value、multipart_marker 的语义由本地执行器实现。
 4. 只生成低副作用验证载荷。禁止批量查询、数据提取、读文件、执行 shell、联网、写文件、删除/修改业务数据和持久化。
 5. 需要真假对照时使用 paired_field_mutation；单个输入变异使用 field_mutation；跨身份使用 secondary_identity；认证边界使用 remove_authentication；受控地址使用 controlled_canary（探针值使用 {{controlled_canary}}）；身份确认使用 identity_marker；上传使用 multipart_marker。
@@ -175,6 +176,20 @@ def _bounded_text(value: Any, *, name: str, limit: int) -> str:
     return cleaned
 
 
+def _probe_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _bounded_text(value, name="探针值", limit=4096)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise IntentGenerationError("模型返回的探针值必须是有限数字")
+        return str(value)
+    raise IntentGenerationError("模型返回的探针值必须是字符串、数字或布尔值")
+
+
 def _validate_probe(
     raw: Any,
     *,
@@ -195,8 +210,7 @@ def _validate_probe(
     elif field is not None and field not in candidates:
         raise IntentGenerationError("模型探针字段不在请求字段白名单中")
 
-    raw_value = raw.get("value")
-    value = None if raw_value is None else _bounded_text(raw_value, name="探针值", limit=4096)
+    value = _probe_value(raw.get("value"))
     if action == "set" and value is None:
         raise IntentGenerationError("set 探针必须提供值")
     if value and _DANGEROUS_MARKER_RE.search(value):

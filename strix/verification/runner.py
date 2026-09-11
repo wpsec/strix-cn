@@ -4,14 +4,23 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from strix.config import load_settings
 from strix.core.paths import run_dir_for
 from strix.report.writer import read_run_record, safe_fence, write_run_record
-from strix.verification.executor import compare_results, execute_plan
+from strix.runtime import session_manager
+from strix.verification.executor import (
+    _preflight_result,
+    compare_results,
+    execute_plan,
+    execute_plan_in_sandbox,
+)
 from strix.verification.models import (
     CanonicalRequest,
     ProbeResult,
@@ -32,6 +41,7 @@ if TYPE_CHECKING:
 
 
 VERIFICATION_POLICY_VERSION = "verification-v2"
+logger = logging.getLogger(__name__)
 
 
 def _run_name() -> str:
@@ -157,6 +167,7 @@ def _render_report(  # noqa: PLR0912
     run_name: str,
     plan: VerificationPlan,
     result: VerificationResult,
+    execution_runtime: str,
 ) -> str:
     lines = [
         "# 漏洞验证报告",
@@ -164,6 +175,7 @@ def _render_report(  # noqa: PLR0912
         f"- 运行：`{run_name}`",
         f"- 验证类型：`{plan.vulnerability_type}`",
         f"- 验证状态：`{result.status}`",
+        f"- 执行环境：`{execution_runtime}`",
         f"- 目标：`{plan.request_template.get('scheme')}://"
         f"{plan.request_template.get('host')}:{plan.request_template.get('port')}`",
         "",
@@ -291,6 +303,7 @@ def _persist(
     plan: VerificationPlan,
     result: VerificationResult,
     baseline_run: str | None,
+    execution_runtime: str,
 ) -> Path:
     run_dir = run_dir_for(run_name)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -300,7 +313,12 @@ def _persist(
         for evidence in result.evidence:
             handle.write(json.dumps(evidence.to_dict(), ensure_ascii=False) + "\n")
     (run_dir / "penetration_test_report.md").write_text(
-        _render_report(run_name=run_name, plan=plan, result=result),
+        _render_report(
+            run_name=run_name,
+            plan=plan,
+            result=result,
+            execution_runtime=execution_runtime,
+        ),
         encoding="utf-8",
     )
     record: dict[str, Any] = {
@@ -324,6 +342,7 @@ def _persist(
         "verification_oracle": plan.oracle_kind,
         "verification_strategy": plan.strategy_kind,
         "verification_intent_confidence": plan.intent_confidence,
+        "verification_runtime": execution_runtime,
     }
     write_run_record(run_dir, record)
     return run_dir
@@ -360,25 +379,29 @@ def persist_verification_failure(
         plan=plan,
         result=result,
         baseline_run=None,
+        execution_runtime="not_executed",
     )
     return run_dir, plan, result
 
 
-def run_verification_case(
+def _prepare_case(
     *,
     request_file: str,
     issue: str | None,
-    run_name: str | None = None,
-    baseline_run: str | None = None,
-    approved: bool = False,
-    side_effect_approved: bool = False,
-    secondary_request_file: str | None = None,
-    scheme: str | None = None,
-    secondary_scheme: str | None = None,
-    controlled_canary_url: str | None = None,
-    intent: VerificationIntent | None = None,
-) -> tuple[Path, VerificationPlan, VerificationResult]:
-    """Build or load a plan, execute it when approved, and persist artifacts."""
+    run_name: str | None,
+    baseline_run: str | None,
+    secondary_request_file: str | None,
+    scheme: str | None,
+    secondary_scheme: str | None,
+    controlled_canary_url: str | None,
+    intent: VerificationIntent | None,
+) -> tuple[
+    str,
+    CanonicalRequest,
+    CanonicalRequest | None,
+    VerificationPlan,
+    VerificationResult | None,
+]:
     selected_run_name = run_name or _run_name()
     _validate_run_name(selected_run_name)
     request = parse_request_file(request_file, scheme=scheme)
@@ -402,6 +425,54 @@ def run_verification_case(
         baseline_result = _load_result(baseline_dir)
         if baseline_result.plan_sha256 != plan.plan_sha256:
             raise ValueError("历史验证结果与验证计划不匹配")
+        return selected_run_name, request, secondary, plan, baseline_result
+
+    if issue is None:
+        raise ValueError("首次验证需要提供 --issue 或在交互界面输入问题描述")
+    plan = build_verification_plan(
+        VerificationCase(
+            request=request,
+            issue_description=issue,
+            supporting_requests=[secondary] if secondary else [],
+            controlled_canary_url=controlled_canary_url,
+        ),
+        intent=intent,
+    )
+    return selected_run_name, request, secondary, plan, None
+
+
+def run_verification_case(
+    *,
+    request_file: str,
+    issue: str | None,
+    run_name: str | None = None,
+    baseline_run: str | None = None,
+    approved: bool = False,
+    side_effect_approved: bool = False,
+    secondary_request_file: str | None = None,
+    scheme: str | None = None,
+    secondary_scheme: str | None = None,
+    controlled_canary_url: str | None = None,
+    intent: VerificationIntent | None = None,
+) -> tuple[Path, VerificationPlan, VerificationResult]:
+    """Build or load a plan, execute it directly, and persist artifacts.
+
+    This synchronous primitive remains available to library callers and unit
+    tests. The CLI uses :func:`run_verification_case_in_sandbox` so approved
+    network requests never run in the host process.
+    """
+    selected_run_name, request, secondary, plan, baseline_result = _prepare_case(
+        request_file=request_file,
+        issue=issue,
+        run_name=run_name,
+        baseline_run=baseline_run,
+        secondary_request_file=secondary_request_file,
+        scheme=scheme,
+        secondary_scheme=secondary_scheme,
+        controlled_canary_url=controlled_canary_url,
+        intent=intent,
+    )
+    if baseline_result is not None:
         result = execute_plan(
             plan,
             request,
@@ -421,17 +492,6 @@ def run_verification_case(
             result.comparison = comparison
             result.summary = comparison
     else:
-        if issue is None:
-            raise ValueError("首次验证需要提供 --issue 或在交互界面输入问题描述")
-        plan = build_verification_plan(
-            VerificationCase(
-                request=request,
-                issue_description=issue,
-                supporting_requests=[secondary] if secondary else [],
-                controlled_canary_url=controlled_canary_url,
-            ),
-            intent=intent,
-        )
         result = execute_plan(
             plan,
             request,
@@ -446,6 +506,106 @@ def run_verification_case(
         plan=plan,
         result=result,
         baseline_run=baseline_run,
+        execution_runtime="host-direct",
+    )
+    return run_dir, plan, result
+
+
+async def run_verification_case_in_sandbox(
+    *,
+    request_file: str,
+    issue: str | None,
+    run_name: str | None = None,
+    baseline_run: str | None = None,
+    approved: bool = False,
+    side_effect_approved: bool = False,
+    secondary_request_file: str | None = None,
+    scheme: str | None = None,
+    secondary_scheme: str | None = None,
+    controlled_canary_url: str | None = None,
+    intent: VerificationIntent | None = None,
+    status_sink: Any | None = None,
+) -> tuple[Path, VerificationPlan, VerificationResult]:
+    """Run an approved verification plan inside the standard Strix sandbox."""
+    selected_run_name, request, secondary, plan, baseline_result = _prepare_case(
+        request_file=request_file,
+        issue=issue,
+        run_name=run_name,
+        baseline_run=baseline_run,
+        secondary_request_file=secondary_request_file,
+        scheme=scheme,
+        secondary_scheme=secondary_scheme,
+        controlled_canary_url=controlled_canary_url,
+        intent=intent,
+    )
+
+    preflight = _preflight_result(
+        plan,
+        request,
+        run_name=selected_run_name,
+        approved=approved,
+        side_effect_approved=side_effect_approved,
+        secondary=secondary,
+        baseline_run=baseline_run,
+    )
+    result: VerificationResult
+    execution_runtime = "not_executed"
+    if preflight is not None:
+        result = preflight
+    else:
+        image = str(load_settings().runtime.image or "").strip()
+        if not image:
+            raise ValueError("未配置 sandbox 镜像")
+        bundle: dict[str, Any] | None = None
+        execution_runtime = "docker-sandbox"
+        try:
+            bundle = await session_manager.create_or_reuse(
+                selected_run_name,
+                image=image,
+                local_sources=[],
+                status_sink=status_sink,
+            )
+            result = await execute_plan_in_sandbox(
+                plan,
+                request,
+                session=bundle["session"],
+                run_name=selected_run_name,
+                approved=approved,
+                side_effect_approved=side_effect_approved,
+                secondary=secondary,
+                baseline_run=baseline_run,
+            )
+        except Exception as exc:
+            logger.exception("Verification sandbox lifecycle failed")
+            result = VerificationResult(
+                status="inconclusive",
+                vulnerability_type=plan.vulnerability_type,
+                plan_sha256=plan.plan_sha256,
+                run_name=selected_run_name,
+                summary=f"验证 sandbox 启动或执行失败：{exc}",
+                baseline_run=baseline_run,
+            )
+        finally:
+            if bundle is not None:
+                with contextlib.suppress(Exception):
+                    await session_manager.cleanup(selected_run_name)
+
+    if baseline_result is not None and approved and result.status not in {
+        "blocked",
+        "needs_secondary_identity",
+        "waiting_confirmation",
+    }:
+        comparison_status, comparison = compare_results(baseline_result, result)
+        result.status = comparison_status  # type: ignore[assignment]
+        result.comparison = comparison
+        result.summary = comparison
+
+    run_dir = _persist(
+        run_name=selected_run_name,
+        plan=plan,
+        result=result,
+        baseline_run=baseline_run,
+        execution_runtime=execution_runtime,
     )
     return run_dir, plan, result
 
