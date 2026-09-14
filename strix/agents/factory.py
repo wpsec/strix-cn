@@ -53,7 +53,6 @@ from strix.tools.reporting.tool import (
     create_vulnerability_report,
     get_report,
     list_reports,
-    record_redteam_skip,
     update_vulnerability_report,
 )
 from strix.tools.respond.tool import respond_to_user
@@ -103,17 +102,6 @@ _WORKSPACE_EDIT_DISABLED_MESSAGE = (
     "仅当源码目录本身是授权目标时才允许编辑工作区文件；"
     "请改用 notes、todos、reports 和 agent messages 记录分析结果。"
 )
-_REDTEAM_NETWORK_COMMAND_RE = re.compile(
-    r"(?i)(?:\b(?:curl|wget|nc|ncat|socat|agent-browser|requests|httpx|urllib\.request)\b|"
-    r"https?://)"
-)
-_REDTEAM_NETWORK_COMMAND_MESSAGE = (
-    "exec_command: 红队专项模式禁止通过 Shell 直接发起网络请求。"
-    "请使用受策略保护的请求工具；请求是否发送由目标作用域和动作风险决定，"
-    "vulnerability_type 只用于优先级和报告归档，未知类型不会单独阻断安全请求。"
-)
-
-
 def _custom_tool_input_field(tool: CustomTool) -> str:
     return _CUSTOM_TOOL_INPUT_FIELD_BY_NAME.get(tool.name, _DEFAULT_CUSTOM_TOOL_INPUT_FIELD)
 
@@ -503,16 +491,6 @@ def _passive_proxy_shell_blocked(ctx: Any) -> bool:
     return not bool(ctx.context.get("allow_shell_in_proxy_passive_mode", False))
 
 
-def _redteam_network_command_blocked(ctx: Any, command: object) -> bool:
-    if not hasattr(ctx, "context") or not isinstance(ctx.context, dict):
-        return False
-    try:
-        mode = str(ctx.context.get("security_mode", "normal")).strip().lower()
-    except Exception:  # noqa: BLE001 - malformed context must fail closed here.
-        return True
-    return mode == "redteam" and bool(_REDTEAM_NETWORK_COMMAND_RE.search(str(command or "")))
-
-
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -524,8 +502,6 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
         except (json.JSONDecodeError, TypeError):
             parsed = None
         if isinstance(parsed, dict):
-            if _redteam_network_command_blocked(ctx, parsed.get("cmd")):
-                return _REDTEAM_NETWORK_COMMAND_MESSAGE
             if "shell" not in parsed:
                 parsed["shell"] = "bash"
             _apply_shell_output_cap(parsed)
@@ -675,7 +651,6 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     web_search,
     create_vulnerability_report,
     create_dependency_report,
-    record_redteam_skip,
     update_vulnerability_report,
     list_reports,
     get_report,

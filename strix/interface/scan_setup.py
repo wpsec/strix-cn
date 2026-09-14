@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
+from strix.config.modes import normalize_mode
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
     assign_workspace_subdirs,
@@ -31,7 +32,6 @@ from strix.interface.utils import (
     stage_api_specs,
     write_fetched_collection,
 )
-from strix.redteam.policy import POLICY_VERSION, normalize_mode
 from strix.telemetry import posthog, scarf
 from strix.utils.api_spec import (
     SpecParseError,
@@ -253,9 +253,6 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "mode": mode,
-        "policy_version": POLICY_VERSION
-        if mode == "redteam"
-        else None,
         "instruction": args.instruction,
         # Kept apart from instruction, which carries the diff-scope preamble: the
         # transcript replays this as the user's opening message.
@@ -267,7 +264,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         # Only routing/shape metadata is persisted; the raw request remains in
         # the read-only workspace-file entry above.
         "seed_request": getattr(args, "seed_request", None),
-        "redteam_hypothesis": getattr(args, "redteam_hypothesis", None),
+        "request_hypothesis": getattr(args, "request_hypothesis", None),
         # Persisted so --resume can remount the workspace: it is not a target,
         # so it cannot be rebuilt from targets_info.
         "workspace_mount": getattr(args, "workspace_mount", None),

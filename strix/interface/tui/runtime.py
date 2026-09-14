@@ -111,7 +111,7 @@ class GoTuiRuntime:
             "credential_auth_available": bool(self.target_credentials),
             "allow_credential_attacks": bool(getattr(self.args, "allow_credential_attacks", False)),
             "seed_request": getattr(self.args, "seed_request", None),
-            "redteam_hypothesis": getattr(self.args, "redteam_hypothesis", None),
+            "request_hypothesis": getattr(self.args, "request_hypothesis", None),
         }
         self.report_state = ReportState(self.scan_config["run_name"])
         self.report_state.hydrate_from_run_dir()

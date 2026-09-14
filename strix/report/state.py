@@ -14,18 +14,12 @@ from uuid import uuid4
 
 from strix.config import codex
 from strix.config.loader import load_settings
+from strix.config.modes import normalize_mode
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.token_budget import (
     DEFAULT_TOKEN_ESTIMATE_PER_REQUEST,
     TokenBudgetPlan,
     normalize_token_limit,
-)
-from strix.redteam.attack_chain import build_attack_chain
-from strix.redteam.policy import (
-    POLICY_VERSION,
-    classify_test_priority,
-    normalize_mode,
-    normalize_vulnerability_type,
 )
 from strix.report.coverage import write_coverage
 from strix.report.evidence import (
@@ -114,7 +108,6 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "discovery_trace",
         "endpoint_matrix",
         "reproduction_requests",
-        "attack_chain_parent_id",
     }
 )
 
@@ -255,8 +248,6 @@ class ReportState:
             "process_id": os.getpid(),
             "auth_mode": auth_mode,
             "mode": "normal",
-            "policy_version": None,
-            "redteam_skipped_tests": [],
             "targets_info": [],
             "llm_usage": self._build_llm_usage_record(),
             **self._token_budget.to_record(),
@@ -333,9 +324,7 @@ class ReportState:
         if data:
             self.run_record.update(data)
             self._token_budget = TokenBudgetPlan.from_record(self.run_record)
-            self._token_budget.enforce_priority_phases = (
-                normalize_mode(self.run_record.get("mode", "normal")) == "redteam"
-            )
+            self._token_budget.enforce_priority_phases = False
             self._hydrated_from_disk = True
             if isinstance(data.get("start_time"), str):
                 self.start_time = data["start_time"]
@@ -473,15 +462,11 @@ class ReportState:
         endpoint_matrix: list[dict[str, Any]] | None = None,
         reproduction_requests: list[dict[str, Any]] | None = None,
         credential_provenance: dict[str, str] | None = None,
-        attack_chain_parent_id: str | None = None,
         cvss_4_vector: str | None = None,
         cvss_4_score: float | None = None,
         cvss_4_severity: str | None = None,
     ) -> str:
-        mode = normalize_mode(self.run_record.get("mode", "normal"))
         raw_vulnerability_type = str(vulnerability_type or "").strip()
-        normalized_type = normalize_vulnerability_type(raw_vulnerability_type)
-        priority = classify_test_priority(raw_vulnerability_type, impact=impact)
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
         report: dict[str, Any] = {
@@ -490,21 +475,10 @@ class ReportState:
             "severity": severity.lower().strip(),
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
-        if mode == "redteam":
-            report["vulnerability_type_raw"] = raw_vulnerability_type or "unknown"
-            report["redteam_policy"] = {
-                "priority": priority["priority"],
-                "reason": priority["reason"],
-                "canonical_type": priority["canonical_type"],
-                "report_status": "persisted",
-                "attack_chain_candidate": priority["priority"] == "high",
-            }
-        if normalized_type:
-            report["vulnerability_type"] = normalized_type
+        if raw_vulnerability_type:
+            report["vulnerability_type"] = raw_vulnerability_type
         if permission_proof:
             report["permission_proof"] = permission_proof.strip()
-        if attack_chain_parent_id:
-            report["attack_chain_parent_id"] = attack_chain_parent_id.strip()
         if request:
             report["request"] = request.strip()
         if response:
@@ -681,18 +655,6 @@ class ReportState:
         for dependent in superseded:
             report.pop(dependent, None)
         backfill_report_http_evidence(report)
-        if normalize_mode(self.run_record.get("mode", "normal")) == "redteam":
-            raw_type = str(
-                report.get("vulnerability_type_raw") or report.get("vulnerability_type") or ""
-            ).strip()
-            priority = classify_test_priority(raw_type, impact=report.get("impact"))
-            report["redteam_policy"] = {
-                "priority": priority["priority"],
-                "reason": priority["reason"],
-                "canonical_type": priority["canonical_type"],
-                "report_status": "persisted",
-                "attack_chain_candidate": priority["priority"] == "high",
-            }
         report["update_history"] = history
         report["updated_at"] = entry["timestamp"]
 
@@ -718,56 +680,8 @@ class ReportState:
         # low-impact or not-yet-classified observations from the run state.
         return list(self.vulnerability_reports)
 
-    def record_redteam_skip(
-        self,
-        *,
-        vulnerability_type: str | None,
-        reason: str,
-        target: str | None = None,
-        impact: str | None = None,
-        agent_id: str | None = None,
-        agent_name: str | None = None,
-    ) -> dict[str, Any]:
-        """Persist an efficiency deferral without creating a false finding."""
-        mode = normalize_mode(self.run_record.get("mode", "normal"))
-        if mode != "redteam":
-            raise ValueError("仅 redteam 模式可以记录红队专项跳过项")
-        clean_reason = str(reason or "").strip()
-        if not clean_reason:
-            raise ValueError("跳过原因不能为空")
-        raw_type = str(vulnerability_type or "").strip() or "unknown"
-        priority = classify_test_priority(raw_type, impact=impact)
-        if priority["priority"] != "low":
-            raise ValueError(
-                "只有低优先级检查可以记录为效率跳过项；高优先级或未分类问题必须执行、"
-                "形成报告，或记录证据缺口"
-            )
-        entry: dict[str, Any] = {
-            "vulnerability_type_raw": raw_type,
-            "priority": priority["priority"],
-            "reason": clean_reason,
-            "status": "not_executed",
-            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
-        }
-        for key, value in (
-            ("target", target),
-            ("impact", impact),
-            ("agent_id", agent_id),
-            ("agent_name", agent_name),
-        ):
-            if isinstance(value, str) and value.strip():
-                entry[key] = value.strip()
-        skipped = self.run_record.setdefault("redteam_skipped_tests", [])
-        if not isinstance(skipped, list):
-            skipped = []
-            self.run_record["redteam_skipped_tests"] = skipped
-        skipped.append(entry)
-        del skipped[:-200]
-        self.save_run_data()
-        return dict(entry)
-
     def _artifact_reports(self) -> list[dict[str, Any]]:
-        """Return every report; attack-chain filtering happens at the projection."""
+        """Return every report that should be written to the run artifacts."""
         return list(self.vulnerability_reports)
 
     def record_sdk_usage(
@@ -968,13 +882,6 @@ class ReportState:
                 raise ValueError(
                     "恢复扫描时不能修改安全策略模式；必须沿用历史运行模式。"
                 )
-            if (
-                persisted_mode == "redteam"
-                and self.run_record.get("policy_version") != POLICY_VERSION
-            ):
-                raise ValueError(
-                    "历史红队专项策略版本不受支持；策略已变更，请新建扫描。"
-                )
             persisted_limit = normalize_token_limit(self.run_record.get("token_limit"))
             if persisted_limit is not None and (
                 token_limit is not None and token_limit < persisted_limit
@@ -984,7 +891,7 @@ class ReportState:
                     "如需追加额度，请显式提供更大的总上限。"
                 )
             self._token_budget = TokenBudgetPlan.from_record(self.run_record)
-            self._token_budget.enforce_priority_phases = mode == "redteam"
+            self._token_budget.enforce_priority_phases = False
             if persisted_limit is not None and token_limit is None:
                 token_limit = persisted_limit
             if token_limit is not None and token_limit != persisted_limit:
@@ -994,7 +901,7 @@ class ReportState:
         else:
             self._token_budget = TokenBudgetPlan(
                 limit=token_limit,
-                enforce_priority_phases=mode == "redteam",
+                enforce_priority_phases=False,
             )
         self.scan_config = config
         self.caido_url = None
@@ -1022,7 +929,6 @@ class ReportState:
                 "targets_info": config.get("targets", []),
                 "process_id": os.getpid(),
                 "mode": mode,
-                "policy_version": POLICY_VERSION if mode == "redteam" else None,
                 "instruction": config.get("user_instructions", ""),
                 "scan_mode": config.get("scan_mode", "deep"),
                 "diff_scope": config.get("diff_scope", {"active": False}),
@@ -1036,7 +942,7 @@ class ReportState:
                 # Keep only the seed's routing/shape metadata in the run record;
                 # its raw contents stay in the read-only workspace file.
                 "seed_request": config.get("seed_request"),
-                "redteam_hypothesis": config.get("redteam_hypothesis"),
+                "request_hypothesis": config.get("request_hypothesis"),
                 "token_limit": token_limit,
             }
         )
@@ -1231,13 +1137,6 @@ class ReportState:
                 except OSError:
                     logger.exception("coverage.json write failed (non-fatal)")
 
-            if normalize_mode(self.run_record.get("mode", "normal")) == "redteam":
-                self.run_record["attack_chain"] = build_attack_chain(
-                    artifact_reports,
-                )
-            else:
-                self.run_record.pop("attack_chain", None)
-
             if self.final_scan_result:
                 write_executive_report(
                     run_dir,
@@ -1253,13 +1152,11 @@ class ReportState:
                 vulnerability_reports=artifact_reports,
             )
 
-            if self.vulnerability_reports or normalize_mode(self.run_record.get("mode", "normal")) == "redteam":
+            if self.vulnerability_reports:
                 write_vulnerabilities(
                     run_dir,
                     artifact_reports,
                     self._saved_vuln_ids,
-                    redteam=normalize_mode(self.run_record.get("mode", "normal"))
-                    == "redteam",
                 )
 
             # SARIF 2.1.0 emitter for CI / ASPM integration. Always emit (even
@@ -1275,8 +1172,6 @@ class ReportState:
                     tool_version=_strix_version(),
                     repository_context=self._sarif_repository_context(),
                     coverage=coverage,
-                    preserve_sensitive=normalize_mode(self.run_record.get("mode", "normal"))
-                    == "redteam",
                 )
             except Exception:
                 logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")

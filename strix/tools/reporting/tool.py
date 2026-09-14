@@ -765,7 +765,6 @@ async def _do_create(  # noqa: PLR0912
     endpoint_matrix: list[dict[str, Any]] | None = None,
     reproduction_requests: list[dict[str, Any]] | None = None,
     credential_provenance: dict[str, str] | None = None,
-    attack_chain_parent_id: str | None = None,
     cvss_4_vector: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
@@ -899,7 +898,6 @@ async def _do_create(  # noqa: PLR0912
             "response": response,
             **structured_evidence,
             "credential_provenance": credential_provenance,
-            "attack_chain_parent_id": attack_chain_parent_id,
             "cvss_4_vector": cvss_4_vector,
             "cvss_4_score": cvss_4_score,
             "cvss_4_severity": cvss_4_severity,
@@ -939,11 +937,6 @@ async def _do_create(  # noqa: PLR0912
                 "success": False,
                 "error": "报告状态未返回 report_id，无法确认是否已落盘；未静默跳过",
             }
-        stored_report = next(
-            (report for report in report_state.get_existing_vulnerabilities()
-             if report.get("id") == report_id),
-            {},
-        )
         logger.info(
             "Vulnerability report created: id=%s severity=%s cvss=%.1f title=%s",
             report_id,
@@ -957,7 +950,6 @@ async def _do_create(  # noqa: PLR0912
             "report_id": report_id,
             "severity": severity,
             "cvss_score": cvss_score,
-            "redteam_policy": stored_report.get("redteam_policy"),
         }
 
 
@@ -974,45 +966,6 @@ def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
             raw_agent_name = names.get(agent_id)
             agent_name = raw_agent_name if isinstance(raw_agent_name, str) else None
     return agent_id, agent_name
-
-
-@function_tool(timeout=30)
-async def record_redteam_skip(
-    ctx: RunContextWrapper,
-    reason: str,
-    vulnerability_type: str | None = None,
-    target: str | None = None,
-    impact: str | None = None,
-) -> str:
-    """Record a deferred low-priority red-team check without filing a finding.
-
-    Use this when efficiency policy postpones a check before any target request
-    is sent.  A check that produced evidence must use
-    ``create_vulnerability_report`` instead, even when its type is unknown or
-    its severity is medium/low.
-    """
-    from strix.report.state import get_global_report_state
-
-    report_state = get_global_report_state()
-    if report_state is None:
-        return json.dumps(
-            {"success": False, "error": "报告状态不可用，无法记录红队专项跳过项"},
-            ensure_ascii=False,
-        )
-    agent_id, agent_name = _caller_identity(ctx)
-    try:
-        entry = await asyncio.to_thread(
-            report_state.record_redteam_skip,
-            vulnerability_type=vulnerability_type,
-            reason=reason,
-            target=target,
-            impact=impact,
-            agent_id=agent_id,
-            agent_name=agent_name,
-        )
-    except (TypeError, ValueError) as exc:
-        return json.dumps({"success": False, "error": str(exc)}, ensure_ascii=False)
-    return json.dumps({"success": True, "skip": entry}, ensure_ascii=False, default=str)
 
 
 @function_tool(timeout=180, strict_mode=False)
@@ -1050,7 +1003,6 @@ async def create_vulnerability_report(
     endpoint_matrix: list[dict[str, Any]] | None = None,
     reproduction_requests: list[dict[str, Any]] | None = None,
     credential_provenance: dict[str, str] | None = None,
-    attack_chain_parent_id: str | None = None,
     cvss_4_vector: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
@@ -1433,10 +1385,6 @@ async def create_vulnerability_report(
             Use only provenance fields such as source, response location,
             validation status, identity, scope, fingerprint, and length; do
             not place raw credential values in this field.
-        attack_chain_parent_id: Optional id of the verified finding that is a
-            prerequisite for this finding. Edges are rendered only when this
-            relationship is explicitly provided.
-
     Example (abbreviated — mirror this structure)::
 
         title: "Reflected XSS in /search q parameter"
@@ -1517,7 +1465,6 @@ async def create_vulnerability_report(
         endpoint_matrix=endpoint_matrix,
         reproduction_requests=reproduction_requests,
         credential_provenance=credential_provenance,
-        attack_chain_parent_id=attack_chain_parent_id,
         cvss_4_vector=cvss_4_vector,
         agent_id=agent_id,
         agent_name=agent_name,
@@ -2311,9 +2258,7 @@ _REPORT_SUMMARY_FIELDS = (
     "fix_effort",
     "agent_name",
     "timestamp",
-    "vulnerability_type_raw",
     "vulnerability_type",
-    "redteam_policy",
 )
 
 

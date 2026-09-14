@@ -125,7 +125,7 @@ def test_parse_arguments_accepts_burp_port_without_targets(
     assert args.targets_info == []
 
 
-def test_parse_arguments_accepts_redteam_seed_request(
+def test_parse_arguments_accepts_single_request_seed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     request_file = tmp_path / "request.txt"
@@ -142,19 +142,17 @@ def test_parse_arguments_accepts_redteam_seed_request(
         "argv",
         [
             "strix",
-            "--red",
             "--request",
             str(request_file),
             "--issue",
             "检查 id 是否存在越权或注入",
             "-n",
-            "--yes",
         ],
     )
 
     args = cli_args.parse_arguments()
 
-    assert args.mode == "redteam"
+    assert args.mode == "normal"
     assert args.targets_info[0]["details"]["target_url"] == "https://app.test:8443/"
     assert args.seed_request == {
         "workspace_path": "/workspace/.strix/seed-request.txt",
@@ -174,7 +172,7 @@ def test_parse_arguments_accepts_redteam_seed_request(
     ]
 
 
-def test_redteam_seed_must_match_explicit_target(
+def test_single_request_seed_must_match_explicit_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     request_file = tmp_path / "request.txt"
@@ -187,7 +185,6 @@ def test_redteam_seed_must_match_explicit_target(
         "argv",
         [
             "strix",
-            "--red",
             "--target",
             "https://other.test",
             "--request",
@@ -200,7 +197,7 @@ def test_redteam_seed_must_match_explicit_target(
         cli_args.parse_arguments()
 
 
-def test_normal_mode_rejects_seed_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_normal_mode_accepts_seed_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     request_file = tmp_path / "request.txt"
     request_file.write_text(
         "GET https://app.test/items HTTP/1.1\nHost: app.test\n\n",
@@ -210,6 +207,19 @@ def test_normal_mode_rejects_seed_request(tmp_path: Path, monkeypatch: pytest.Mo
         sys,
         "argv",
         ["strix", "--request", str(request_file), "-n"],
+    )
+
+    args = cli_args.parse_arguments()
+
+    assert args.mode == "normal"
+    assert args.targets_info[0]["details"]["target_url"] == "https://app.test/"
+
+
+def test_removed_red_mode_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--red", "--target", "https://app.test", "-n"],
     )
 
     with pytest.raises(SystemExit):

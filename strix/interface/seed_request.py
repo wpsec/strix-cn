@@ -1,4 +1,4 @@
-"""Prepare an operator-supplied HTTP request as a focused red-team seed."""
+"""Prepare an operator-supplied HTTP request as a focused scan seed."""
 
 from __future__ import annotations
 

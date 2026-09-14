@@ -29,7 +29,6 @@ from urllib.parse import urlparse
 from agents import RunContextWrapper, function_tool
 
 from strix.core.proxy_scope import host_matches_scope
-from strix.redteam.policy import assess_action_risk, normalize_mode
 from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import MCP_REGISTRY_CONTEXT_KEY, McpRegistry
@@ -181,8 +180,6 @@ async def call_mcp(
     connection: str,
     tool: str,
     arguments: Any = None,
-    vulnerability_type: str | None = None,
-    impact: str | None = None,
 ) -> Any:
     """Call one tool on one MCP connection and return its result.
 
@@ -199,15 +196,8 @@ async def call_mcp(
             takes none. Pass an object, not a stringified one. Its shape is
             whatever ``describe_mcp`` showed for the tool rather than a shape this
             tool fixes in advance.
-        vulnerability_type: Optional finding label used for correlation and
-            prioritization. It does not authorize or deny the MCP call.
-        impact: Optional impact context used to prioritize the associated finding.
     """
     context = ctx.context if isinstance(ctx.context, dict) else {}
-    try:
-        mode = normalize_mode(context.get("security_mode", "normal"))
-    except ValueError:
-        mode = "redteam"
     registry = _registry_from_ctx(ctx)
     if registry is None or not registry:
         return _NO_CONNECTIONS
@@ -233,20 +223,6 @@ async def call_mcp(
     scope_error = _mcp_scope_error(context, arguments or {})
     if scope_error is not None:
         return {"success": False, "skipped": True, "error": scope_error, "risk": "out_of_scope"}
-    action = assess_action_risk(
-        "MCP",
-        "",
-        mode=mode,
-        action_name=f"{connection}.{tool}",
-        body=arguments or {},
-    )
-    if not bool(action["allowed"]):
-        return {
-            "success": False,
-            "skipped": True,
-            "error": str(action["reason"]),
-            "risk": action["risk"],
-        }
     try:
         available = await entry.session.list_tools()
     except McpConnectionUnavailableError as exc:

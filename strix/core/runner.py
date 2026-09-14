@@ -26,6 +26,7 @@ from strix.config.models import (
     supports_strict_tool_schemas,
     uses_chat_completions_tool_schema,
 )
+from strix.config.modes import normalize_mode
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
@@ -51,7 +52,6 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.proxy_scope import ensure_caido_proxy_scope
 from strix.core.sessions import open_agent_session
 from strix.core.token_budget import normalize_token_limit
-from strix.redteam.policy import POLICY_VERSION, normalize_mode
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
@@ -544,16 +544,6 @@ async def run_strix_scan(
         except Exception:
             logger.exception("Failed to connect user MCP servers; continuing without them")
 
-        if security_mode == "redteam":
-            scope_context.update(
-                {
-                    "security_mode": security_mode,
-                    "redteam_policy_version": POLICY_VERSION,
-                    "redteam_fail_closed": False,
-                    "redteam_action_policy": "scope-and-action-risk",
-                    "redteam_priority_policy": "impact-aware",
-                }
-            )
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,
@@ -632,17 +622,7 @@ async def run_strix_scan(
             )
 
         context: dict[str, Any] = {
-            **(
-                {
-                    "security_mode": security_mode,
-                    "redteam_policy_version": POLICY_VERSION,
-                    "redteam_fail_closed": False,
-                    "redteam_action_policy": "scope-and-action-risk",
-                    "redteam_priority_policy": "impact-aware",
-                }
-                if security_mode == "redteam"
-                else {}
-            ),
+            "security_mode": security_mode,
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
             "caido_client_ref": caido_client_ref,

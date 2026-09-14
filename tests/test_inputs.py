@@ -219,7 +219,7 @@ def test_build_root_task_web_application_with_instructions() -> None:
     assert "Special instructions: Focus on auth." in task
 
 
-def test_build_root_task_renders_redteam_seed_without_request_contents() -> None:
+def test_build_root_task_renders_single_request_seed_without_request_contents() -> None:
     task = build_root_task(
         {
             "targets": [
@@ -228,7 +228,6 @@ def test_build_root_task_renders_redteam_seed_without_request_contents() -> None
                     "details": {"target_url": "https://app.example.com"},
                 }
             ],
-            "mode": "redteam",
             "seed_request": {
                 "workspace_path": "/workspace/.strix/seed-request.txt",
                 "scheme": "https",
@@ -239,11 +238,11 @@ def test_build_root_task_renders_redteam_seed_without_request_contents() -> None
                 "query_keys": ["itemId"],
                 "issue": "ignored outside the root task",
             },
-            "redteam_hypothesis": "检查 itemId 是否存在越权",
+            "request_hypothesis": "检查 itemId 是否存在越权",
         }
     )
 
-    assert "Focused Red-Team Seed:" in task
+    assert "Focused Request Seed:" in task
     assert "/workspace/.strix/seed-request.txt" in task
     assert "POST https://app.example.com:443/api/items" in task
     assert "itemId" in task

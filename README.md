@@ -163,64 +163,37 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 .venv/bin/strix --burp-port 8081
 ```
 
-### 红队专项模式
+### 单请求入口
 
-红队专项模式只对已授权目标执行受范围和动作风险约束、无害且可审计的安全验证。它按潜在影响安排测试优先级，并将完整发现清单与证据充分的攻击链分别呈现。
-
-```bash
-# 使用 --red 启动红队专项模式
-strix --red --target https://staging.example.com
-
-# 使用显式模式参数
-strix --mode redteam --target https://staging.example.com
-
-# 使用环境变量
-STRIX_MODE=redteam strix --target https://staging.example.com
-```
-
-单个数据包如果目的是让 Strix 深入测试并尝试形成有效漏洞，应使用红队种子入口：
+单个数据包如果目的是让 Strix 深入测试并尝试形成有效漏洞，直接使用普通模式的 `--request`：
 
 ```bash
-.venv/bin/strix --red \
+.venv/bin/strix \
   --request ./burp-request.txt \
   --issue "检查该请求涉及的参数是否存在越权、注入或可获得更高权限的利用链" \
-  -n --yes
+  -n
 ```
 
-这条命令会启动完整的 AI 红队扫描链路、Docker sandbox、Caido 代理、子 Agent 和原生漏洞报告。请求文件只是起始证据，Agent 会在授权范围内重放基线、分析相关接口和业务流程、变异参数并验证实际影响，不会停在一次固定探针的响应比较上。未指定 `--target` 时，Strix 从请求的 Scheme、Host 和 Port 自动建立目标；指定 `--target` 或 `--target-list` 时，请求的 Host/Port 必须命中授权目标。
+这条命令会启动完整的 AI 渗透测试链路、Docker sandbox、Caido 代理、子 Agent 和原生漏洞报告。请求文件只是起始证据，Agent 会在授权范围内重放基线、分析相关接口和业务流程、变异参数并验证实际影响，不会停在一次固定探针的响应比较上。未指定 `--target` 时，Strix 从请求的 Scheme、Host 和 Port 自动建立目标；指定 `--target` 或 `--target-list` 时，请求的 Host/Port 必须命中授权目标。
 
 模式边界如下：
 
 | 入口 | 适用目的 | 执行引擎 |
 | --- | --- | --- |
 | `--verify --request` | 确定性复测、修复回归、证明已知假设 | 受限验证执行器 |
-| `--red --request` | 以单个数据包为入口的深度专项测试和漏洞利用验证 | 完整 AI 红队 Agent 图 |
-| `--red --target` | 常规目标级红队测试 | 完整 AI 红队 Agent 图 |
+| `--request` | 以单个数据包为入口的完整 AI 渗透测试 | 完整 AI Agent 图 |
 | `--burp-port` | 从 Burp/Caido 流量采集并测试功能点 | 完整目标级扫描链路 |
 | `--target` | 常规目标级渗透测试 | 常规 Agent 图 |
 
-因此，`--verify` 的结果是“复测证据”，不代表它已经完成一次完整的单包红队测试；想让 AI 自主扩展测试面，应使用 `--red --request`。
+因此，`--verify` 的结果是“复测证据”，不代表它已经完成一次完整的单包测试；想让 AI 自主扩展测试面，应使用普通模式的 `--request`。
 
-模式选择优先级为：CLI 参数 > `STRIX_MODE` > 持久化配置 > `normal`。扫描开始后模式不可切换，使用 `--resume` 时必须沿用原运行记录中的模式。
+模式选择优先级为：CLI 参数 > `STRIX_MODE` > 持久化配置 > `normal`。当前支持 `normal` 和 `verify` 两种模式；扫描开始后模式不可切换，使用 `--resume` 时必须沿用原运行记录中的模式。
 
-报告生成遵循原生 Strix 行为：`normal` 和 `redteam` 的 Markdown、HTML、JSON 及攻击链保留真实验证证据，不用说明性占位文本冒充 Request、Response、PoC 或凭据字段。`reproduction_requests` 中的原始请求和实际响应会回填到报告主证据；静态/依赖发现会明确标记 HTTP 字段不适用，动态发现缺少数据时会标记证据缺口并保留在报告中。SARIF 默认只保留 PoC 描述和脚本存在标记；红队专项 SARIF 额外保留完整复核字段。
+报告生成遵循原生 Strix 行为：Markdown、HTML、JSON、CSV 及 SARIF 保留真实验证证据，不用说明性占位文本冒充 Request、Response、PoC 或凭据字段。`reproduction_requests` 中的原始请求和实际响应会回填到报告主证据；静态/依赖发现会明确标记 HTTP 字段不适用，动态发现缺少数据时会标记证据缺口并保留在报告中。SARIF 默认只保留 PoC 描述和脚本存在标记。
 
-红队专项模式优先验证认证绕过、越权/IDOR、默认凭据、会话问题、敏感信息访问、注入、文件读写、命令执行，以及可能获得权限的业务逻辑。无效证书、弱 TLS、Banner、缺少安全响应头、普通 CAPTCHA 绕过和低影响限流问题默认跳过或延后；CAPTCHA、限流、CORS、CSRF、开放重定向、文件上传等问题一旦影响登录、找回密码、权限变更或敏感数据访问，会自动提升优先级。未知类型不因分类缺失而阻断，是否发起请求由目标作用域、动作风险和破坏性决定。
+运行产物位于 `strix_runs/<run-name>/`，包括 `penetration_test_report.md`、`penetration_test_report.html`、`vulnerabilities/*`、`run.json` 和 `findings.sarif`。
 
-所有已观察到的漏洞都会落盘并进入 Markdown、HTML、JSON、CSV 和 SARIF 产物，即使类型未知、严重度暂低或暂未满足攻击链条件。攻击链只是 High/Critical 且证据充分的独立归档视图；被效率策略跳过的检查会记录“未执行/低优先级”及原因，不会伪装成漏洞或静默丢失。
-
-验证深度限定为身份确认、随机 marker 文件/对象上传并清理、只读 SQL 查询、单个测试对象、dry-run 业务动作和受控 Canary；凭据验证应记录实际验证结果和权限范围。不会生成或投递 Webshell、反弹 Shell、持久化、批量数据收集或真实自动提权流程。
-
-运行产物位于 `strix_runs/<run-name>/`，其中 `penetration_test_report.md` 和 `vulnerabilities/*.md` 使用红队专项结构化 Markdown 格式，`run.json` 会记录：
-
-```json
-{
-  "mode": "redteam",
-  "policy_version": "redteam-v5"
-}
-```
-
-完整设计和报告章节说明见 [`docs/plan/100-红队专项模式设计与实现方案.md`](docs/plan/100-红队专项模式设计与实现方案.md)。
+普通模式会按完整 Agent 图测试目标；单请求只提供上下文，不会改变报告格式、作用域校验或 Agent 工具能力。
 
 ### 单个漏洞验证模式
 
@@ -232,7 +205,7 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 
 当前版本没有 OOB 回调确认能力，Canary 回显只记录为证据不足，不会单凭回显确认服务端请求伪造。
 
-`--verify` 用于复核一个具体漏洞，不启动普通扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才启动与普通扫描一致的 Docker sandbox，并通过容器内配置的 Caido 代理发送受限探针请求；计划阶段不会启动容器或发送请求。需要 AI 自主探索利用链时，使用上面的 `--red --request`，不要把 `--verify` 当作单包专项扫描入口。
+`--verify` 用于复核一个具体漏洞，不启动普通扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才启动与普通扫描一致的 Docker sandbox，并通过容器内配置的 Caido 代理发送受限探针请求；计划阶段不会启动容器或发送请求。需要 AI 自主探索测试面时，使用上面的普通模式 `--request`，不要把 `--verify` 当作单包完整扫描入口。
 
 ```bash
 # 交互模式：按提示粘贴请求和漏洞描述
@@ -267,7 +240,7 @@ STRIX_MODE=redteam strix --target https://staging.example.com
 
 交互模式中，请求内容以单独一行 `__STRIX_END__` 结束。执行前会展示识别出的漏洞类型、目标字段、验证动作、预计请求数和副作用提示；JSON 请求会递归暴露叶子字段，例如 `body.dataPackage.configList[0].conditionSql`，不需要手工填写参数路径。IDOR/BOLA 等需要第二身份的场景会继续要求提供第二个请求包。Raw 请求缺少 Scheme 时，如果同源 `Origin` 或 `Referer` 已明确给出协议，验证模式会自动采用；否则交互模式只询问一次使用 `http` 还是 `https`，非交互模式会直接阻断。
 
-验证结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。执行环境记录为 `docker-sandbox`，验证完成后会清理临时容器；容器启动或执行失败时不会回退到宿主机直连，而是生成证据不足的报告。验证模式与 `--target`、`--red`、`--mode redteam`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
+验证结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。执行环境记录为 `docker-sandbox`，验证完成后会清理临时容器；容器启动或执行失败时不会回退到宿主机直连，而是生成证据不足的报告。验证模式与 `--target`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
 
 ## 常见用法
 
@@ -300,7 +273,7 @@ strix --target "postman://<collection-uuid>?env=<environment-uuid>"
 
 ### Burp/Caido 流量驱动常规渗透测试
 
-`--burp-port` 使用 `normal` 模式，从 Burp/Caido 进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。它不是 `--verify` 的单漏洞复测，也不启用 `--red` 的红队专项优先级策略。
+`--burp-port` 使用 `normal` 模式，从 Burp/Caido 进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。它不是 `--verify` 的单漏洞复测。
 
 ```bash
 # 仅使用 Burp/Caido 流量建立测试上下文
@@ -399,7 +372,7 @@ Token 用尽时运行状态会标记为 `token_limit_exhausted`，报告会明�
 strix --resume <run_name> --token-limit 200M
 ```
 
-这里的 `200M` 是整次扫描的累计总上限，不是额外增加 200M；如果原运行已经消耗约 98M，恢复后大约还可使用 102M。恢复时不要再次指定 `--target`、`--target-list` 或 `--mount`，目标、红队模式和未完成任务计划会从原运行记录恢复。若耗尽的是模型供应商的 API 余额或配额，而不是 Strix 的 `--token-limit`，则需要先补充供应商额度或更换可用模型。
+这里的 `200M` 是整次扫描的累计总上限，不是额外增加 200M；如果原运行已经消耗约 98M，恢复后大约还可使用 102M。恢复时不要再次指定 `--target`、`--target-list` 或 `--mount`，目标和未完成任务计划会从原运行记录恢复。若耗尽的是模型供应商的 API 余额或配额，而不是 Strix 的 `--token-limit`，则需要先补充供应商额度或更换可用模型。
 
 ## 本地 Viewer
 

@@ -1,8 +1,8 @@
 """Report/finding helpers.
 
-Keep this package initializer lazy.  Report evidence and red-team projections
-are also useful as standalone modules, and importing state here would make
-those modules re-enter the package while it is still being initialized.
+Keep this package initializer lazy. Report helpers are also useful as standalone
+modules, and importing state here would make those modules re-enter the package
+while it is still being initialized.
 """
 
 from importlib import import_module

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
+from strix.config.modes import normalize_mode
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.token_budget import normalize_token_limit
 from strix.interface.tui.backend.live_view import TuiLiveView
@@ -27,7 +28,6 @@ from strix.interface.tui.backend.projection import (
     terminal_projection,
 )
 from strix.interface.utils import is_subscription_run
-from strix.redteam.policy import POLICY_VERSION, normalize_mode
 
 
 if TYPE_CHECKING:
@@ -232,9 +232,6 @@ class TuiController:
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "security_mode": self.security_mode,
-            "redteam_policy_version": (
-                POLICY_VERSION if self.security_mode == "redteam" else None
-            ),
             "max_budget_usd": self.max_budget_usd,
             "token_limit": self.token_limit,
             "max_turns": self.max_turns,

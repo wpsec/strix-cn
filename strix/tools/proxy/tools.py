@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 from agents import RunContextWrapper, function_tool
 
 from strix.core.proxy_scope import host_matches_scope
-from strix.redteam.policy import assess_action_risk, normalize_mode
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy import caido_api
@@ -519,22 +518,6 @@ async def repeat_request(
         components = caido_api.parse_raw_request(raw_str)
         full_url = caido_api.full_url_from_components(original, components, mods)
         modified = caido_api.apply_modifications(components, mods, full_url)
-        try:
-            mode = normalize_mode(
-                ctx.context.get("security_mode", "normal")
-                if isinstance(ctx.context, dict)
-                else "normal"
-            )
-        except ValueError:
-            mode = "redteam"
-        action = assess_action_risk(
-            modified["method"],
-            modified["url"],
-            mode=mode,
-            body=modified.get("body"),
-        )
-        if not bool(action["allowed"]):
-            raise ValueError(str(action["reason"]))
         modified_host = urlparse(str(modified["url"])).hostname or ""
         if (allowlist or denylist) and not host_matches_scope(
             modified_host,

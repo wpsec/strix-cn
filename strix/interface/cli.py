@@ -117,7 +117,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "credential_auth_available": bool(target_credentials),
         "allow_credential_attacks": bool(getattr(args, "allow_credential_attacks", False)),
         "seed_request": getattr(args, "seed_request", None),
-        "redteam_hypothesis": getattr(args, "redteam_hypothesis", None),
+        "request_hypothesis": getattr(args, "request_hypothesis", None),
     }
 
     report_state = ReportState(args.run_name)

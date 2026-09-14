@@ -7,9 +7,10 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from strix.config.modes import SecurityMode
+
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-SecurityMode = Literal["normal", "redteam", "verify"]
 
 DEFAULT_MAX_TURNS = 500
 

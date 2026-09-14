@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from strix.config import apply_config_override, load_settings
+from strix.config.modes import normalize_mode
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.token_budget import normalize_token_limit
@@ -21,7 +22,6 @@ from strix.interface.utils import (
     resolve_workspace_files,
     validate_config_file,
 )
-from strix.redteam.policy import POLICY_VERSION, normalize_mode
 
 
 def get_version() -> str:
@@ -148,8 +148,8 @@ def parse_arguments() -> argparse.Namespace:
   strix --target ./my-project --workspace-file ./wordlist.txt
   strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
 
-  # 以单个数据包为入口，启动完整 AI 红队专项测试
-  strix --red --request ./request.txt --issue "检查该参数是否可导致越权或注入" -n --yes
+  # 以单个数据包为入口，启动完整 AI 渗透测试
+  strix --request ./request.txt --issue "检查该参数是否可导致越权或注入" -n
         """,
     )
 
@@ -176,8 +176,7 @@ def parse_arguments() -> argparse.Namespace:
         "（OpenAPI/Swagger .json/.yaml 或 Postman collection 导出），"
         "或 Postman collection id（postman://<collection-uuid>[?env=<environment-uuid>]，"
         "需要 POSTMAN_API_KEY）。本地目录会以可写挂载方式进入沙箱。"
-        "可重复指定。新任务需提供 --target、--target-list、--mount 或 --burp-port 之一；"
-        "--red 也可通过 --request 单请求种子自动确定目标。",
+        "可重复指定。新任务需提供 --target、--target-list、--mount、--burp-port 或 --request 之一。",
     )
     parser.add_argument(
         "--target-list",
@@ -218,7 +217,7 @@ def parse_arguments() -> argparse.Namespace:
         "--seed-request",
         dest="verification_request",
         metavar="PATH",
-        help="--verify 使用的复测请求；--red 使用的单请求红队种子（Burp Raw HTTP 或 Copy as cURL）。",
+        help="--verify 使用的复测请求；普通模式使用的单请求测试种子（Burp Raw HTTP 或 Copy as cURL）。",
     )
     parser.add_argument(
         "--secondary-request",
@@ -236,7 +235,7 @@ def parse_arguments() -> argparse.Namespace:
         "--issue",
         dest="verification_issue",
         metavar="TEXT|@FILE",
-        help="--verify 的复测描述，或 --red 单请求专项测试的漏洞假设；使用 @文件路径可从文件读取。",
+        help="--verify 的复测描述，或普通模式单请求测试的漏洞假设；使用 @文件路径可从文件读取。",
     )
     parser.add_argument(
         "--baseline",
@@ -248,7 +247,7 @@ def parse_arguments() -> argparse.Namespace:
         "--yes",
         dest="verification_approve",
         action="store_true",
-        help="非交互模式确认执行验证计划或单请求红队专项测试。",
+        help="非交互模式确认执行验证计划。",
     )
 
     parser.add_argument(
@@ -304,12 +303,6 @@ def parse_arguments() -> argparse.Namespace:
 
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
-        "--red",
-        dest="redteam",
-        action="store_true",
-        help="启用红队专项模式：优先验证高影响问题，并生成完整发现与攻击链报告。",
-    )
-    mode_group.add_argument(
         "--verify",
         dest="verify",
         action="store_true",
@@ -317,9 +310,9 @@ def parse_arguments() -> argparse.Namespace:
     )
     mode_group.add_argument(
         "--mode",
-        choices=["normal", "redteam", "verify"],
+        choices=["normal", "verify"],
         default=None,
-        help="安全策略模式：normal、redteam 或 verify。默认读取 STRIX_MODE 或配置文件。",
+        help="安全策略模式：normal 或 verify。默认读取 STRIX_MODE 或配置文件。",
     )
 
     parser.add_argument(
@@ -425,8 +418,8 @@ def parse_arguments() -> argparse.Namespace:
     args.workspace_subdir = None
     args.target_credentials = None
     args.seed_request = None
-    args.redteam_hypothesis = None
-    args.mode_explicit = "redteam" if args.redteam else ("verify" if args.verify else args.mode)
+    args.request_hypothesis = None
+    args.mode_explicit = "verify" if args.verify else args.mode
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
@@ -444,24 +437,16 @@ def parse_arguments() -> argparse.Namespace:
             args.verification_baseline,
         )
     )
-    if args.mode == "normal" and any(
-        (
-            args.verification_request,
-            args.verification_issue,
-            args.verification_approve,
-            unsupported_seed_args,
-        )
-    ):
-        parser.error(
-            "--request/--seed-request、--issue 和 --yes 只能用于 --verify 或 --red；"
-            "--secondary-request、--canary-url、--baseline 只能用于 --verify。"
-        )
-    if args.mode == "redteam" and unsupported_seed_args:
+    if args.mode == "normal" and unsupported_seed_args:
         parser.error("--secondary-request、--canary-url、--baseline 只能用于 --verify。")
+    if args.mode == "normal" and args.verification_approve:
+        parser.error("--yes 只能用于 --verify。普通模式直接执行完整渗透测试。")
+    if args.mode == "normal" and args.verification_issue and not args.verification_request:
+        parser.error("普通模式的 --issue 需要与 --request 一起使用。")
 
     if args.mode == "verify":
-        if args.redteam or args.burp_port is not None:
-            parser.error("漏洞验证模式不能与 --red 或 --burp-port 同时使用。")
+        if args.burp_port is not None:
+            parser.error("漏洞验证模式不能与 --burp-port 同时使用。")
         if args.target or args.target_list or args.mount:
             parser.error("漏洞验证模式使用 --request，不支持 --target/--target-list/--mount。")
         if args.resume:
@@ -493,18 +478,6 @@ def parse_arguments() -> argparse.Namespace:
             parser.error("首次漏洞验证模式需要 --issue <问题描述>。")
         if args.verification_approve and not args.non_interactive:
             parser.error("--yes 只能用于非交互模式。")
-
-    if args.mode == "redteam":
-        if args.verification_issue and args.verification_issue.startswith("@"):
-            issue_path = Path(args.verification_issue[1:]).expanduser()
-            try:
-                args.verification_issue = issue_path.read_text(encoding="utf-8").strip()
-            except (OSError, UnicodeDecodeError) as exc:
-                parser.error(f"读取漏洞描述失败：{exc}")
-        if args.verification_approve and not args.non_interactive:
-            parser.error("--yes 只能用于非交互模式。")
-        if args.resume and args.verification_request:
-            parser.error("--resume 不能同时提供新的 --request；恢复运行会使用历史种子请求。")
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()
@@ -556,18 +529,23 @@ def parse_arguments() -> argparse.Namespace:
     except ValueError as error:
         parser.error(f"--workspace-file: {error}")
 
-    if args.mode == "redteam":
-        args.redteam_hypothesis = args.verification_issue or None
-        if args.verification_request:
+    if args.mode != "verify" and args.verification_request:
+        if args.verification_issue and args.verification_issue.startswith("@"):
+            issue_path = Path(args.verification_issue[1:]).expanduser()
             try:
-                seed_metadata, seed_file = prepare_seed_request(
-                    args.verification_request,
-                    args.workspace_files,
-                )
-            except ValueError as error:
-                parser.error(str(error))
-            args.seed_request = seed_metadata
-            args.workspace_files.append(seed_file)
+                args.verification_issue = issue_path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError) as exc:
+                parser.error(f"读取漏洞描述失败：{exc}")
+        args.request_hypothesis = args.verification_issue or None
+        try:
+            seed_metadata, seed_file = prepare_seed_request(
+                args.verification_request,
+                args.workspace_files,
+            )
+        except ValueError as error:
+            parser.error(str(error))
+        args.seed_request = seed_metadata
+        args.workspace_files.append(seed_file)
 
     args.user_explicit_instruction = args.instruction if args.resume else None
     # What the user actually asked for, kept apart from args.instruction because
@@ -597,8 +575,7 @@ def parse_arguments() -> argparse.Namespace:
             return args
 
         if (
-            args.mode == "redteam"
-            and args.seed_request
+            args.seed_request
             and not args.target
             and not args.target_list
         ):
@@ -649,16 +626,9 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
             f"--resume {args.resume}：不能将模式从 {persisted_mode} 改为 {explicit_mode}。"
             "恢复扫描必须沿用历史运行模式。"
         )
-    if persisted_mode == "redteam" and state.get("policy_version") != POLICY_VERSION:
-        parser.error(
-            f"--resume {args.resume}：历史红队专项策略版本不受支持；"
-            "策略已变更，请新建扫描以重新确认授权范围。"
-        )
     args.mode = persisted_mode
-    args.seed_request = state.get("seed_request") if persisted_mode == "redteam" else None
-    args.redteam_hypothesis = (
-        state.get("redteam_hypothesis") if persisted_mode == "redteam" else None
-    )
+    args.seed_request = state.get("seed_request")
+    args.request_hypothesis = state.get("request_hypothesis")
     if args.seed_request is not None and not isinstance(args.seed_request, dict):
         parser.error(f"--resume {args.resume}：历史单请求种子元数据无效")
     if args.seed_request:
@@ -747,7 +717,7 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     ):
         parser.error(
             f"--resume {args.resume}：历史单请求种子文件不存在或未能恢复，"
-            "无法安全继续该红队专项测试。"
+            "无法安全继续该单请求扫描。"
         )
     if workspace_mount:
         if not Path(workspace_mount).expanduser().is_dir():

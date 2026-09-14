@@ -7,7 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from strix.redteam.policy import POLICY_VERSION, normalize_mode
+from strix.config.modes import normalize_mode
 from strix.skills import get_available_skills, load_skills, skill_search_dirs
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -113,7 +113,6 @@ def render_system_prompt(
             is_root=is_root,
             is_whitebox=is_whitebox,
             security_mode=security_mode,
-            redteam_policy_version=POLICY_VERSION if security_mode == "redteam" else None,
             system_prompt_context=system_prompt_context or {},
             **skill_content,
         )

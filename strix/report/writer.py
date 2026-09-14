@@ -17,13 +17,10 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
-from strix.redteam.attack_chain import (
-    build_attack_chain,
-)
 from strix.report.evidence import (
+    render_structured_evidence_markdown,
     report_request_evidence,
     report_response_evidence,
-    render_structured_evidence_markdown,
 )
 
 
@@ -193,323 +190,6 @@ def _relevel_markdown_headings(markdown: str, level_delta: int = 2) -> str:
     return "\n".join(lines).strip()
 
 
-_REDTEAM_OBJECTIVE_REPLACEMENTS = (
-    ("AI 黑盒测试发现", "基于请求、响应、前端代码和服务端行为观察到"),
-    ("通过利用", "通过发送验证请求"),
-    ("最终确认利用", "取得可复核的验证结果"),
-    ("最终确认", "验证结果显示"),
-    ("绕过", "未触发预期控制"),
-)
-
-
-def _redteam_text(value: Any, fallback: str = "未记录；请结合证据补充。") -> str:
-    text = str(value or "").strip()
-    if not text:
-        return fallback
-    for source, replacement in _REDTEAM_OBJECTIVE_REPLACEMENTS:
-        text = text.replace(source, replacement)
-    return text
-
-
-def _redteam_context_value(report: dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = report.get(key)
-        if value not in (None, ""):
-            return _redteam_text(value)
-    return "未记录；请结合证据补充。"
-
-
-def _redteam_location_lines(report: dict[str, Any]) -> list[str]:
-    locations = report.get("code_locations")
-    if not isinstance(locations, list):
-        return ["- 代码或资源定位：未记录；请结合证据章节定位。"]
-    lines: list[str] = []
-    for location in locations:
-        if not isinstance(location, dict):
-            continue
-        file_name = _escape_inline(location.get("file") or "未记录")
-        start = location.get("start_line")
-        end = location.get("end_line")
-        line_ref = ""
-        if start is not None:
-            line_ref = f":{start}-{end}" if end and end != start else f":{start}"
-        label = _redteam_text(location.get("label"), "")
-        suffix = f"（{label}）" if label else ""
-        lines.append(f"- `{file_name}{line_ref}`{suffix}")
-    return lines or ["- 代码或资源定位：未记录；请结合证据章节定位。"]
-
-
-def _redteam_poc_lines(report: dict[str, Any]) -> list[str]:
-    lines = [
-        "PoC 仅用于已授权的安全验证；代理地址为 `http://127.0.0.1:8080`，"
-        "代理不可用时应使用直连，不影响验证流程。",
-    ]
-    description = _redteam_text(report.get("poc_description"))
-    lines.extend(["", "验证步骤：", "", description])
-    raw_code = str(report.get("poc_script_code") or "").strip()
-    if not raw_code:
-        lines.extend(["", "当前未保存可执行 PoC 代码；请按上述验证步骤手工复现。"])
-        return lines
-    language, code = parse_fenced_code(raw_code)
-    fence_lang = language or "python"
-    fence = safe_fence(code)
-    lines.extend(["", f"{fence}{fence_lang}", code, fence])
-    return lines
-
-
-def _redteam_finding_sections(report: dict[str, Any], index: int) -> list[str]:
-    title = _redteam_text(report.get("title"), "未命名漏洞")
-    severity = str(report.get("severity") or "unknown").strip().upper()
-    cvss4_score = report.get("cvss_4_score") or report.get("cvss_v4_score")
-    cvss4_vector = report.get("cvss_4_vector") or report.get("cvss_v4_vector")
-    if cvss4_score is not None or cvss4_vector:
-        cvss4 = f"分数：{cvss4_score or '未计算'}；向量：`{cvss4_vector or '未记录'}`"
-    else:
-        cvss4 = "未计算真实 CVSS 4.0 分数或向量；未将旧版本分数误标为 CVSS 4.0。"
-    legacy_cvss = report.get("cvss")
-    legacy_vector = (report.get("cvss_breakdown") or {}).get("vector")
-    if legacy_cvss is not None:
-        reference = f"参考字段（现有 CVSS 3.1）：{legacy_cvss}"
-        if legacy_vector:
-            reference += f"；向量：`{legacy_vector}`"
-    else:
-        reference = "参考 CVSS 3.1：未计算。"
-    endpoint = " ".join(
-        part
-        for part in (
-            str(report.get("method") or "").strip(),
-            str(report.get("endpoint") or report.get("target") or "").strip(),
-        )
-        if part
-    )
-    location_trace = report.get("location_trace") or report.get("technical_analysis")
-    root_cause = report.get("root_cause") or report.get("technical_analysis")
-    frontend_feature = _redteam_context_value(
-        report, "frontend_feature", "frontend_function"
-    )
-    sub_application = _redteam_context_value(
-        report, "sub_application", "application", "module"
-    )
-    key_js_file = _redteam_context_value(report, "key_js_file", "javascript_file")
-    business_function = _redteam_context_value(
-        report, "business_function", "business_feature"
-    )
-    permission_impact = _redteam_text(
-        report.get("permission_proof") or report.get("impact")
-    )
-    policy = report.get("redteam_policy")
-    policy_lines = []
-    if isinstance(policy, dict):
-        policy_lines = [
-            f"- 红队策略优先级：{_redteam_text(policy.get('priority'), '未分类')}",
-            f"- 策略归档状态：{_redteam_text(policy.get('report_status'), '未记录')}",
-            f"- 策略说明：{_redteam_text(policy.get('reason'), '未记录策略说明')}",
-        ]
-    limitations = [
-        ("前提与范围", report.get("assumptions")),
-        ("反证与待确认事项", report.get("counterevidence")),
-        ("严重度变化条件", report.get("severity_change_conditions")),
-        ("置信度", report.get("confidence")),
-    ]
-    lines = [
-        f"# 漏洞 {index}：{title}",
-        "",
-        "## 一、漏洞名称",
-        "",
-        title,
-        "",
-        "## 二、漏洞等级与 CVSS 4.0",
-        "",
-        f"- 漏洞等级：`{_escape_inline(severity)}`",
-        f"- 原始漏洞类型：{_redteam_text(report.get('vulnerability_type_raw'))}",
-        f"- 规范化漏洞类型：{_redteam_text(report.get('vulnerability_type'))}",
-        f"- CVSS 4.0：{cvss4}",
-        f"- {reference}",
-        *policy_lines,
-        "",
-        "## 三、漏洞位置",
-        "",
-        f"- 前端功能：{frontend_feature}",
-        f"- 后端接口：{_redteam_text(endpoint)}",
-        f"- 所属子应用：{sub_application}",
-        f"- 关键 JS 文件：{key_js_file}",
-        f"- 具体业务功能推测：{business_function}",
-        "",
-        "## 四、漏洞描述",
-        "",
-        _redteam_text(report.get("description")),
-        "",
-        "## 五、漏洞定位过程",
-        "",
-        *render_structured_evidence_markdown(report),
-        "",
-        "补充定位说明：",
-        "",
-        _redteam_text(location_trace),
-        "",
-        "代码或资源定位：",
-        *(_redteam_location_lines(report)),
-        "",
-        "## 六、安全验证过程",
-        "",
-        f"- 请求方法：{_redteam_text(report.get('method'))}",
-        f"- 请求路径：{_redteam_text(report.get('endpoint') or report.get('target'))}",
-        f"- 认证状态：{_redteam_context_value(report, 'authentication_status', 'auth_status')}",
-        "- 请求：",
-        "",
-    ]
-    request, request_source = report_request_evidence(report)
-    lines.extend(["- Request："])
-    if request_source in {"request", "reproduction_request"}:
-        request_fence = safe_fence(request)
-        lines.extend(["", f"{request_fence}http", request, request_fence, ""])
-    else:
-        lines.extend(["", request, ""])
-    response, response_source = report_response_evidence(report)
-    lines.append("- Response / 运行时现象：")
-    if response_source in {"response", "observed_response"}:
-        response_fence = safe_fence(response)
-        lines.extend(["", f"{response_fence}text", response, response_fence, ""])
-    else:
-        lines.extend(["", response, ""])
-    provenance = report.get("credential_provenance")
-    if isinstance(provenance, dict) and provenance:
-        lines.extend(
-            [
-                "- 凭据材料获取过程：",
-                "",
-                *(f"  - {key}：{_redteam_text(value)}" for key, value in provenance.items()),
-                "",
-            ]
-        )
-    lines.extend(
-        [
-            f"- 证明的安全影响：{permission_impact}",
-            "- PoC：",
-            "",
-            *_redteam_poc_lines(report),
-            "",
-            "## 七、漏洞根因",
-            "",
-            _redteam_text(root_cause),
-            "",
-            "## 八、漏洞影响",
-            "",
-            _redteam_text(report.get("impact")),
-            "",
-            "## 九、修复建议",
-            "",
-            _redteam_text(report.get("remediation_steps")),
-            "",
-            "## 十、复测方案",
-            "",
-            _redteam_text(
-                report.get("fix_verification") or report.get("retest_plan"),
-                "修复后使用相同请求路径和安全验证条件复测，并确认响应不再表现出上述影响。",
-            ),
-            "",
-            "## 十一、证据限制与待确认事项",
-            "",
-        ]
-    )
-    limitation_lines = [
-        f"- {label}：{_redteam_text(value)}"
-        for label, value in limitations
-        if value not in (None, "")
-    ]
-    lines.extend(limitation_lines or ["- 当前没有额外限制或待确认事项。"])
-    lines.append("")
-    return lines
-
-
-def _render_redteam_report(
-    final_scan_result: str,
-    *,
-    run_record: dict[str, Any],
-    vulnerability_reports: list[dict[str, Any]],
-) -> str:
-    """Render all findings and a separate evidence-backed attack-chain view."""
-    reports = [dict(report) for report in vulnerability_reports]
-    chain = build_attack_chain(reports)
-    targets = _target_labels(run_record)
-    report_by_id = {str(report.get("id")): report for report in reports}
-    chain_reports = [
-        report_by_id[node["id"]]
-        for node in chain["nodes"]
-        if node["id"] in report_by_id
-    ]
-    lines = [
-        "# 红队专项安全验证报告",
-        "",
-        f"- 运行：{_escape_inline(run_record.get('run_name') or '未命名运行')}",
-        f"- 目标：{_escape_inline('、'.join(targets) if targets else '当前运行未记录目标')}",
-        "- 模式：redteam",
-        f"- 策略版本：{_escape_inline(run_record.get('policy_version') or 'redteam-v5')}",
-        "",
-        "## 攻击链路摘要",
-        "",
-    ]
-    if not chain["nodes"]:
-        lines.append("本次运行暂未形成具备充分证据的 High/Critical 攻击链节点。")
-    else:
-        for index, node in enumerate(chain["nodes"], start=1):
-            lines.append(
-                f"- 节点 {index}：{_escape_inline(node.get('title'))}；"
-                f"类型：`{node.get('vulnerability_type') or 'unknown'}`；"
-                f"等级：`{str(node.get('severity') or '').upper()}`；"
-                f"证据节点：`{node.get('id')}`"
-            )
-
-    lines.extend(["", "## 节点关系", ""])
-    if chain["edges"]:
-        for edge in chain["edges"]:
-            lines.append(
-                f"`{edge['source']}` → `{edge['target']}`（{edge['relationship']}）"
-            )
-    else:
-        lines.append("暂无节点关系。")
-
-    skipped = run_record.get("redteam_skipped_tests") or []
-    lines.extend(["", "## 效率策略跳过项", ""])
-    if isinstance(skipped, list) and skipped:
-        for entry in skipped:
-            if not isinstance(entry, dict):
-                continue
-            lines.append(
-                f"- `{_escape_inline(entry.get('vulnerability_type_raw') or 'unknown')}`："
-                f"{_escape_inline(entry.get('reason') or '未记录跳过原因')}"
-            )
-    else:
-        lines.append("本次运行没有记录效率策略跳过项。")
-
-    chain_ids = {str(report.get("id")) for report in chain_reports}
-    lines.extend(["", "## 已落盘发现", ""])
-    if not reports:
-        lines.append("本次运行尚未落盘安全问题。")
-    else:
-        report_index = 1
-        for report in reports:
-            report_id = str(report.get("id") or "")
-            archive_status = (
-                "已纳入攻击链"
-                if report_id in chain_ids
-                else "已落盘，暂未纳入攻击链（不代表该问题被丢弃）"
-            )
-            lines.extend(
-                [
-                    f"### 发现 {report_index}：{_escape_inline(report.get('title'))}",
-                    "",
-                    f"- 归档状态：{archive_status}",
-                    f"- 原始类型：{_escape_inline(report.get('vulnerability_type_raw') or 'unknown')}",
-                    f"- 严重度：`{str(report.get('severity') or 'info').upper()}`",
-                    "",
-                ]
-            )
-            lines.extend(_redteam_finding_sections(report, report_index))
-            report_index += 1
-    return "\n".join(lines).strip() + "\n"
-
-
 def render_complete_report(
     final_scan_result: str,
     *,
@@ -519,12 +199,6 @@ def render_complete_report(
     """Render one delivery-ready report with cover, TOC, summary, and findings."""
     record = run_record or {}
     reports = list(vulnerability_reports or [])
-    if str(record.get("mode") or "normal").lower() == "redteam":
-        return _render_redteam_report(
-            final_scan_result,
-            run_record=record,
-            vulnerability_reports=reports,
-        )
     targets = _target_labels(record)
     run_name = record.get("run_name") or record.get("scan_id") or "未命名运行"
     status = _STATUS_LABELS_ZH.get(str(record.get("status") or "").lower(), "未记录状态")
@@ -787,22 +461,16 @@ def write_vulnerabilities(
     run_dir: Path,
     vulnerability_reports: list[dict[str, Any]],
     saved_vuln_ids: set[str],
-    *,
-    redteam: bool = False,
 ) -> int:
     vuln_dir = run_dir / "vulnerabilities"
     vuln_dir.mkdir(exist_ok=True)
 
-    new_reports = (
-        list(vulnerability_reports)
-        if redteam
-        else [r for r in vulnerability_reports if r["id"] not in saved_vuln_ids]
-    )
+    new_reports = [r for r in vulnerability_reports if r["id"] not in saved_vuln_ids]
 
     for report in new_reports:
         atomic_write_text(
             vuln_dir / f"{report['id']}.md",
-            render_vulnerability_md(report, redteam=redteam),
+            render_vulnerability_md(report),
         )
         saved_vuln_ids.add(report["id"])
 
@@ -866,11 +534,7 @@ def atomic_write_text(path: Path, payload: str) -> None:
 
 def render_vulnerability_md(
     report: dict[str, Any],
-    *,
-    redteam: bool = False,
 ) -> str:  # noqa: PLR0912, PLR0915
-    if redteam:
-        return "\n".join(_redteam_finding_sections(report, 1)).strip() + "\n"
     severity = _SEVERITY_LABELS_ZH.get(
         str(report.get("severity", "")).strip().lower(),
         str(report.get("severity", "未知")) or "未知",
