@@ -54,6 +54,7 @@ from strix.core.sessions import open_agent_session
 from strix.core.token_budget import normalize_token_limit
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
+from strix.telemetry import set_scan_phase
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
@@ -123,6 +124,13 @@ def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
     if report_state is None:
         return
     report_state.record_mcp_connections([connection.name for connection in connections])
+
+
+def _note_exit_reason(reason: str) -> None:
+    """Record why the scan stopped so the end-of-scan beacon reports it."""
+    report_state = get_global_report_state()
+    if report_state is not None and report_state.scan_ended_exit_reason is None:
+        report_state.scan_ended_exit_reason = reason
 
 
 def _persist_mcp_status(roster: list[dict[str, Any]]) -> None:
@@ -361,6 +369,7 @@ async def run_strix_scan(
         root_id = uuid.uuid4().hex[:8]
 
     logger.info("Bringing up sandbox session for scan %s", scan_id)
+    set_scan_phase("sandbox_init")
     try:
         bundle = await session_manager.create_or_reuse(
             scan_id,
@@ -380,6 +389,7 @@ async def run_strix_scan(
         raise
     report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
+    set_scan_phase("agent_setup")
 
     report_state = get_global_report_state()
     if report_state is not None:
@@ -718,6 +728,7 @@ async def run_strix_scan(
             await coordinator.park_waiting(root_id, wait_kind="user")
             initial_input = []
 
+        set_scan_phase("agent_loop")
         result = await run_agent_loop(
             agent=root_agent,
             initial_input=initial_input,
@@ -770,6 +781,7 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "stopped")
         return None
     except BudgetExceededError as exc:
+        _note_exit_reason("budget_exceeded")
         report_state = get_global_report_state()
         if report_state is not None and report_state.token_limit_exhausted:
             with contextlib.suppress(Exception):
@@ -783,6 +795,7 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "stopped")
         return None
     except RateLimitError as exc:
+        _note_exit_reason("rate_limited")
         logger.warning(
             "Scan %s stopped: persistent rate limit from the LLM provider (%s). "
             "Resume with 'strix --resume %s' once the limit clears.",

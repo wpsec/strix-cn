@@ -150,6 +150,14 @@ def parse_arguments() -> argparse.Namespace:
 
   # 以单个数据包为入口，启动完整 AI 渗透测试
   strix --request ./request.txt --issue "检查该参数是否可导致越权或注入" -n
+
+Strix Cloud:
+  strix cloud login
+  strix cloud scans start --source . --yes --wait
+  strix cloud                      # 列出所有云端资源
+
+  云端渗透测试                       https://app.strix.ai
+  企业版试用                         https://strix.ai/demo
         """,
     )
 

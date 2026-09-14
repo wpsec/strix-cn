@@ -41,8 +41,9 @@ from strix.interface.update_check import (
 from strix.interface.utils import (
     build_final_stats_text,
 )
+from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
 from strix.runtime import session_manager
-from strix.telemetry import posthog, scarf
+from strix.telemetry import posthog, report_error, scarf, set_scan_phase
 from strix.telemetry.logging import configure_dependency_logging
 
 
@@ -401,15 +402,18 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
     happen inside the TUI so the interface paints immediately instead of
     waiting on a model round trip.
     """
+    set_scan_phase("preflight")
     try:
         asyncio.run(warm_up_llm(show_model_warning=True))
     except ModelConnectionError as exc:
+        report_error("model_connection_failed", exc)
         _print_model_connection_error(exc, exc.model_name)
         sys.exit(1)
     persist_current()
     try:
         prepare_run(args)
     except ValueError as e:
+        report_error("scan_preparation_failed", e)
         _print_error_panel("准备扫描失败", str(e))
         sys.exit(1)
     telemetry_start(args)
@@ -456,8 +460,6 @@ def main() -> None:
 
         sys.exit(run_cloud(sys.argv[2:]))
 
-    from strix.llm.warmup import start_import_warmup
-
     start_import_warmup()
 
     args = parse_arguments()
@@ -480,6 +482,7 @@ def main() -> None:
     check_docker_installed()
     pull_docker_image()
     validate_environment()
+    wait_for_import_warmup()
     session_manager.reap_stale_docker_sessions()
 
     if args.non_interactive:
@@ -493,18 +496,19 @@ def main() -> None:
             from strix.interface.cli import run_cli
 
             asyncio.run(run_cli(args))
+            exit_reason = "agent_stopped"
         else:
             asyncio.run(run_tui(args))
     except InteractiveSetupUnavailableError as exc:
         exit_reason = "error"
+        report_error("interactive_setup_unavailable", exc)
         _print_error_panel("交互界面不可用", str(exc))
         sys.exit(1)
     except KeyboardInterrupt:
         exit_reason = "interrupted"
-    except Exception:
+    except Exception as exc:
         exit_reason = "error"
-        posthog.error("unhandled_exception")
-        scarf.error("unhandled_exception")
+        report_error("unhandled_exception", exc)
         raise
     finally:
         report_state = get_global_report_state()

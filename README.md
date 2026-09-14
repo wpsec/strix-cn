@@ -4,7 +4,7 @@
 
 # Strix CN
 
-Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平上游 `v1.6.1`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
+Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已合并上游 `v1.6.2`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
 
 - 上游项目：[https://github.com/usestrix/strix](https://github.com/usestrix/strix)
 - 当前分支：[https://github.com/wpsec/strix-cn](https://github.com/wpsec/strix-cn)
@@ -24,6 +24,8 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已追平�
 - `LLM_API_BASE` 指向 Anthropic 协议端点时，裸模型名自动按 `/v1/messages` 路由
 - 交互界面为上游 Go / Bubble Tea TUI；本地 Viewer 内置，无需额外前端安装
 - 支持 `LLM_EXTRA_HEADERS`、`LLM_DISABLE_STREAMING`、`STRIX_REASONING_EFFORT=max`
+- Web Search 支持 Exa 与 Perplexity，可通过配置选择 Provider；Exa 支持搜索结果摘要和页面全文抓取
+- 支持通过 Vercel AI Gateway 接入多个模型 Provider
 - 默认沙箱镜像基线 `ghcr.io/usestrix/strix-sandbox:1.3.0`；本地目录统一走挂载模式
 
 ## 使用注意
@@ -140,6 +142,13 @@ export LLM_DISABLE_STREAMING="false"
 
 # 可选：推理强度
 export STRIX_REASONING_EFFORT="high"
+
+# 可选：启用实时 Web 搜索（二选一或同时配置）
+# export PERPLEXITY_API_KEY="your-perplexity-api-key"
+# export EXA_API_KEY="your-exa-api-key"
+# export STRIX_WEB_SEARCH_PROVIDER="auto"  # auto、exa 或 perplexity
+# export STRIX_EXA_SEARCH_TYPE="auto"       # auto、fast、instant、deep-lite、deep、deep-reasoning
+# export STRIX_EXA_NUM_RESULTS="5"           # 1-100
 
 # 可选：受限网络环境
 export HTTP_PROXY="http://127.0.0.1:7897"

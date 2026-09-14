@@ -46,7 +46,7 @@ export function AgentDetailModal({
   const scrollRef = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(false);
 
-  // Keep the modal mounted through its exit animation (see UpgradeModal).
+  // Keep the modal mounted through its exit animation.
   const [render, setRender] = useState(open);
   const [state, setState] = useState<"open" | "closed">(open ? "open" : "closed");
   // Defer the (heavy) transcript one frame so the shell + fade paint instantly

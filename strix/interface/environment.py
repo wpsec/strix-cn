@@ -8,11 +8,23 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings
+from strix.config import IntegrationSettings, codex, load_settings
 from strix.interface.utils import check_docker_connection, image_exists, process_pull_line
+from strix.telemetry import report_error
 
 
 logger = logging.getLogger(__name__)
+
+
+def _missing_web_search_vars(integrations: IntegrationSettings) -> list[str]:
+    """Return the key required by the selected web search provider."""
+    if integrations.web_search_provider == "exa":
+        return [] if integrations.exa_api_key else ["EXA_API_KEY"]
+    if integrations.web_search_provider == "perplexity":
+        return [] if integrations.perplexity_api_key else ["PERPLEXITY_API_KEY"]
+    if integrations.exa_api_key or integrations.perplexity_api_key:
+        return []
+    return ["EXA_API_KEY", "PERPLEXITY_API_KEY"]
 
 
 def validate_environment() -> None:
@@ -29,6 +41,7 @@ def validate_environment() -> None:
                 f"[red]STRIX_LLM={settings.llm.model} uses your ChatGPT subscription, "
                 "but you're not signed in.[/] Run [cyan]strix auth login chatgpt[/] first."
             )
+            report_error("subscription_not_signed_in")
             sys.exit(1)
         logger.info("Environment OK (ChatGPT subscription)")
         return
@@ -42,8 +55,7 @@ def validate_environment() -> None:
     if not settings.llm.api_base:
         missing_optional_vars.append("LLM_API_BASE")
 
-    if not settings.integrations.perplexity_api_key:
-        missing_optional_vars.append("PERPLEXITY_API_KEY")
+    missing_optional_vars.extend(_missing_web_search_vars(settings.integrations))
 
     if missing_required_vars:
         error_text = Text()
@@ -97,6 +109,13 @@ def validate_environment() -> None:
                         " - Perplexity AI Web 搜索的 API Key（启用实时研究）\n",
                         style="white",
                     )
+                elif var == "EXA_API_KEY":
+                    error_text.append("• ", style="white")
+                    error_text.append("EXA_API_KEY", style="bold cyan")
+                    error_text.append(
+                        " - Exa Web 搜索的 API Key（首选实时研究提供商）\n",
+                        style="white",
+                    )
                 elif var == "STRIX_REASONING_EFFORT":
                     error_text.append("• ", style="white")
                     error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
@@ -128,6 +147,11 @@ def validate_environment() -> None:
                         "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n",
                         style="dim white",
                     )
+                elif var == "EXA_API_KEY":
+                    error_text.append(
+                        "export EXA_API_KEY='your-exa-key-here'\n",
+                        style="dim white",
+                    )
                 elif var == "STRIX_REASONING_EFFORT":
                     error_text.append(
                         "export STRIX_REASONING_EFFORT='high'\n",
@@ -146,6 +170,7 @@ def validate_environment() -> None:
         console.print("\n")
         console.print(panel)
         console.print()
+        report_error("missing_required_config")
         sys.exit(1)
     logger.info(
         "Environment OK (optional missing: %s)",
@@ -174,6 +199,7 @@ def check_docker_installed() -> None:
             padding=(1, 2),
         )
         console.print("\n", panel, "\n")
+        report_error("docker_not_installed")
         sys.exit(1)
     logger.debug("Docker CLI present")
 
@@ -277,6 +303,7 @@ def pull_docker_image() -> None:
                 padding=(1, 2),
             )
             console.print(panel, "\n")
+            report_error("image_pull_failed", e)
             sys.exit(1)
 
     logger.info("Docker image %s ready", image)

@@ -32,6 +32,34 @@ def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
     return ctx.context if isinstance(ctx.context, dict) else {}
 
 
+def _filed_reports_by(agent_id: str) -> list[dict[str, Any]]:
+    """Return the reports actually filed by an agent, keyed by author id."""
+    state = get_global_report_state()
+    if state is None:
+        return []
+    filed: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for report in state.get_existing_vulnerabilities():
+        if report.get("agent_id") != agent_id:
+            continue
+        report_id = str(report.get("id") or "")
+        if report_id and report_id not in seen:
+            seen.add(report_id)
+            filed.append(report)
+    return filed
+
+
+def _render_filed_report(report: dict[str, Any]) -> str:
+    line = f"- {report.get('id')}"
+    severity = report.get("severity")
+    if severity:
+        line += f" [{str(severity).upper()}]"
+    title = report.get("title")
+    if title:
+        line += f" {title}"
+    return line
+
+
 def _render_completion_report(
     *,
     agent_name: str,
@@ -42,6 +70,7 @@ def _render_completion_report(
     findings: list[str],
     recommendations: list[str],
     open_items: list[str],
+    filed_reports: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render a child's completion report as plain structured text.
 
@@ -68,11 +97,17 @@ def _render_completion_report(
         lines.append("发现:")
         lines.extend(f"- {f}" for f in findings)
     lines.append("")
-    lines.append("Open items (unresolved, need follow-up):")
+    lines.append("本代理已落盘的漏洞报告（以这些 ID 为准）：")
+    if filed_reports:
+        lines.extend(_render_filed_report(report) for report in filed_reports)
+    else:
+        lines.append("- （无）")
+    lines.append("")
+    lines.append("待跟进事项（尚未解决）：")
     if open_items:
         lines.extend(f"- {o}" for o in open_items)
     else:
-        lines.append("- (none)")
+        lines.append("- （无）")
     if recommendations:
         lines.append("")
         lines.append("建议:")
@@ -155,8 +190,9 @@ async def send_message_to_agent(
     **Don't** use for routine "hello/status" pings, for context the
     target already has (children inherit parent history), or when
     parent/child completion via ``agent_finish`` already covers the
-    flow. Messages to any registered agent wake it, regardless of
-    status, so a follow-up can restart a completed/stopped/failed agent.
+    flow. In interactive runs a message can wake the target regardless of
+    status. In non-interactive runs a terminal agent cannot be restarted;
+    read its filed reports or spawn a new agent instead.
 
     Args:
         target_agent_id: Recipient's 8-char id.
@@ -201,10 +237,21 @@ async def send_message_to_agent(
         },
     )
     if not delivered:
+        _, status = await coordinator.reachability(target_agent_id)
+        if status is None:
+            error = f"Target agent '{target_agent_id}' not found"
+        else:
+            error = (
+                f"目标代理 '{target_agent_id}' 当前状态为 '{status}'，本次运行无法唤醒；"
+                "请读取其已落盘的漏洞报告，或创建新的代理。"
+            )
         return json.dumps(
             {
                 "success": False,
-                "error": f"Target agent '{target_agent_id}' not found or message delivery failed",
+                "error": error,
+                "target_agent_id": target_agent_id,
+                "target_status": status,
+                "delivery_status": "not_delivered",
             },
             ensure_ascii=False,
             default=str,
@@ -392,6 +439,27 @@ async def wait_for_agents(  # noqa: PLR0911
                 "wait_outcome": "waiting",
                 "reason": reason,
                 "note": "Agent parked; execution will resume when a message arrives.",
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
+    if not await coordinator.active_agents_except(me):
+        _, statuses, names, _ = await coordinator.graph_snapshot()
+        return json.dumps(
+            {
+                "success": True,
+                "wait_outcome": "no_active_agents",
+                "reason": reason,
+                "agents": [
+                    {"agent_id": agent_id, "name": names.get(agent_id, agent_id), "status": status}
+                    for agent_id, status in statuses.items()
+                    if agent_id != me
+                ],
+                "note": (
+                    "没有其他代理处于运行或等待状态，当前不会再有消息；已完成代理的结果请从 "
+                    "list_reports / get_report 查看。"
+                ),
             },
             ensure_ascii=False,
             default=str,
@@ -745,6 +813,9 @@ async def agent_finish(
             default=str,
         )
 
+    filed_reports = _filed_reports_by(me)
+    filed_report_ids = [str(report.get("id")) for report in filed_reports]
+
     parent_notified = False
     if report_to_parent and await coordinator.claim_parent_notice(me):
         async with coordinator._lock:
@@ -758,6 +829,7 @@ async def agent_finish(
             findings=list(findings or []),
             recommendations=list(final_recommendations or []),
             open_items=list(open_items or []),
+            filed_reports=filed_reports,
         )
         await coordinator.send(
             parent_id,
@@ -767,6 +839,7 @@ async def agent_finish(
                 "content": report,
                 "type": "completion",
                 "priority": "high",
+                "filed_report_ids": filed_report_ids,
             },
         )
         parent_notified = True
@@ -789,10 +862,11 @@ async def agent_finish(
         await notify_parent_on_terminal(coordinator, me, "completed")
 
     logger.info(
-        "agent_finish: %s success=%s findings=%d parent_notified=%s",
+        "agent_finish: %s success=%s findings=%d filed_reports=%d parent_notified=%s",
         me,
         success,
         len(findings or []),
+        len(filed_report_ids),
         parent_notified,
     )
 
@@ -803,6 +877,7 @@ async def agent_finish(
             "parent_notified": parent_notified,
             "agent_id": me,
             "summary": result_summary,
+            "filed_report_ids": filed_report_ids,
             "findings_count": len(findings or []),
             "open_items_count": len(open_items or []),
             "has_recommendations": bool(final_recommendations),

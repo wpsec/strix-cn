@@ -124,6 +124,10 @@ class TelemetrySettings(BaseSettings):
     enabled: bool = Field(default=True, alias="STRIX_TELEMETRY")
 
 
+WebSearchProvider = Literal["auto", "perplexity", "exa"]
+ExaSearchType = Literal["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"]
+
+
 class IntegrationSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -131,6 +135,25 @@ class IntegrationSettings(BaseSettings):
         default=None,
         alias="PERPLEXITY_API_KEY",
         repr=False,
+    )
+    exa_api_key: str | None = Field(
+        default=None,
+        alias="EXA_API_KEY",
+        repr=False,
+    )
+    web_search_provider: WebSearchProvider = Field(
+        default="auto",
+        alias="STRIX_WEB_SEARCH_PROVIDER",
+    )
+    exa_search_type: ExaSearchType = Field(
+        default="auto",
+        alias="STRIX_EXA_SEARCH_TYPE",
+    )
+    exa_num_results: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        alias="STRIX_EXA_NUM_RESULTS",
     )
     postman_api_key: str | None = Field(
         default=None,

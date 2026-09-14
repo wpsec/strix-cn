@@ -1,0 +1,39 @@
+---
+title: "Vercel AI Gateway"
+description: "通过 Vercel AI Gateway 为 Strix 配置模型"
+---
+
+[Vercel AI Gateway](https://vercel.com/docs/ai-gateway) 为多个模型 Provider 提供统一的 OpenAI-compatible API。
+
+## 配置
+
+创建 [AI Gateway API Key](https://vercel.com/docs/ai-gateway/authentication-and-byok)，然后配置 Strix：
+
+```bash
+export STRIX_LLM="openai/anthropic/claude-opus-5"
+export LLM_API_KEY="your-ai-gateway-api-key"
+export LLM_API_BASE="https://ai-gateway.vercel.sh/v1"
+```
+
+开头的 `openai/` 表示让 Strix 使用 OpenAI-compatible Client；后面的部分是 [AI Gateway Model ID](https://vercel.com/docs/ai-gateway/models-and-providers)。
+
+## 可用模型
+
+可以使用 AI Gateway Models Endpoint 返回的任意模型：
+
+```text
+https://ai-gateway.vercel.sh/v1/models
+```
+
+设置 `STRIX_LLM` 时，在模型 ID 前加上 `openai/`。例如，Gateway 的模型 ID `anthropic/claude-opus-5` 在 Strix 中写成 `openai/anthropic/claude-opus-5`。
+
+## 获取 API Key
+
+1. 打开 [AI Gateway API Key 设置](https://vercel.com/docs/ai-gateway/authentication-and-byok)
+2. 创建 API Key
+3. 将 API Key 设置为 `LLM_API_KEY`
+
+## 特点
+
+- 通过一个 Endpoint 访问多个 Provider 的模型
+- 在 Vercel 中查看 Gateway 用量和成本

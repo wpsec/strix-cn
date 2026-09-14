@@ -451,7 +451,7 @@ func (m Model) splashView() string {
 	}
 	content += "\n\n" + url
 	if warn := m.snapshot.ModelWarning; warn != "" {
-		content += "\n\n" + splashModelWarning(warn)
+		content += "\n\n" + splashModelWarning(m.snapshot.Model, warn)
 	}
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(green).Padding(1, 6).Align(lipgloss.Center).Render(content)
 	// #splash_screen background is solid black.
@@ -487,12 +487,15 @@ func (m Model) passiveProxyCaptureStageDescription() string {
 	return "等待 Burp 请求进入当前功能点"
 }
 
-// splashModelWarning ports SplashScreen._build_model_warning_text.
-func splashModelWarning(model string) string {
+// splashModelWarning renders the backend warning and highlights the model name.
+func splashModelWarning(model, warning string) string {
 	yellow := lipgloss.Color("#eab308")
-	return lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("⚠ ") +
-		lipgloss.NewStyle().Bold(true).Foreground(render.Cyan).Render(model) +
-		lipgloss.NewStyle().Foreground(yellow).Render(" is not a recommended frontier model - pentest quality could be degraded")
+	out := lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("⚠ ")
+	if model != "" && strings.HasPrefix(warning, model) {
+		out += lipgloss.NewStyle().Bold(true).Foreground(render.Cyan).Render(model)
+		warning = strings.TrimPrefix(warning, model)
+	}
+	return out + lipgloss.NewStyle().Foreground(yellow).Render(warning)
 }
 
 // chatPaneKey identifies everything the bordered trace depends on.

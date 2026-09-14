@@ -103,6 +103,22 @@ Anthropic 协议输出额度、报告成本估算。
   Perplexity AI 的 API Key。配置后可启用实时 Web 搜索，用于 OSINT 与漏洞研究。
 </ParamField>
 
+<ParamField path="EXA_API_KEY" type="string">
+  Exa 的 API Key。配置后可启用基于 Exa 的安全搜索和页面全文抓取。
+</ParamField>
+
+<ParamField path="STRIX_WEB_SEARCH_PROVIDER" default="auto" type="string">
+  Web Search Provider。可选 `auto`、`exa` 或 `perplexity`。`auto` 优先使用 Exa，没有 Exa Key 时回退到 Perplexity。
+</ParamField>
+
+<ParamField path="STRIX_EXA_SEARCH_TYPE" default="auto" type="string">
+  Exa 搜索类型。可选 `auto`、`fast`、`instant`、`deep-lite`、`deep` 或 `deep-reasoning`。
+</ParamField>
+
+<ParamField path="STRIX_EXA_NUM_RESULTS" default="5" type="integer">
+  每次 Exa 搜索返回的结果数量，范围为 1-100。
+</ParamField>
+
 <ParamField path="POSTMAN_API_KEY" type="string">
   Postman API Key（`PMAK-…`）。用于通过 `postman://<collection-uid>` 拉取 collection，或通过 `postman://<collection-uid>?env=<environment-uid>` 拉取 environment 并解析变量。若直接传本地 collection 导出文件，则不需要。
 </ParamField>
@@ -189,7 +205,11 @@ export LLM_EXTRA_HEADERS='{"X-Tenant":"acme"}'
 export LLM_DISABLE_STREAMING="false"
 
 # 可选：启用 Web 搜索
-export PERPLEXITY_API_KEY="pplx-..."
+# export PERPLEXITY_API_KEY="your-perplexity-api-key"
+# export EXA_API_KEY="your-exa-api-key"
+# export STRIX_WEB_SEARCH_PROVIDER="auto"
+# export STRIX_EXA_SEARCH_TYPE="auto"
+# export STRIX_EXA_NUM_RESULTS="5"
 
 # 可选：调高推理强度
 export STRIX_REASONING_EFFORT="max"

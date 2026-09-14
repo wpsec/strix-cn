@@ -18,6 +18,7 @@ from agents import RunContextWrapper, function_tool
 
 from strix.report.evidence import STRUCTURED_EVIDENCE_FIELDS, normalize_evidence_rows
 from strix.tools.nullish import clean_optional
+from strix.tools.proxy.tools import existing_request_ids
 
 
 if TYPE_CHECKING:
@@ -184,6 +185,8 @@ _REQUIRED_FIELDS = {
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 _VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
+_MAX_HTTP_EXCHANGE_IDS = 10
+_MAX_HTTP_EXCHANGE_ID_CHARS = 128
 
 
 def _validate_required_text(fields: dict[str, str]) -> list[str]:
@@ -191,6 +194,77 @@ def _validate_required_text(fields: dict[str, str]) -> list[str]:
     return [
         msg for name, msg in _REQUIRED_FIELDS.items() if not str(fields.get(name) or "").strip()
     ]
+
+
+def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]:
+    """Normalize the numeric proxy exchange IDs attached to a finding."""
+    if raw is None:
+        return None, []
+    if not isinstance(raw, list):
+        return None, ["http_exchange_ids 必须是代理请求 ID 列表"]
+
+    normalized: list[str] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, str):
+            errors.append(f"http_exchange_ids[{index}] 必须是字符串")
+            continue
+        request_id = value.strip()
+        if not request_id:
+            errors.append(f"http_exchange_ids[{index}] 不能为空")
+            continue
+        if len(request_id) > _MAX_HTTP_EXCHANGE_ID_CHARS:
+            errors.append(
+                f"http_exchange_ids[{index}] 长度不能超过 {_MAX_HTTP_EXCHANGE_ID_CHARS} 个字符"
+            )
+            continue
+        if any(ord(char) < 0x21 or ord(char) > 0x7E for char in request_id):
+            errors.append(f"http_exchange_ids[{index}] 只能包含可见 ASCII 字符")
+            continue
+        if not request_id.isdigit():
+            errors.append(f"http_exchange_ids[{index}] 必须是数字代理请求 ID")
+            continue
+        if request_id not in seen:
+            seen.add(request_id)
+            normalized.append(request_id)
+            if len(normalized) > _MAX_HTTP_EXCHANGE_IDS:
+                errors.append(f"http_exchange_ids 最多包含 {_MAX_HTTP_EXCHANGE_IDS} 个不同请求 ID")
+                break
+    return normalized, errors
+
+
+_HTTP_EXCHANGE_DROPPED_WARNING = (
+    "代理项目当前无法访问，http_exchange_ids 未保存；代理恢复后请使用 "
+    "update_vulnerability_report 补充。"
+)
+
+
+async def _verify_http_exchange_ids(
+    ctx: RunContextWrapper,
+    raw: Any,
+) -> tuple[list[str] | None, list[str], str | None]:
+    """Verify exchange IDs against the current Caido project before filing."""
+    request_ids, errors = _normalize_http_exchange_ids(raw)
+    if request_ids is None or errors or not request_ids:
+        return request_ids, errors, None
+
+    try:
+        existing_ids = await existing_request_ids(ctx, request_ids)
+    except Exception:  # noqa: BLE001
+        logger.warning("无法向当前代理项目核验 HTTP exchange ID", exc_info=True)
+        return None, [], _HTTP_EXCHANGE_DROPPED_WARNING
+
+    missing_ids = [request_id for request_id in request_ids if request_id not in existing_ids]
+    if missing_ids:
+        return None, ["http_exchange_ids 不存在于当前代理项目：" + ", ".join(missing_ids)], None
+    return request_ids, [], None
+
+
+def _with_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:
+    if warning and result.get("success"):
+        result["warning"] = warning
+    return result
 
 
 def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
@@ -392,6 +466,12 @@ def _collect_update_changes(  # noqa: PLR0912
         if value:
             changes[field_name] = value
 
+    raw_http_exchange_ids = fields.get("http_exchange_ids")
+    http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(raw_http_exchange_ids)
+    errors.extend(http_exchange_errors)
+    if raw_http_exchange_ids is not None and not http_exchange_errors:
+        changes["http_exchange_ids"] = http_exchange_ids or []
+
     return changes, errors
 
 
@@ -405,6 +485,7 @@ _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "discovery_trace",
     "endpoint_matrix",
     "reproduction_requests",
+    "http_exchange_ids",
 )
 
 # A dependency finding is rated in the context of the codebase that pins it, and
@@ -578,13 +659,21 @@ def _do_update(
     if class_error is not None:
         return class_error
 
-    updated = report_state.update_vulnerability_report(
-        report_id,
-        changes,
-        update_reason=update_reason,
-        updated_by_agent_id=agent_id,
-        updated_by_agent_name=agent_name,
-    )
+    try:
+        updated = report_state.update_vulnerability_report(
+            report_id,
+            changes,
+            update_reason=update_reason,
+            updated_by_agent_id=agent_id,
+            updated_by_agent_name=agent_name,
+        )
+    except Exception as exc:
+        logger.exception("update_vulnerability_report persistence failed")
+        return {
+            "success": False,
+            "error": f"更新漏洞报告失败：{exc!s}。报告仍保留旧内容，请重试。",
+            "report_id": report_id,
+        }
     if updated is None:
         known = [r.get("id") for r in report_state.get_existing_vulnerabilities()]
         if report_id not in known:
@@ -751,6 +840,7 @@ async def _do_create(  # noqa: PLR0912
     cve: str | None,
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
+    http_exchange_ids: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -816,6 +906,11 @@ async def _do_create(  # noqa: PLR0912
         normalized, field_errors = normalize_evidence_rows(raw_value, field_name)
         errors.extend(field_errors)
         structured_evidence[field_name] = normalized
+
+    normalized_http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(
+        http_exchange_ids
+    )
+    errors.extend(http_exchange_errors)
 
     errors.extend(
         _validate_runtime_evidence(
@@ -890,6 +985,7 @@ async def _do_create(  # noqa: PLR0912
             "cve": cve,
             "cwe": cwe,
             "code_locations": parsed_locations,
+            "http_exchange_ids": normalized_http_exchange_ids,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "vulnerability_type": vulnerability_type,
@@ -928,7 +1024,7 @@ async def _do_create(  # noqa: PLR0912
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
-    except (ImportError, AttributeError) as e:
+    except Exception as e:
         logger.exception("create_vulnerability_report persistence failed")
         return {"success": False, "error": f"创建漏洞报告失败：{e!s}"}
     else:
@@ -992,6 +1088,7 @@ async def create_vulnerability_report(
     cwe: str | None = None,
     validation_evidence: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -1263,6 +1360,10 @@ async def create_vulnerability_report(
         cve: ``CVE-YYYY-NNNNN`` if certain, else omit.
         cwe: ``CWE-NNN`` (most specific child) if certain, else omit.
         code_locations: White-box findings — list of location objects.
+        http_exchange_ids: Proxy request IDs that prove this finding. Copy
+            them from ``list_requests`` or ``view_request``. Include the
+            relevant control and exploit exchanges; omit this field only for
+            findings without captured HTTP evidence. Never invent IDs.
 
             **How ``fix_before`` / ``fix_after`` work**: they're used as
             literal GitHub/GitLab PR suggestion blocks. When a reviewer
@@ -1430,6 +1531,18 @@ async def create_vulnerability_report(
             reduce impact and lower the severity.
         fix_effort: "low"
     """
+    (
+        http_exchange_ids,
+        http_exchange_errors,
+        http_exchange_warning,
+    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    if http_exchange_errors:
+        return json.dumps(
+            {"success": False, "error": "校验失败", "errors": http_exchange_errors},
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
 
     result = await _do_create(
@@ -1455,6 +1568,7 @@ async def create_vulnerability_report(
         cwe=cwe,
         validation_evidence=validation_evidence,
         code_locations=code_locations,
+        http_exchange_ids=http_exchange_ids,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
         vulnerability_type=vulnerability_type,
@@ -1469,7 +1583,7 @@ async def create_vulnerability_report(
         agent_id=agent_id,
         agent_name=agent_name,
     )
-    return json.dumps(result, ensure_ascii=False, default=str)
+    return json.dumps(_with_warning(result, http_exchange_warning), ensure_ascii=False, default=str)
 
 
 @function_tool(timeout=60, strict_mode=False)
@@ -1498,6 +1612,7 @@ async def update_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     contextual_cvss_reasoning: str | None = None,
@@ -1574,6 +1689,9 @@ async def update_vulnerability_report(
         cve: Replacement CVE id.
         cwe: Replacement CWE id.
         code_locations: Replacement code locations.
+        http_exchange_ids: Replacement proxy request IDs. Pass an empty
+            list to remove all linked exchanges; IDs must exist in the
+            current proxy project.
         fix_verification: Verification statement for an applyable fix.
         fix_pr_body: Replacement fix PR body.
         contextual_cvss_reasoning: Dependency findings only. What you
@@ -1590,6 +1708,18 @@ async def update_vulnerability_report(
             metadata for observed credential material; raw values are not
             accepted into the report.
     """
+    (
+        http_exchange_ids,
+        http_exchange_errors,
+        http_exchange_warning,
+    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    if http_exchange_errors:
+        return json.dumps(
+            {"success": False, "error": "校验失败", "errors": http_exchange_errors},
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
         _do_update,
@@ -1617,6 +1747,7 @@ async def update_vulnerability_report(
             "cve": cve,
             "cwe": cwe,
             "code_locations": code_locations,
+            "http_exchange_ids": http_exchange_ids,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "contextual_cvss_reasoning": contextual_cvss_reasoning,
@@ -1628,6 +1759,8 @@ async def update_vulnerability_report(
         agent_id=agent_id,
         agent_name=agent_name,
     )
+    if http_exchange_warning and result.get("success"):
+        result["warning"] = http_exchange_warning
     return json.dumps(result, ensure_ascii=False, default=str)
 
 

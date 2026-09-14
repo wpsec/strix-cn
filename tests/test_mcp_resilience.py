@@ -425,7 +425,18 @@ async def test_build_server_passes_explicit_http_values(
 
 
 @pytest.mark.asyncio
-async def test_http_factory_awaits_response_recorder() -> None:
+async def test_http_factory_awaits_response_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
     built = mcp_client._build_server(_config("hook"))
     assert built.recorder is not None
     factory = cast("Any", built.server).params["httpx_client_factory"]

@@ -102,6 +102,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "cve",
         "cwe",
         "code_locations",
+        "http_exchange_ids",
         "fix_verification",
         "fix_pr_body",
         "credential_provenance",
@@ -448,6 +449,7 @@ class ReportState:
         cve: str | None = None,
         cwe: str | None = None,
         code_locations: list[dict[str, Any]] | None = None,
+        http_exchange_ids: list[str] | None = None,
         fix_verification: str | None = None,
         fix_pr_body: str | None = None,
         finding_class: str | None = None,
@@ -548,6 +550,8 @@ class ReportState:
             report["cwe"] = cwe.strip()
         if code_locations:
             report["code_locations"] = code_locations
+        if http_exchange_ids:
+            report["http_exchange_ids"] = http_exchange_ids
         if fix_verification:
             report["fix_verification"] = fix_verification.strip()
         if fix_pr_body:
@@ -560,13 +564,13 @@ class ReportState:
         if agent_name:
             report["agent_name"] = agent_name
 
+        if self.vulnerability_found_callback:
+            self.vulnerability_found_callback(report)
+
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
         posthog.finding(severity, cwe=cwe, is_cve=bool(cve))
         scarf.finding(severity, cwe=cwe, is_cve=bool(cve))
-
-        if self.vulnerability_found_callback:
-            self.vulnerability_found_callback(report)
 
         self.save_run_data()
         return report_id
@@ -651,12 +655,19 @@ class ReportState:
         )
         history.append(entry)
 
-        report.update(changed)
+        revised = {**report, **changed}
         for dependent in superseded:
-            report.pop(dependent, None)
-        backfill_report_http_evidence(report)
-        report["update_history"] = history
-        report["updated_at"] = entry["timestamp"]
+            revised.pop(dependent, None)
+        backfill_report_http_evidence(revised)
+        revised["update_history"] = history
+        revised["updated_at"] = entry["timestamp"]
+
+        # Persist the revision before mutating in-memory evidence so a failed
+        # callback leaves the previous report retryable.
+        if self.vulnerability_updated_callback:
+            self.vulnerability_updated_callback(revised)
+        report.clear()
+        report.update(revised)
 
         # The markdown on disk still shows the superseded evidence, so let the
         # writer re-render it.
@@ -667,9 +678,6 @@ class ReportState:
             report_id,
             ", ".join(entry["fields"]) or "no field replaced",
         )
-
-        if self.vulnerability_updated_callback:
-            self.vulnerability_updated_callback(report)
 
         self.save_run_data()
         return report
