@@ -1,7 +1,5 @@
 import type {
-  DiscoveryTraceRow,
-  EndpointMatrixRow,
-  ReproductionRequest,
+  AttackChainNode,
   Vulnerability,
   VulnerabilitySeverity,
   VulnerabilityStatus,
@@ -68,21 +66,54 @@ function asNumberOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function parseStringRows<T extends object>(
-  raw: unknown,
-  fields: readonly string[]
-): T[] | null {
+function asStringArray(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null;
+  const values = v.filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  );
+  return values.length > 0 ? values : null;
+}
+
+function parseAttackChain(raw: unknown): AttackChainNode[] | null {
   if (!Array.isArray(raw)) return null;
-  const rows: T[] = [];
+  const fields = [
+    "type",
+    "kind",
+    "label",
+    "name",
+    "endpoint",
+    "path",
+    "step",
+    "from",
+    "to",
+    "method",
+    "action",
+    "detail",
+    "observation",
+    "result",
+    "evidence",
+    "hypothesis",
+  ] as const;
+  const rows: AttackChainNode[] = [];
   for (const item of raw) {
+    if (typeof item === "string" && item.trim()) {
+      rows.push({ label: item.trim() });
+      continue;
+    }
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const source = item as Record<string, unknown>;
-    const row: Record<string, string> = {};
+    const row: AttackChainNode = {};
     for (const field of fields) {
       const value = source[field];
-      if (typeof value === "string" && value.length > 0) row[field] = value;
+      if (typeof value === "string" && value.trim()) row[field] = value.trim();
     }
-    if (Object.keys(row).length > 0) rows.push(row as T);
+    if (Array.isArray(source.http_exchange_ids)) {
+      const ids = source.http_exchange_ids.filter(
+        (id): id is string => typeof id === "string" && id.trim().length > 0,
+      );
+      if (ids.length > 0) row.http_exchange_ids = ids;
+    }
+    if (Object.keys(row).length > 0) rows.push(row);
   }
   return rows.length > 0 ? rows : null;
 }
@@ -191,9 +222,8 @@ function emptyVulnerabilityDefaults(): Omit<
     assumptions: null,
     fix_effort: null,
     cvss_breakdown: null,
-    discovery_trace: null,
-    endpoint_matrix: null,
-    reproduction_requests: null,
+    attack_chain: null,
+    http_exchange_ids: null,
     status_changed_at: null,
     status_changed_by: null,
     status_note: null,
@@ -251,31 +281,8 @@ function parseOneVulnerability(
     assumptions: asStringOrNull(raw.assumptions),
     fix_effort: (asStringOrNull(raw.fix_effort) as Vulnerability["fix_effort"]) ?? null,
     cvss_breakdown: (raw.cvss_breakdown as Vulnerability["cvss_breakdown"]) ?? null,
-    discovery_trace: parseStringRows<DiscoveryTraceRow>(raw.discovery_trace, [
-      "stage",
-      "source",
-      "location",
-      "observation",
-      "inference",
-      "evidence",
-    ]),
-    endpoint_matrix: parseStringRows<EndpointMatrixRow>(raw.endpoint_matrix, [
-      "method",
-      "path",
-      "purpose",
-      "baseline",
-      "variant",
-      "result",
-      "evidence",
-    ]),
-    reproduction_requests: parseStringRows<ReproductionRequest>(raw.reproduction_requests, [
-      "name",
-      "purpose",
-      "request",
-      "expected_response",
-      "observed_response",
-      "notes",
-    ]),
+    attack_chain: parseAttackChain(raw.attack_chain),
+    http_exchange_ids: asStringArray(raw.http_exchange_ids),
   };
 }
 

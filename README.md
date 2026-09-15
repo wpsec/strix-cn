@@ -174,7 +174,7 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 
 ### 单请求入口
 
-单个数据包如果目的是让 Strix 深入测试并尝试形成有效漏洞，直接使用普通模式的 `--request`：
+单个数据包如果目的是让 Strix 深入测试并尝试形成有效漏洞，直接使用常规扫描入口的 `--request`：
 
 ```bash
 .venv/bin/strix \
@@ -185,7 +185,7 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 
 这条命令会启动完整的 AI 渗透测试链路、Docker sandbox、Caido 代理、子 Agent 和原生漏洞报告。请求文件只是起始证据，Agent 会在授权范围内重放基线、分析相关接口和业务流程、变异参数并验证实际影响，不会停在一次固定探针的响应比较上。未指定 `--target` 时，Strix 从请求的 Scheme、Host 和 Port 自动建立目标；指定 `--target` 或 `--target-list` 时，请求的 Host/Port 必须命中授权目标。
 
-模式边界如下：
+入口边界如下：
 
 | 入口 | 适用目的 | 执行引擎 |
 | --- | --- | --- |
@@ -194,17 +194,17 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 | `--burp-port` | 从 Burp/Caido 流量采集并测试功能点 | 完整目标级扫描链路 |
 | `--target` | 常规目标级渗透测试 | 常规 Agent 图 |
 
-因此，`--verify` 的结果是“复测证据”，不代表它已经完成一次完整的单包测试；想让 AI 自主扩展测试面，应使用普通模式的 `--request`。
+因此，`--verify` 的结果是“复测证据”，不代表它已经完成一次完整的单包测试；想让 AI 自主扩展测试面，应使用常规扫描入口的 `--request`。
 
-模式选择优先级为：CLI 参数 > `STRIX_MODE` > 持久化配置 > `normal`。当前支持 `normal` 和 `verify` 两种模式；扫描开始后模式不可切换，使用 `--resume` 时必须沿用原运行记录中的模式。
+常规扫描入口不使用额外的安全模式配置，也不存在 `STRIX_MODE` 或 `--mode`。`--scan-mode quick|standard|deep` 是上游原生的扫描深度配置；`--verify` 是独立的确定性复测命令，不是可持久化的安全模式。
 
-报告生成遵循原生 Strix 行为：Markdown、HTML、JSON、CSV 及 SARIF 保留真实验证证据，不用说明性占位文本冒充 Request、Response、PoC 或凭据字段。`reproduction_requests` 中的原始请求和实际响应会回填到报告主证据；静态/依赖发现会明确标记 HTTP 字段不适用，动态发现缺少数据时会标记证据缺口并保留在报告中。SARIF 默认只保留 PoC 描述和脚本存在标记。
+报告产物遵循上游原生结构，仅将用户可见标题和字段翻译为中文：`penetration_test_report.md` 是执行摘要，`vulnerabilities/*.md` 是单漏洞明细，另有 `vulnerabilities.json`、`vulnerabilities.csv` 和 `findings.sarif`。多请求、权限变化或影响扩大的漏洞会在单漏洞报告中追加 `攻击链路` 纵向路径视图；它是报告展示扩展，不改变原生报告字段和判定规则。
 
-运行产物位于 `strix_runs/<run-name>/`，包括 `penetration_test_report.md`、`penetration_test_report.html`、`vulnerabilities/*`、`run.json` 和 `findings.sarif`。
+运行产物位于 `strix_runs/<run-name>/`，包括 `penetration_test_report.md`、`vulnerabilities/*`、`vulnerabilities.json`、`vulnerabilities.csv`、`run.json` 和 `findings.sarif`。
 
-普通模式会按完整 Agent 图测试目标；单请求只提供上下文，不会改变报告格式、作用域校验或 Agent 工具能力。
+常规扫描入口会按完整 Agent 图测试目标；单请求只提供上下文，不会改变报告格式、作用域校验或 Agent 工具能力。
 
-### 单个漏洞验证模式
+### 单个漏洞复测
 
 验证计划由当前配置的 Strix LLM 根据“漏洞描述 + 脱敏请求结构”生成。模型只提出漏洞标签、目标字段、验证能力、探针和判定器，随后由本地校验器检查字段白名单、动作、载荷、请求数量和副作用边界；模型调用失败或意图不完整时直接阻断，不按漏洞名称匹配固定模板，也不猜测请求中不存在的字段。运行前请先完成模型配置，至少设置 STRIX_LLM、LLM_API_KEY，以及兼容网关所需的 LLM_API_BASE。
 
@@ -214,7 +214,7 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 
 当前版本没有 OOB 回调确认能力，Canary 回显只记录为证据不足，不会单凭回显确认服务端请求伪造。
 
-`--verify` 用于复核一个具体漏洞，不启动普通扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才启动与普通扫描一致的 Docker sandbox，并通过容器内配置的 Caido 代理发送受限探针请求；计划阶段不会启动容器或发送请求。需要 AI 自主探索测试面时，使用上面的普通模式 `--request`，不要把 `--verify` 当作单包完整扫描入口。
+`--verify` 用于复核一个具体漏洞，不启动常规扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才启动与常规扫描一致的 Docker sandbox，并通过容器内配置的 Caido 代理发送受限探针请求；计划阶段不会启动容器或发送请求。需要 AI 自主探索测试面时，使用上面的常规扫描入口 `--request`，不要把 `--verify` 当作单包完整扫描入口。
 
 ```bash
 # 交互模式：按提示粘贴请求和漏洞描述
@@ -247,9 +247,9 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
   -n --yes
 ```
 
-交互模式中，请求内容以单独一行 `__STRIX_END__` 结束。执行前会展示识别出的漏洞类型、目标字段、验证动作、预计请求数和副作用提示；JSON 请求会递归暴露叶子字段，例如 `body.dataPackage.configList[0].conditionSql`，不需要手工填写参数路径。IDOR/BOLA 等需要第二身份的场景会继续要求提供第二个请求包。Raw 请求缺少 Scheme 时，如果同源 `Origin` 或 `Referer` 已明确给出协议，验证模式会自动采用；否则交互模式只询问一次使用 `http` 还是 `https`，非交互模式会直接阻断。
+交互模式中，请求内容以单独一行 `__STRIX_END__` 结束。执行前会展示识别出的漏洞类型、目标字段、验证动作、预计请求数和副作用提示；JSON 请求会递归暴露叶子字段，例如 `body.dataPackage.configList[0].conditionSql`，不需要手工填写参数路径。IDOR/BOLA 等需要第二身份的场景会继续要求提供第二个请求包。Raw 请求缺少 Scheme 时，如果同源 `Origin` 或 `Referer` 已明确给出协议，复测命令会自动采用；否则交互式复测只询问一次使用 `http` 还是 `https`，非交互式复测会直接阻断。
 
-验证结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。执行环境记录为 `docker-sandbox`，验证完成后会清理临时容器；容器启动或执行失败时不会回退到宿主机直连，而是生成证据不足的报告。验证模式与 `--target`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
+复测结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。执行环境记录为 `docker-sandbox`，复测完成后会清理临时容器；容器启动或执行失败时不会回退到宿主机直连，而是生成证据不足的报告。`--verify` 与 `--target`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
 
 ## 常见用法
 
@@ -282,7 +282,7 @@ strix --target "postman://<collection-uuid>?env=<environment-uuid>"
 
 ### Burp/Caido 流量驱动常规渗透测试
 
-`--burp-port` 使用 `normal` 模式，从 Burp/Caido 进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。它不是 `--verify` 的单漏洞复测。
+`--burp-port` 启动 Burp/Caido 流量驱动的常规扫描，从进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。它不是 `--verify` 的单漏洞复测。
 
 ```bash
 # 仅使用 Burp/Caido 流量建立测试上下文

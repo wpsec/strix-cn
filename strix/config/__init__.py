@@ -4,8 +4,7 @@ Public surface:
 
 - :class:`Settings` — composite model. Get via :func:`load_settings`.
 - :class:`LlmSettings`, :class:`RuntimeSettings`, :class:`TelemetrySettings`,
-  :class:`IntegrationSettings`, :class:`SecuritySettings` — sub-models, attribute-accessed off
-  ``Settings``.
+  :class:`IntegrationSettings` — sub-models, attribute-accessed off ``Settings``.
 - :func:`load_settings` — memoized resolve (exported env > ``.env`` > JSON file > defaults).
 - :func:`apply_config_override` — switch the JSON source to a custom path.
 - :func:`persist_current` — write currently-set env vars to the active file.
@@ -22,7 +21,6 @@ from strix.config.settings import (
     IntegrationSettings,
     LlmSettings,
     RuntimeSettings,
-    SecuritySettings,
     Settings,
     TelemetrySettings,
 )
@@ -34,7 +32,6 @@ __all__ = [
     "IntegrationSettings",
     "LlmSettings",
     "RuntimeSettings",
-    "SecuritySettings",
     "Settings",
     "TelemetrySettings",
     "apply_config_override",

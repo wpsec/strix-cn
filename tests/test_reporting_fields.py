@@ -17,7 +17,6 @@ from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
     _do_update,
-    _validate_runtime_evidence,
     create_dependency_report,
     create_vulnerability_report,
     update_vulnerability_report,
@@ -105,9 +104,6 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         poc_script_code="GET /search?q=<script>alert(1)</script>",
         remediation_steps="Context-encode output.",
         evidence="Response echoes the payload verbatim.",
-        validation_evidence=(
-            "Playwright browser execution confirmed a dialog marker in the page context."
-        ),
         assumptions="Assumes a victim opens a crafted link.",
         counterevidence="No output encoding or CSP observed on this response.",
         confidence="HIGH",
@@ -120,41 +116,15 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         cwe="CWE-79",
         code_locations=None,
         fix_pr_body="## Fix\nEncode output.",
-        discovery_trace=[
-            {
-                "stage": "JS 分析",
-                "source": "main.js",
-                "location": "main.js:42",
-                "observation": "发现 /api/search 请求",
-                "inference": "q 参数进入 HTML 响应",
-                "evidence": "fetch('/api/search')",
-            }
-        ],
-        endpoint_matrix=[
-            {
-                "method": "GET",
-                "path": "/search",
-                "purpose": "验证反射",
-                "baseline": "200，无 marker",
-                "variant": "q=marker",
-                "result": "确认回显",
-                "evidence": "响应包含 marker",
-            }
-        ],
-        reproduction_requests=[
-            {
-                "name": "浏览器请求",
-                "purpose": "复现 XSS",
-                "request": "GET /search?q=marker HTTP/1.1\nHost: app.example.com\nAuthorization: Bearer demo-token\nCookie: sid=demo-cookie\n\n",
-                "expected_response": "响应中出现 marker",
-                "observed_response": "响应中出现 marker",
-            }
+        attack_chain=[
+            {"type": "入口", "label": "GET /search", "observation": "发现 q 参数"},
+            {"type": "利用", "label": "q=marker", "observation": "响应回显 marker"},
         ],
     )
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
     assert report["evidence"] == "Response echoes the payload verbatim."
-    assert "dialog marker" in report["validation_evidence"]
+    assert "validation_evidence" not in report
     assert report["assumptions"] == "Assumes a victim opens a crafted link."
     assert report["fix_effort"] == "low"
     assert report["fix_pr_body"] == "## Fix\nEncode output."
@@ -162,9 +132,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["counterevidence"] == "No output encoding or CSP observed on this response."
     assert report["confidence"] == "high"
     assert report["severity_change_conditions"] == "A strict CSP would lower the severity."
-    assert report["discovery_trace"][0]["location"] == "main.js:42"
-    assert report["endpoint_matrix"][0]["path"] == "/search"
-    assert "Authorization: Bearer demo-token" in report["reproduction_requests"][0]["request"]
+    assert report["attack_chain"][0]["type"] == "入口"
 
 
 async def test_create_report_requires_evidence_and_assumptions(
@@ -199,7 +167,7 @@ async def test_create_report_requires_evidence_and_assumptions(
     assert not report_state.vulnerability_reports
 
 
-async def test_create_report_rejects_xss_reflection_without_runtime_execution(
+async def test_create_report_accepts_xss_without_custom_runtime_gate(
     report_state: ReportState,
 ) -> None:
     result = await _do_create(
@@ -212,7 +180,6 @@ async def test_create_report_rejects_xss_reflection_without_runtime_execution(
         poc_script_code="GET /search?q=<img src=x onerror=alert(1)>",
         remediation_steps="Encode output.",
         evidence="The JSON response echoes the payload.",
-        validation_evidence=None,
         assumptions="Assumes a client renders the value unsafely.",
         counterevidence="none found",
         confidence="high",
@@ -226,25 +193,11 @@ async def test_create_report_rejects_xss_reflection_without_runtime_execution(
         code_locations=None,
     )
 
-    assert result["success"] is False
-    assert any("运行时验证证据" in error for error in result["errors"])
-    assert not report_state.vulnerability_reports
+    assert result["success"] is True
+    assert len(report_state.vulnerability_reports) == 1
 
 
-def test_xss_dom_presence_is_not_script_execution() -> None:
-    errors = _validate_runtime_evidence(
-        title="Stored XSS in updateById",
-        cwe="CWE-79",
-        validation_evidence=(
-            "Playwright browser DOM showed the injected img element appeared; "
-            "no dialog, console marker, or callback was observed."
-        ),
-    )
-
-    assert any("不能提交" in error for error in errors)
-
-
-async def test_create_report_rejects_generic_sqli_server_error(
+async def test_create_report_accepts_sqli_without_custom_runtime_gate(
     report_state: ReportState,
 ) -> None:
     result = await _do_create(
@@ -257,7 +210,6 @@ async def test_create_report_rejects_generic_sqli_server_error(
         poc_script_code="POST /api/test/value'",
         remediation_steps="Use parameterized queries.",
         evidence="The baseline is 200 and the quote variant is 500.",
-        validation_evidence=None,
         assumptions="Assumes the parameter reaches SQL.",
         counterevidence="none found",
         confidence="high",
@@ -271,9 +223,8 @@ async def test_create_report_rejects_generic_sqli_server_error(
         code_locations=None,
     )
 
-    assert result["success"] is False
-    assert any("可控 oracle" in error for error in result["errors"])
-    assert not report_state.vulnerability_reports
+    assert result["success"] is True
+    assert len(report_state.vulnerability_reports) == 1
 
 
 async def test_create_report_rejects_invalid_fix_effort(report_state: ReportState) -> None:
@@ -1171,13 +1122,10 @@ def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
     for field in (
         "evidence",
-        "validation_evidence",
         "assumptions",
         "fix_effort",
         "fix_pr_body",
-        "discovery_trace",
-        "endpoint_matrix",
-        "reproduction_requests",
+        "attack_chain",
     ):
         assert field in props
 
@@ -1534,7 +1482,7 @@ def test_update_drops_reasoning_left_behind_by_the_field_it_describes(
     assert run_dir is not None
     markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
     assert "version banner is the only signal" not in markdown
-    assert "Dropped as superseded: confidence_rationale, cvss_breakdown" in markdown
+    assert "因新证据被替换：confidence_rationale、cvss_breakdown" in markdown
 
 
 def test_agent_revises_its_own_report_without_a_duplicate_verdict(

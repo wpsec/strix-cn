@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
-from strix.config.modes import normalize_mode
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.token_budget import normalize_token_limit
 from strix.interface.tui.backend.live_view import TuiLiveView
@@ -80,7 +79,6 @@ class TuiController:
         self.instruction = instruction.strip() if isinstance(instruction, str) else ""
         requested_scan_mode = str(args.scan_mode)
         self.scan_mode = requested_scan_mode if requested_scan_mode in SCAN_MODES else "deep"
-        self.security_mode = normalize_mode(getattr(args, "mode", "normal"))
         raw_budget = args.max_budget_usd
         self.max_budget_usd = (
             float(raw_budget)
@@ -231,7 +229,6 @@ class TuiController:
             "pending_mount": self.pending_workspace_mount or "",
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
-            "security_mode": self.security_mode,
             "max_budget_usd": self.max_budget_usd,
             "token_limit": self.token_limit,
             "max_turns": self.max_turns,

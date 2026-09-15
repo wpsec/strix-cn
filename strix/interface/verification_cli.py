@@ -46,7 +46,7 @@ def _read_request_file_or_prompt(args: Any, console: Console) -> str:
     if request_path:
         return str(Path(request_path).read_text(encoding="utf-8"))
     if getattr(args, "non_interactive", False):
-        raise ValueError("非交互漏洞验证模式需要 --request <Burp请求文件>")
+        raise ValueError("非交互 --verify 需要 --request <Burp请求文件>")
     return _read_request_interactively(console)
 
 

@@ -7,7 +7,6 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from strix.config.modes import SecurityMode
 
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -171,14 +170,6 @@ class ViewerSettings(BaseSettings):
     app_url: str = Field(default="https://app.strix.ai", alias="STRIX_APP_URL")
 
 
-class SecuritySettings(BaseSettings):
-    """Run-level security policy selection."""
-
-    model_config = _BASE_CONFIG
-
-    mode: SecurityMode = Field(default="normal", alias="STRIX_MODE")
-
-
 class Settings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -189,4 +180,3 @@ class Settings(BaseSettings):
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
     viewer: ViewerSettings = Field(default_factory=ViewerSettings)
-    security: SecuritySettings = Field(default_factory=SecuritySettings)

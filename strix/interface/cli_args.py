@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 from strix.config import apply_config_override, load_settings
-from strix.config.modes import normalize_mode
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.token_budget import normalize_token_limit
@@ -225,31 +224,31 @@ Strix Cloud:
         "--seed-request",
         dest="verification_request",
         metavar="PATH",
-        help="--verify 使用的复测请求；普通模式使用的单请求测试种子（Burp Raw HTTP 或 Copy as cURL）。",
+        help="--verify 使用的复测请求；常规扫描使用的单请求测试种子（Burp Raw HTTP 或 Copy as cURL）。",
     )
     parser.add_argument(
         "--secondary-request",
         dest="verification_secondary_request",
         metavar="PATH",
-        help="漏洞验证模式使用的第二授权身份请求文件，用于跨身份对象边界对照。",
+        help="--verify 使用的第二授权身份请求文件，用于跨身份对象边界对照。",
     )
     parser.add_argument(
         "--canary-url",
         dest="verification_canary_url",
         metavar="URL",
-        help="漏洞验证模式使用的操作员控制 Canary 地址，不接受模型自行指定的目标地址。",
+        help="--verify 使用的操作员控制 Canary 地址，不接受模型自行指定的目标地址。",
     )
     parser.add_argument(
         "--issue",
         dest="verification_issue",
         metavar="TEXT|@FILE",
-        help="--verify 的复测描述，或普通模式单请求测试的漏洞假设；使用 @文件路径可从文件读取。",
+        help="--verify 的复测描述，或常规扫描单请求测试的漏洞假设；使用 @文件路径可从文件读取。",
     )
     parser.add_argument(
         "--baseline",
         dest="verification_baseline",
         metavar="RUN_NAME",
-        help="漏洞验证模式使用的历史运行名，用于修复后复测。",
+        help="--verify 使用的历史运行名，用于修复后复测。",
     )
     parser.add_argument(
         "--yes",
@@ -309,18 +308,11 @@ Strix Cloud:
         ),
     )
 
-    mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument(
+    parser.add_argument(
         "--verify",
         dest="verify",
         action="store_true",
-        help="启用漏洞验证模式：根据 Burp 请求和自然语言描述复现或复测单个漏洞。",
-    )
-    mode_group.add_argument(
-        "--mode",
-        choices=["normal", "verify"],
-        default=None,
-        help="安全策略模式：normal 或 verify。默认读取 STRIX_MODE 或配置文件。",
+        help="按给定请求和问题描述执行一次确定性漏洞复测。",
     )
 
     parser.add_argument(
@@ -427,16 +419,8 @@ Strix Cloud:
     args.target_credentials = None
     args.seed_request = None
     args.request_hypothesis = None
-    args.mode_explicit = "verify" if args.verify else args.mode
-
     if args.config:
         apply_config_override(validate_config_file(args.config))
-
-    try:
-        configured_mode = normalize_mode(load_settings().security.mode)
-    except (AttributeError, ValueError) as exc:
-        parser.error(f"安全策略模式配置无效：{exc}")
-    args.mode = normalize_mode(args.mode_explicit or configured_mode)
 
     unsupported_seed_args = any(
         (
@@ -445,20 +429,20 @@ Strix Cloud:
             args.verification_baseline,
         )
     )
-    if args.mode == "normal" and unsupported_seed_args:
+    if not args.verify and unsupported_seed_args:
         parser.error("--secondary-request、--canary-url、--baseline 只能用于 --verify。")
-    if args.mode == "normal" and args.verification_approve:
-        parser.error("--yes 只能用于 --verify。普通模式直接执行完整渗透测试。")
-    if args.mode == "normal" and args.verification_issue and not args.verification_request:
-        parser.error("普通模式的 --issue 需要与 --request 一起使用。")
+    if not args.verify and args.verification_approve:
+        parser.error("--yes 只能用于 --verify。常规扫描直接执行完整渗透测试。")
+    if not args.verify and args.verification_issue and not args.verification_request:
+        parser.error("常规扫描的 --issue 需要与 --request 一起使用。")
 
-    if args.mode == "verify":
+    if args.verify:
         if args.burp_port is not None:
-            parser.error("漏洞验证模式不能与 --burp-port 同时使用。")
+            parser.error("--verify 不能与 --burp-port 同时使用。")
         if args.target or args.target_list or args.mount:
-            parser.error("漏洞验证模式使用 --request，不支持 --target/--target-list/--mount。")
+            parser.error("--verify 使用 --request，不支持 --target/--target-list/--mount。")
         if args.resume:
-            parser.error("漏洞验证模式使用 --baseline 复测，不支持 --resume。")
+            parser.error("--verify 使用 --baseline 复测，不支持 --resume。")
         if args.verification_baseline and args.verification_issue:
             parser.error("使用 --baseline 复测时不需要再次提供 --issue。")
         if args.verification_issue and args.verification_issue.startswith("@"):
@@ -469,7 +453,7 @@ Strix Cloud:
                 parser.error(f"读取漏洞描述失败：{exc}")
         if not args.verification_request:
             if args.non_interactive:
-                parser.error("漏洞验证模式需要 --request <Burp请求文件>。")
+                parser.error("--verify 需要 --request <Burp请求文件>。")
         else:
             request_path = Path(args.verification_request).expanduser()
             if not request_path.is_file():
@@ -483,7 +467,7 @@ Strix Cloud:
                 )
             args.verification_secondary_request = str(secondary_path)
         if args.non_interactive and not args.verification_baseline and not args.verification_issue:
-            parser.error("首次漏洞验证模式需要 --issue <问题描述>。")
+            parser.error("首次 --verify 需要 --issue <问题描述>。")
         if args.verification_approve and not args.non_interactive:
             parser.error("--yes 只能用于非交互模式。")
 
@@ -537,7 +521,7 @@ Strix Cloud:
     except ValueError as error:
         parser.error(f"--workspace-file: {error}")
 
-    if args.mode != "verify" and args.verification_request:
+    if not args.verify and args.verification_request:
         if args.verification_issue and args.verification_issue.startswith("@"):
             issue_path = Path(args.verification_issue[1:]).expanduser()
             try:
@@ -579,7 +563,7 @@ Strix Cloud:
         if mount_targets:
             args.target = list(args.target or []) + mount_targets
 
-        if args.mode == "verify":
+        if args.verify:
             return args
 
         if (
@@ -624,17 +608,6 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     except (RuntimeError, TypeError) as exc:
         parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
 
-    try:
-        persisted_mode = normalize_mode(state.get("mode", "normal"))
-    except ValueError as exc:
-        parser.error(f"--resume {args.resume}：历史安全策略模式无效：{exc}")
-    explicit_mode = getattr(args, "mode_explicit", None)
-    if explicit_mode is not None and explicit_mode != persisted_mode:
-        parser.error(
-            f"--resume {args.resume}：不能将模式从 {persisted_mode} 改为 {explicit_mode}。"
-            "恢复扫描必须沿用历史运行模式。"
-        )
-    args.mode = persisted_mode
     args.seed_request = state.get("seed_request")
     args.request_hypothesis = state.get("request_hypothesis")
     if args.seed_request is not None and not isinstance(args.seed_request, dict):

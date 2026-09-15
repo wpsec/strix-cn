@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   Bot,
-  FileDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { McpConnectionStatus } from "@/data/serverSource";
@@ -193,16 +192,6 @@ export default function Sidebar({
               <McpConnectionsPanel connections={mcpConnections} inUse={mcpInUse} />
             )}
             <hr className="mx-0 my-1 h-px w-full border-0 bg-[rgba(255,255,255,0.08)]" />
-            <a
-              href="/api/report.html"
-              download
-              className="group flex h-9 w-full origin-left flex-row items-center rounded-md text-[#888] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-[#ededed]"
-            >
-              <div className="grid flex-none place-content-center" style={{ width: 36, height: 36 }}>
-                <FileDown className="h-4 w-4" />
-              </div>
-              <span className="min-w-0 flex-1 truncate text-left text-[14px] font-medium">下载 HTML 总报告</span>
-            </a>
           </div>
         </nav>
 

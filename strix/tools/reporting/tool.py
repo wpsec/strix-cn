@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
-from strix.report.evidence import STRUCTURED_EVIDENCE_FIELDS, normalize_evidence_rows
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy.tools import existing_request_ids
 
@@ -155,19 +154,6 @@ def _calculate_cvss(breakdown: dict[str, str]) -> tuple[float, str, str]:
 
     severity = "info" if base_severity == "none" else base_severity
     return score, severity, vector
-
-
-def _calculate_cvss4(vector: str) -> tuple[float, str]:
-    from cvss import CVSS4
-
-    normalized = vector.strip()
-    try:
-        cvss = CVSS4(normalized)
-        score = cvss.scores()[0]
-        severity = cvss.severities()[0].lower()
-    except Exception as exc:
-        raise ValueError(f"无效的 CVSS 4.0 向量：{normalized}") from exc
-    return score, severity
 
 
 _REQUIRED_FIELDS = {
@@ -458,19 +444,18 @@ def _collect_update_changes(  # noqa: PLR0912
     if cwe:
         changes["cwe"] = cwe
 
-    for field_name in STRUCTURED_EVIDENCE_FIELDS:
-        if field_name not in fields or fields[field_name] is None:
-            continue
-        value, field_errors = normalize_evidence_rows(fields[field_name], field_name)
-        errors.extend(field_errors)
-        if value:
-            changes[field_name] = value
-
     raw_http_exchange_ids = fields.get("http_exchange_ids")
     http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(raw_http_exchange_ids)
     errors.extend(http_exchange_errors)
     if raw_http_exchange_ids is not None and not http_exchange_errors:
         changes["http_exchange_ids"] = http_exchange_ids or []
+
+    raw_attack_chain = fields.get("attack_chain")
+    if raw_attack_chain is not None:
+        if not isinstance(raw_attack_chain, list):
+            errors.append("attack_chain 必须是按顺序排列的节点列表")
+        elif raw_attack_chain:
+            changes["attack_chain"] = raw_attack_chain
 
     return changes, errors
 
@@ -482,10 +467,8 @@ _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "method",
     "poc_description",
     "poc_script_code",
-    "discovery_trace",
-    "endpoint_matrix",
-    "reproduction_requests",
     "http_exchange_ids",
+    "attack_chain",
 )
 
 # A dependency finding is rated in the context of the codebase that pins it, and
@@ -700,124 +683,6 @@ def _do_update(
     }
 
 
-def _finding_validation_kind(title: str, cwe: str | None) -> str | None:
-    subject = f"{title} {cwe or ''}".lower()
-    if re.search(r"\bcwe[-\s]?79\b|\bxss\b|跨站脚本", subject):
-        return "xss"
-    if re.search(r"\bcwe[-\s]?89\b|sql\s*注入|sql\s*injection", subject):
-        return "sqli"
-    return None
-
-
-def _validate_runtime_evidence(
-    *,
-    title: str,
-    cwe: str | None,
-    validation_evidence: str | None,
-) -> list[str]:
-    """Reject dynamic findings whose proof stops at reflection or an error."""
-    kind = _finding_validation_kind(title, cwe)
-    if kind is None:
-        return []
-
-    evidence = str(validation_evidence or "").strip()
-    if not evidence:
-        if kind == "xss":
-            return [
-                "XSS 必须提供运行时验证证据：浏览器/DOM/回调确认脚本实际执行；仅响应回显不能提交报告"
-            ]
-        return ["SQL 注入必须提供可控 oracle 的运行时验证证据；仅特殊字符导致 4xx/5xx 不能提交报告"]
-
-    lowered = evidence.lower()
-    if kind == "xss":
-        execution_context = (
-            "browser",
-            "playwright",
-            "puppeteer",
-            "selenium",
-            "chromium",
-            "execute_js",
-            "page.evaluate",
-            "浏览器",
-            "dom",
-            "页面上下文",
-        )
-        normalized = re.sub(r"\s+", " ", lowered)
-        negative_outcome = (
-            r"\bno\s+(?:dialog|alert|popup|callback|beacon|marker|console)\b",
-            r"(?:dialog|alert|popup|callback|beacon|marker|console).{0,40}"
-            r"\b(?:did not|didn't|never|not)\b",
-            r"\b(?:did not|didn't|never|not)\b.{0,40}"
-            r"(?:execute|trigger|appear|show|run|fire)\b",
-            "未执行",
-            "没有执行",
-            "未触发",
-            "没有触发",
-            "未出现",
-            "没有出现",
-            "未弹窗",
-            "没有弹窗",
-            "未弹出",
-            "没有弹出",
-        )
-        if any(re.search(pattern, normalized) for pattern in negative_outcome):
-            return ["XSS 运行时证据明确表示脚本未执行，不能提交为已确认漏洞"]
-        runtime_proof = (
-            r"(?:dialog|alert|popup|弹窗|对话框).{0,80}"
-            r"(?:appeared|shown|displayed|observed|triggered|marker|confirmed|"
-            r"出现|显示|弹出|触发|标记|确认)",
-            r"(?:appeared|shown|displayed|observed|triggered|marker|confirmed|"
-            r"出现|显示|弹出|触发|标记|确认).{0,80}"
-            r"(?:dialog|alert|popup|弹窗|对话框)",
-            r"console.{0,80}(?:message|output|log|marker|observed|confirmed|"
-            r"消息|输出|日志|标记|观察到|确认)",
-            r"(?:callback|beacon|oast|request).{0,80}"
-            r"(?:received|hit|observed|confirmed|arrived|triggered|"
-            r"收到|命中|观察到|确认|触发)",
-            r"(?:window\.__[a-z0-9_]+|document\.title|dom marker|dom 标记).{0,80}"
-            r"(?:set|changed|observed|matched|confirmed|设置|改变|观察到|命中|确认)",
-            r"(?:set|changed|observed|matched|confirmed|设置|改变|观察到|命中|确认).{0,80}"
-            r"(?:window\.__[a-z0-9_]+|document\.title|dom marker|dom 标记)",
-        )
-        if not any(marker in normalized for marker in execution_context) or not any(
-            re.search(pattern, normalized) for pattern in runtime_proof
-        ):
-            return [
-                "XSS 运行时证据必须同时包含执行上下文和实际结果（如浏览器 dialog、DOM marker 或回调）；响应回显不算执行"
-            ]
-        return []
-
-    oracle_markers = (
-        "boolean",
-        "true/false",
-        "true false",
-        "time-based",
-        "time based",
-        "sleep(",
-        "pg_sleep",
-        "waitfor",
-        "union",
-        "sqlstate",
-        "database()",
-        "current_user",
-        "current_database",
-        "information_schema",
-        "metadata",
-        "oast",
-        "callback",
-        "数据库版本",
-        "数据库名",
-        "查询结果",
-        "布尔差异",
-        "时间差异",
-    )
-    if not any(marker in lowered for marker in oracle_markers):
-        return [
-            "SQL 注入运行时证据必须包含可控布尔/时间 oracle、数据库错误或元数据、UNION 结果或 OAST 回调；泛化 500 不算确认"
-        ]
-    return []
-
-
 async def _do_create(  # noqa: PLR0912
     *,
     title: str,
@@ -846,16 +711,7 @@ async def _do_create(  # noqa: PLR0912
     fix_pr_body: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
-    validation_evidence: str | None = None,
-    vulnerability_type: str | None = None,
-    permission_proof: str | None = None,
-    request: str | None = None,
-    response: str | None = None,
-    discovery_trace: list[dict[str, Any]] | None = None,
-    endpoint_matrix: list[dict[str, Any]] | None = None,
-    reproduction_requests: list[dict[str, Any]] | None = None,
-    credential_provenance: dict[str, str] | None = None,
-    cvss_4_vector: str | None = None,
+    attack_chain: list[dict[str, Any] | str] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
         {
@@ -897,28 +753,10 @@ async def _do_create(  # noqa: PLR0912
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
     errors.extend(identifier_errors)
 
-    structured_evidence: dict[str, list[dict[str, str]] | None] = {}
-    for field_name, raw_value in (
-        ("discovery_trace", discovery_trace),
-        ("endpoint_matrix", endpoint_matrix),
-        ("reproduction_requests", reproduction_requests),
-    ):
-        normalized, field_errors = normalize_evidence_rows(raw_value, field_name)
-        errors.extend(field_errors)
-        structured_evidence[field_name] = normalized
-
     normalized_http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(
         http_exchange_ids
     )
     errors.extend(http_exchange_errors)
-
-    errors.extend(
-        _validate_runtime_evidence(
-            title=title,
-            cwe=cwe,
-            validation_evidence=validation_evidence,
-        )
-    )
 
     if errors:
         return {"success": False, "error": "校验失败", "errors": errors}
@@ -927,14 +765,6 @@ async def _do_create(  # noqa: PLR0912
         cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
     except ValueError as exc:
         return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
-    cvss_4_score: float | None = None
-    cvss_4_severity: str | None = None
-    if cvss_4_vector:
-        try:
-            cvss_4_score, cvss_4_severity = _calculate_cvss4(cvss_4_vector)
-        except ValueError as exc:
-            return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
-
     try:
         from strix.report.state import get_global_report_state
 
@@ -988,15 +818,7 @@ async def _do_create(  # noqa: PLR0912
             "http_exchange_ids": normalized_http_exchange_ids,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
-            "vulnerability_type": vulnerability_type,
-            "permission_proof": permission_proof,
-            "request": request,
-            "response": response,
-            **structured_evidence,
-            "credential_provenance": credential_provenance,
-            "cvss_4_vector": cvss_4_vector,
-            "cvss_4_score": cvss_4_score,
-            "cvss_4_severity": cvss_4_severity,
+            "attack_chain": attack_chain,
         }
 
         dedupe = await check_duplicate(candidate, existing)
@@ -1020,7 +842,6 @@ async def _do_create(  # noqa: PLR0912
 
         report_id = report_state.add_vulnerability_report(
             **report_fields,
-            validation_evidence=validation_evidence,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
@@ -1086,21 +907,12 @@ async def create_vulnerability_report(
     method: str | None = None,
     cve: str | None = None,
     cwe: str | None = None,
-    validation_evidence: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
     http_exchange_ids: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
-    vulnerability_type: str | None = None,
-    permission_proof: str | None = None,
-    request: str | None = None,
-    response: str | None = None,
-    discovery_trace: list[dict[str, Any]] | None = None,
-    endpoint_matrix: list[dict[str, Any]] | None = None,
-    reproduction_requests: list[dict[str, Any]] | None = None,
-    credential_provenance: dict[str, str] | None = None,
-    cvss_4_vector: str | None = None,
+    attack_chain: list[dict[str, Any] | str] | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -1118,14 +930,10 @@ async def create_vulnerability_report(
       lockfile/manifest that matches a published advisory. File those
       with ``create_dependency_report`` instead, never with this tool.
 
-    **动态验证门槛**：
+    **攻击链路视图**：
 
-    - **CWE-79/XSS** 必须通过 ``validation_evidence`` 提供浏览器或 DOM
-      的实际执行结果，例如 dialog、console、DOM marker 或回调。JSON
-      原样回显、宽松 CSP 或未确认的 HTML sink 都不能作为 XSS 证据。
-    - **CWE-89/SQL 注入** 必须通过 ``validation_evidence`` 提供可控的布尔、
-      时间、数据库错误/元数据、UNION 或 OAST oracle。仅特殊字符导致的
-      通用 4xx/5xx 不能作为 SQL 注入证据。
+    - 对包含多个请求、权限变化或影响步骤的发现，按实际顺序填写
+      ``attack_chain``。报告会把这些节点渲染为纵向路径视图，不使用表格。
 
     **Reporting and severity gate**:
 
@@ -1321,10 +1129,6 @@ async def create_vulnerability_report(
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
             Use fenced code blocks; no internal identifiers/paths.
-        validation_evidence: Required for XSS and SQL injection. Describe the
-            independent runtime proof: browser execution/DOM marker/callback
-            for XSS, or a controlled SQL oracle/metadata/OAST result for SQLi.
-            Reflection and generic error responses are insufficient.
         assumptions: Short note on the assumptions/prerequisites that
             make this finding impactful or exploitable (e.g. "assumes an
             authenticated low-privilege user").
@@ -1465,27 +1269,8 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
-        cvss_4_vector: Optional validated CVSS 4.0 base vector. If omitted,
-            the Markdown report explicitly marks CVSS 4.0 as not calculated.
-        discovery_trace: Ordered discovery chain from the first page or JS
-            observation through extracted routes, the vulnerability hypothesis
-            and the supporting evidence. Each row may contain ``stage``,
-            ``source``, ``location``, ``observation``, ``inference`` and
-            ``evidence``.
-        endpoint_matrix: Representative endpoint verification rows. Each row
-            may contain ``method``, ``path``, ``purpose``, ``baseline``,
-            ``variant``, ``result`` and ``evidence``. Include representative
-            rows when the endpoint set is large.
-        reproduction_requests: Raw HTTP requests for direct Burp Repeater
-            reproduction. Each row may contain ``name``, ``purpose``,
-            ``request``, ``expected_response``, ``observed_response`` and
-            ``notes``. The request is preserved as provided, including all
-            headers, tokens, cookies and body.
-        credential_provenance: Optional structured metadata describing where
-            credential material was observed and how its impact was validated.
-            Use only provenance fields such as source, response location,
-            validation status, identity, scope, fingerprint, and length; do
-            not place raw credential values in this field.
+        attack_chain: Ordered attack-path nodes. Optional for a single-step
+            finding; use it when the finding depends on a request sequence.
     Example (abbreviated — mirror this structure)::
 
         title: "Reflected XSS in /search q parameter"
@@ -1566,20 +1351,11 @@ async def create_vulnerability_report(
         method=method,
         cve=cve,
         cwe=cwe,
-        validation_evidence=validation_evidence,
         code_locations=code_locations,
         http_exchange_ids=http_exchange_ids,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
-        vulnerability_type=vulnerability_type,
-        permission_proof=permission_proof,
-        request=request,
-        response=response,
-        discovery_trace=discovery_trace,
-        endpoint_matrix=endpoint_matrix,
-        reproduction_requests=reproduction_requests,
-        credential_provenance=credential_provenance,
-        cvss_4_vector=cvss_4_vector,
+        attack_chain=attack_chain,
         agent_id=agent_id,
         agent_name=agent_name,
     )
@@ -1616,10 +1392,7 @@ async def update_vulnerability_report(
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     contextual_cvss_reasoning: str | None = None,
-    discovery_trace: list[dict[str, Any]] | None = None,
-    endpoint_matrix: list[dict[str, Any]] | None = None,
-    reproduction_requests: list[dict[str, Any]] | None = None,
-    credential_provenance: dict[str, str] | None = None,
+    attack_chain: list[dict[str, Any] | str] | None = None,
 ) -> str:
     """Revise a vulnerability report that is already filed, keeping its id.
 
@@ -1697,16 +1470,6 @@ async def update_vulnerability_report(
         contextual_cvss_reasoning: Dependency findings only. What you
             observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
-        discovery_trace: Replacement ordered discovery chain from the first
-            page or JS observation through the vulnerability hypothesis.
-        endpoint_matrix: Replacement representative endpoint verification
-            rows, including baseline, variant and result.
-        reproduction_requests: Replacement raw HTTP requests for Burp
-            Repeater. Requests are preserved as provided, including headers,
-            tokens, cookies and body.
-        credential_provenance: Replacement source, location and validation
-            metadata for observed credential material; raw values are not
-            accepted into the report.
     """
     (
         http_exchange_ids,
@@ -1751,10 +1514,7 @@ async def update_vulnerability_report(
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "contextual_cvss_reasoning": contextual_cvss_reasoning,
-            "discovery_trace": discovery_trace,
-            "endpoint_matrix": endpoint_matrix,
-            "reproduction_requests": reproduction_requests,
-            "credential_provenance": credential_provenance,
+            "attack_chain": attack_chain,
         },
         agent_id=agent_id,
         agent_name=agent_name,
@@ -2391,7 +2151,6 @@ _REPORT_SUMMARY_FIELDS = (
     "fix_effort",
     "agent_name",
     "timestamp",
-    "vulnerability_type",
 )
 
 

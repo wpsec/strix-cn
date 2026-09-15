@@ -95,32 +95,24 @@ export interface CVSSBreakdown {
   availability: string | null;
 }
 
-export interface DiscoveryTraceRow {
-  stage?: string;
-  source?: string;
-  location?: string;
-  observation?: string;
-  inference?: string;
-  evidence?: string;
-}
-
-export interface EndpointMatrixRow {
-  method?: string;
+export interface AttackChainNode {
+  type?: string;
+  kind?: string;
+  label?: string;
+  name?: string;
+  endpoint?: string;
   path?: string;
-  purpose?: string;
-  baseline?: string;
-  variant?: string;
+  step?: string;
+  from?: string;
+  to?: string;
+  method?: string;
+  action?: string;
+  detail?: string;
+  observation?: string;
   result?: string;
   evidence?: string;
-}
-
-export interface ReproductionRequest {
-  name?: string;
-  purpose?: string;
-  request?: string;
-  expected_response?: string;
-  observed_response?: string;
-  notes?: string;
+  hypothesis?: string;
+  http_exchange_ids?: string[];
 }
 
 export interface Vulnerability {
@@ -155,9 +147,8 @@ export interface Vulnerability {
   assumptions: string | null;
   fix_effort: FixEffort | null;
   cvss_breakdown: CVSSBreakdown | null;
-  discovery_trace: DiscoveryTraceRow[] | null;
-  endpoint_matrix: EndpointMatrixRow[] | null;
-  reproduction_requests: ReproductionRequest[] | null;
+  attack_chain: AttackChainNode[] | null;
+  http_exchange_ids: string[] | null;
   status_changed_at: string | null;
   status_changed_by: string | null;
   status_note: string | null;

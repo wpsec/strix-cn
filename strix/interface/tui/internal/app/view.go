@@ -741,12 +741,6 @@ func (m Model) statsView() string {
 		}
 		b.WriteString(lipgloss.NewStyle().Foreground(green).Render("ChatGPT subscription"))
 	}
-	if mode := strings.TrimSpace(m.snapshot.SecurityMode); mode != "" {
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(label.Render("安全模式: ") + w.Render(mode))
-	}
 	total := numberValue(m.snapshot.Usage["total_tokens"])
 	if total > 0 || m.snapshot.TokenLimit != nil {
 		if b.Len() > 0 {

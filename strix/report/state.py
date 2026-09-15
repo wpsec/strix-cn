@@ -14,7 +14,6 @@ from uuid import uuid4
 
 from strix.config import codex
 from strix.config.loader import load_settings
-from strix.config.modes import normalize_mode
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.token_budget import (
     DEFAULT_TOKEN_ESTIMATE_PER_REQUEST,
@@ -22,17 +21,11 @@ from strix.core.token_budget import (
     normalize_token_limit,
 )
 from strix.report.coverage import write_coverage
-from strix.report.evidence import (
-    STRUCTURED_EVIDENCE_FIELDS,
-    backfill_report_http_evidence,
-    normalize_evidence_rows,
-)
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.writer import (
     read_run_record,
     write_executive_report,
-    write_html_report,
     write_run_record,
     write_vulnerabilities,
 )
@@ -105,10 +98,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "http_exchange_ids",
         "fix_verification",
         "fix_pr_body",
-        "credential_provenance",
-        "discovery_trace",
-        "endpoint_matrix",
-        "reproduction_requests",
+        "attack_chain",
     }
 )
 
@@ -248,7 +238,6 @@ class ReportState:
             "status": "running",
             "process_id": os.getpid(),
             "auth_mode": auth_mode,
-            "mode": "normal",
             "targets_info": [],
             "llm_usage": self._build_llm_usage_record(),
             **self._token_budget.to_record(),
@@ -401,14 +390,11 @@ class ReportState:
                     r["finding_class"] = (
                         "dependency_cve" if r.get("dependency_metadata") else "dynamic"
                     )
-                evidence_before = (r.get("request"), r.get("response"))
-                backfill_report_http_evidence(r)
-                evidence_changed = evidence_before != (r.get("request"), r.get("response"))
                 title = r.get("title")
-                stale_md = evidence_changed
+                stale_md = False
                 if isinstance(title, str):
                     r["title"] = _clean_title(title)
-                    stale_md = evidence_changed or r["title"] != title
+                    stale_md = r["title"] != title
                 rid = r.get("id")
                 # A finding already on disk keeps its markdown, unless cleaning
                 # changed the title: the heading on disk then needs a rewrite.
@@ -435,7 +421,6 @@ class ReportState:
         poc_script_code: str | None = None,
         remediation_steps: str | None = None,
         evidence: str | None = None,
-        validation_evidence: str | None = None,
         assumptions: str | None = None,
         counterevidence: str | None = None,
         confidence: str | None = None,
@@ -456,19 +441,8 @@ class ReportState:
         dependency_metadata: dict[str, str] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
-        vulnerability_type: str | None = None,
-        permission_proof: str | None = None,
-        request: str | None = None,
-        response: str | None = None,
-        discovery_trace: list[dict[str, Any]] | None = None,
-        endpoint_matrix: list[dict[str, Any]] | None = None,
-        reproduction_requests: list[dict[str, Any]] | None = None,
-        credential_provenance: dict[str, str] | None = None,
-        cvss_4_vector: str | None = None,
-        cvss_4_score: float | None = None,
-        cvss_4_severity: str | None = None,
+        attack_chain: list[dict[str, Any] | str] | None = None,
     ) -> str:
-        raw_vulnerability_type = str(vulnerability_type or "").strip()
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
         report: dict[str, Any] = {
@@ -477,35 +451,6 @@ class ReportState:
             "severity": severity.lower().strip(),
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
-        if raw_vulnerability_type:
-            report["vulnerability_type"] = raw_vulnerability_type
-        if permission_proof:
-            report["permission_proof"] = permission_proof.strip()
-        if request:
-            report["request"] = request.strip()
-        if response:
-            report["response"] = response.strip()
-        for field_name, raw_value in (
-            ("discovery_trace", discovery_trace),
-            ("endpoint_matrix", endpoint_matrix),
-            ("reproduction_requests", reproduction_requests),
-        ):
-            normalized, _errors = normalize_evidence_rows(raw_value, field_name)
-            if normalized:
-                report[field_name] = normalized
-        backfill_report_http_evidence(report)
-        report_credential_provenance = (
-            dict(credential_provenance) if isinstance(credential_provenance, dict) else {}
-        )
-        if report_credential_provenance:
-            report["credential_provenance"] = report_credential_provenance
-        if cvss_4_vector:
-            report["cvss_4_vector"] = cvss_4_vector.strip()
-        if cvss_4_score is not None:
-            report["cvss_4_score"] = cvss_4_score
-        if cvss_4_severity:
-            report["cvss_4_severity"] = cvss_4_severity.strip().lower()
-
         if description:
             report["description"] = description.strip()
         if impact:
@@ -522,8 +467,6 @@ class ReportState:
             report["remediation_steps"] = remediation_steps.strip()
         if evidence:
             report["evidence"] = evidence.strip()
-        if validation_evidence:
-            report["validation_evidence"] = validation_evidence.strip()
         if assumptions:
             report["assumptions"] = assumptions.strip()
         if counterevidence:
@@ -563,6 +506,8 @@ class ReportState:
             report["agent_id"] = agent_id
         if agent_name:
             report["agent_name"] = agent_name
+        if attack_chain:
+            report["attack_chain"] = attack_chain
 
         if self.vulnerability_found_callback:
             self.vulnerability_found_callback(report)
@@ -603,14 +548,6 @@ class ReportState:
             if key not in UPDATABLE_REPORT_FIELDS or raw_value is None:
                 continue
             value = raw_value
-            if key == "credential_provenance":
-                value = dict(value) if isinstance(value, dict) else {}
-                if not value:
-                    continue
-            if key in STRUCTURED_EVIDENCE_FIELDS:
-                value, _errors = normalize_evidence_rows(value, key)
-                if not value:
-                    continue
             if isinstance(value, str):
                 value = _clean_title(value) if key == "title" else value.strip()
                 if key in _LOWERCASE_REPORT_FIELDS:
@@ -658,7 +595,6 @@ class ReportState:
         revised = {**report, **changed}
         for dependent in superseded:
             revised.pop(dependent, None)
-        backfill_report_http_evidence(revised)
         revised["update_history"] = history
         revised["updated_at"] = entry["timestamp"]
 
@@ -883,13 +819,7 @@ class ReportState:
 
     def set_scan_config(self, config: dict[str, Any]) -> None:
         token_limit = normalize_token_limit(config.get("token_limit"))
-        mode = normalize_mode(config.get("mode", "normal"))
         if self._hydrated_from_disk:
-            persisted_mode = normalize_mode(self.run_record.get("mode", "normal"))
-            if persisted_mode != mode:
-                raise ValueError(
-                    "恢复扫描时不能修改安全策略模式；必须沿用历史运行模式。"
-                )
             persisted_limit = normalize_token_limit(self.run_record.get("token_limit"))
             if persisted_limit is not None and (
                 token_limit is not None and token_limit < persisted_limit
@@ -936,7 +866,6 @@ class ReportState:
             {
                 "targets_info": config.get("targets", []),
                 "process_id": os.getpid(),
-                "mode": mode,
                 "instruction": config.get("user_instructions", ""),
                 "scan_mode": config.get("scan_mode", "deep"),
                 "diff_scope": config.get("diff_scope", {"active": False}),
@@ -1146,19 +1075,7 @@ class ReportState:
                     logger.exception("coverage.json write failed (non-fatal)")
 
             if self.final_scan_result:
-                write_executive_report(
-                    run_dir,
-                    self.final_scan_result,
-                    run_record=self.run_record,
-                    vulnerability_reports=artifact_reports,
-                )
-
-            write_html_report(
-                run_dir,
-                final_scan_result=self.final_scan_result,
-                run_record=self.run_record,
-                vulnerability_reports=artifact_reports,
-            )
+                write_executive_report(run_dir, self.final_scan_result)
 
             if self.vulnerability_reports:
                 write_vulnerabilities(

@@ -266,7 +266,8 @@ def test_token_exhaustion_writes_incomplete_executive_report(
 
     report_path = tmp_path / "strix_runs" / "exhausted-run" / "penetration_test_report.md"
     report = report_path.read_text(encoding="utf-8")
-    assert "报告不完整" in report or "Token 限制与覆盖边界" in report
+    assert "报告仅反映已执行和已落盘的测试" in report
+    assert "未覆盖范围不能据此判断为安全" in report
     assert state.run_record["status"] == "token_limit_exhausted"
 
 

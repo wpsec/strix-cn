@@ -37,7 +37,6 @@ _LLM_ENV_KEYS = [
     "STRIX_RUNTIME_BACKEND",
     # TelemetrySettings
     "STRIX_TELEMETRY",
-    "STRIX_MODE",
 ]
 
 
@@ -132,12 +131,6 @@ def test_read_json_overrides_uses_json_when_no_alias_in_environ(tmp_path: Path) 
     path = tmp_path / "cli-config.json"
     path.write_text(json.dumps({"env": {"OPENAI_API_KEY": "sk-file"}}), encoding="utf-8")
     assert loader._read_json_overrides(path) == {"llm": {"api_key": "sk-file"}}
-
-
-def test_security_mode_rejects_removed_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("STRIX_MODE", "redteam")
-    with pytest.raises(ValidationError):
-        loader.load_settings()
 
 
 def test_dotenv_values_are_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,4 +1,4 @@
-"""Artifact writers for Strix scan reports."""
+"""Strix 扫描报告 artifact writer。"""
 
 from __future__ import annotations
 
@@ -17,11 +17,6 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
-from strix.report.evidence import (
-    render_structured_evidence_markdown,
-    report_request_evidence,
-    report_response_evidence,
-)
 
 
 if TYPE_CHECKING:
@@ -43,14 +38,6 @@ _FIX_EFFORT_LABELS_ZH = {
     "medium": "中",
     "high": "高",
 }
-_STATUS_LABELS_ZH = {
-    "running": "进行中",
-    "completed": "已完成",
-    "stopped": "已停止",
-    "failed": "失败",
-    "interrupted": "已中断",
-    "token_limit_exhausted": "Token 限制耗尽（报告不完整）",
-}
 
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
@@ -59,20 +46,7 @@ _BACKTICK_RUN = re.compile(r"`+")
 
 
 def csv_safe(value: object) -> str:
-    """Return ``value`` as a CSV cell a spreadsheet will not treat as a formula.
-
-    Excel, LibreOffice and Sheets evaluate a cell whose first character is one of
-    ``= + - @``, tab or carriage return. The :mod:`csv` module quotes CSV syntax
-    but has no notion of formula triggers, so such a value reaches the cell intact
-    and is executed on open (CWE-1236). Vulnerability titles quote text from the
-    scanned target, which is exactly the attacker-influenced input this guards
-    against.
-
-    Prefixing with an apostrophe is the standard mitigation (OWASP): the rest of
-    the cell is kept as literal text instead of being evaluated. Excel shows the
-    apostrophe when it opens a ``.csv`` directly, which is cosmetic — the point is
-    that nothing runs.
-    """
+    """Return ``value`` as a CSV cell that cannot be interpreted as a formula."""
     text = str(value)
     if text.startswith(_CSV_FORMULA_PREFIXES):
         return "'" + text
@@ -142,319 +116,14 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
     )
 
 
-def _escape_inline(value: Any) -> str:
-    text = str(value or "未记录").strip()
-    return re.sub(r"([\\`*_{}\[\]()<>#+.!|\-])", r"\\\1", text)
-
-
-def _target_labels(run_record: dict[str, Any]) -> list[str]:
-    targets = run_record.get("targets_info")
-    if not isinstance(targets, list):
-        return []
-    labels: list[str] = []
-    for target in targets:
-        if isinstance(target, dict):
-            value = target.get("original") or target.get("canonical") or target.get("display")
-        else:
-            value = target
-        if value:
-            labels.append(str(value).strip())
-    return labels
-
-
-def _extract_final_section(final_scan_result: str, title: str) -> str:
-    pattern = re.compile(
-        rf"^#\s+{re.escape(title)}\s*$([\s\S]*?)(?=^#\s+|\Z)",
-        re.MULTILINE,
-    )
-    match = pattern.search(final_scan_result)
-    if not match:
-        return final_scan_result.strip() or "本节未记录内容。"
-    content = match.group(1).strip()
-    return content or "本节未记录内容。"
-
-
-def _relevel_markdown_headings(markdown: str, level_delta: int = 2) -> str:
-    lines: list[str] = []
-    in_fence = False
-    for line in markdown.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-        if not in_fence:
-            match = re.match(r"^(\s*)(#{1,6})(\s+.*)$", line)
-            if match:
-                heading_level = min(6, len(match.group(2)) + level_delta)
-                line = f"{match.group(1)}{'#' * heading_level}{match.group(3)}"
-        lines.append(line)
-    return "\n".join(lines).strip()
-
-
-def render_complete_report(
-    final_scan_result: str,
-    *,
-    run_record: dict[str, Any] | None = None,
-    vulnerability_reports: list[dict[str, Any]] | None = None,
-) -> str:
-    """Render one delivery-ready report with cover, TOC, summary, and findings."""
-    record = run_record or {}
-    reports = list(vulnerability_reports or [])
-    targets = _target_labels(record)
-    run_name = record.get("run_name") or record.get("scan_id") or "未命名运行"
-    status = _STATUS_LABELS_ZH.get(str(record.get("status") or "").lower(), "未记录状态")
-    generated_at = record.get("end_time") or record.get("start_time") or "未记录时间"
-    scan_mode = record.get("scan_mode") or "未记录模式"
-    severity_counts = {severity: 0 for severity in ("critical", "high", "medium", "low", "info")}
-    for report in reports:
-        severity = str(report.get("severity") or "info").strip().lower()
-        severity_counts[severity if severity in severity_counts else "info"] += 1
-
-    summary = _extract_final_section(final_scan_result, "执行摘要")
-    methodology = _extract_final_section(final_scan_result, "测试方法")
-    technical_analysis = _extract_final_section(final_scan_result, "技术分析")
-    recommendations = _extract_final_section(final_scan_result, "修复建议")
-    token_budget_section = _token_budget_report_section(record)
-
-    sorted_reports = sorted(
-        reports,
-        key=lambda report: (
-            _SEVERITY_ORDER.get(str(report.get("severity") or "").lower(), 5),
-            str(report.get("id") or ""),
-        ),
-    )
-    lines = [
-        '<div align="center">',
-        "",
-        "<h1>安全渗透测试报告</h1>",
-        "",
-        "<p><strong>交付版 · 机密</strong></p>",
-        "",
-        "仅限授权人员阅览",
-        "",
-        "</div>",
-        "",
-        "---",
-        "",
-        "## 报告信息",
-        "",
-        "| 项目 | 内容 |",
-        "| --- | --- |",
-        f"| 报告名称 | {_escape_inline(run_name)} |",
-        f"| 测试目标 | {_escape_inline('、'.join(targets) if targets else '当前运行未记录目标')} |",
-        f"| 测试模式 | {_escape_inline(scan_mode)} |",
-        f"| 报告状态 | {status} |",
-        f"| 生成时间 | {_escape_inline(generated_at)} |",
-        "",
-        *token_budget_section,
-        "---",
-        "",
-        "## 目录",
-        "",
-        "1. [执行摘要](#executive-summary)",
-        "2. [测试范围与方法](#scope-and-methodology)",
-        "3. [风险概览](#risk-overview)",
-        "4. [漏洞详情](#finding-details)",
-        "5. [修复建议](#remediation)",
-        "6. [附录：交付物说明](#appendix-deliverables)",
-        "",
-    ]
-    if sorted_reports:
-        lines.extend(["**漏洞索引：**", ""])
-        for report in sorted_reports:
-            report_id = str(report.get("id") or "unknown")
-            report_title = _escape_inline(report.get("title") or "未命名漏洞")
-            anchor = re.sub(r"[^a-z0-9-]", "", report_id.lower())
-            lines.append(f"- [{report_id} · {report_title}](#{anchor})")
-        lines.append("")
-    lines.extend(
-        [
-            '<a id="executive-summary"></a>',
-            "## 1. 执行摘要",
-            "",
-            summary,
-            "",
-            '<a id="scope-and-methodology"></a>',
-            "## 2. 测试范围与方法",
-            "",
-            f"**测试目标：** {_escape_inline('、'.join(targets) if targets else '当前运行未记录目标')}",
-            "",
-            methodology,
-            "",
-            "### 技术分析",
-            "",
-            technical_analysis,
-            "",
-            '<a id="risk-overview"></a>',
-            "## 3. 风险概览",
-            "",
-            "| 严重性 | 数量 |",
-            "| --- | ---: |",
-            f"| 严重 | {severity_counts['critical']} |",
-            f"| 高危 | {severity_counts['high']} |",
-            f"| 中危 | {severity_counts['medium']} |",
-            f"| 低危 | {severity_counts['low']} |",
-            f"| 信息 | {severity_counts['info']} |",
-            f"| **合计** | **{len(reports)}** |",
-            "",
-            '<a id="finding-details"></a>',
-            "## 4. 漏洞详情",
-            "",
-        ]
-    )
-
-    if not reports:
-        lines.extend(["本次运行没有已落盘的漏洞报告。", ""])
-    else:
-        for report in sorted_reports:
-            report_id = str(report.get("id") or "unknown")
-            title = _escape_inline(report.get("title") or "未命名漏洞")
-            finding_body = render_vulnerability_md(report).splitlines()
-            if finding_body and finding_body[0].startswith("# "):
-                finding_body = finding_body[1:]
-            lines.extend(
-                [
-                    f'<a id="{re.sub(r"[^a-z0-9-]", "", report_id.lower())}"></a>',
-                    f"### {report_id} · {title}",
-                    "",
-                    _relevel_markdown_headings("\n".join(finding_body)),
-                    "",
-                ]
-            )
-
-    lines.extend(
-        [
-            '<a id="remediation"></a>',
-            "## 5. 修复建议",
-            "",
-            recommendations,
-            "",
-            '<a id="appendix-deliverables"></a>',
-            "## 6. 附录：交付物说明",
-            "",
-            "本目录同时保留以下机器可读或分项文件，供复核和系统导入使用：",
-            "",
-            "- `penetration_test_report.md`：本交付版完整报告。",
-            "- `vulnerabilities/`：按漏洞编号拆分的明细文件。",
-            "- `vulnerabilities.csv`：漏洞清单，便于表格导入。",
-            "- `vulnerabilities.json`：结构化漏洞数据。",
-            "- `findings.sarif`：SARIF 2.1.0 格式结果。",
-            "",
-            "### 报告使用说明",
-            "",
-            "本报告中的漏洞结论以对应证据和前提假设为边界。对于需要特定浏览器渲染、权限或网络条件的结论，应在交付复核阶段重新验证。",
-            "",
-        ]
-    )
-    return "\n".join(lines)
-
-
-def _token_budget_report_section(record: dict[str, Any]) -> list[str]:
-    """Render the finite Token boundary so a partial run cannot look clean."""
-    token_limit = record.get("token_limit")
-    status = str(record.get("status") or "").lower()
-    if token_limit is None and status != "token_limit_exhausted":
-        return []
-
-    used = record.get("tokens_used", 0)
-    remaining = record.get("tokens_remaining")
-    limit_status = record.get("token_limit_status") or "unlimited"
-    completed = record.get("completed_priorities") or []
-    skipped = record.get("skipped_tasks") or []
-    planned = record.get("planned_tasks") or []
-    completed_tasks = [
-        task
-        for task in planned
-        if isinstance(task, dict) and task.get("status") == "completed"
-    ]
-    unfinished = [
-        task
-        for task in planned
-        if isinstance(task, dict) and task.get("status") in {"admitted", "running", "failed"}
-    ]
-    coverage = record.get("coverage_by_severity") or {}
-
-    def task_summary(tasks: list[Any]) -> str:
-        summaries: list[str] = []
-        for task in tasks:
-            if not isinstance(task, dict):
-                continue
-            task_id = str(task.get("task_id") or "unknown")
-            priority = str(task.get("priority") or "P2")
-            description = " ".join(str(task.get("task") or "").split())[:240]
-            label = f"{task_id} ({priority})"
-            if description:
-                label += f": {description}"
-            summaries.append(_escape_inline(label))
-        return "; ".join(summaries) or "无"
-
-    skipped_summary = task_summary(skipped)
-    completed_tasks_summary = task_summary(completed_tasks)
-    unfinished_summary = task_summary(unfinished)
-    completed_summary = ", ".join(str(priority) for priority in completed) or "无"
-    coverage_summary = ", ".join(
-        f"{severity} {coverage.get(severity, 0)}"
-        for severity in ("critical", "high", "medium", "low")
-    )
-    limit_text = "不限制" if token_limit is None else str(token_limit)
-    remaining_text = "未知" if remaining is None else str(remaining)
-    return [
-        "## Token 限制与覆盖边界",
-        "",
-        f"- Token 上限：{_escape_inline(limit_text)}；有效用量：{_escape_inline(used)}；"
-        f"剩余：{_escape_inline(remaining_text)}。",
-        f"- Token 状态：{_escape_inline(limit_status)}；"
-        f"停止原因：{_escape_inline(record.get('stop_reason') or '无')}。",
-        f"- 已完成优先级：{_escape_inline(completed_summary)}。",
-        f"- 已完成测试：{completed_tasks_summary}。",
-        f"- 未完成阶段：{unfinished_summary}。",
-        f"- 跳过任务：{skipped_summary}。",
-        f"- 严重度覆盖：{_escape_inline(coverage_summary)}。",
-        "",
-    ]
-
-
-def write_executive_report(
-    run_dir: Path,
-    final_scan_result: str,
-    *,
-    run_record: dict[str, Any] | None = None,
-    vulnerability_reports: list[dict[str, Any]] | None = None,
-) -> None:
+def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
+    """Write the upstream executive report, with localized headings."""
     path = run_dir / "penetration_test_report.md"
     with path.open("w", encoding="utf-8") as f:
-        record = dict(run_record or {})
-        record.setdefault("end_time", datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"))
-        f.write(
-            render_complete_report(
-                final_scan_result,
-                run_record=record,
-                vulnerability_reports=vulnerability_reports,
-            )
-        )
-        f.write("\n")
+        f.write("# 安全渗透测试报告\n\n")
+        f.write(f"**生成时间：** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
+        f.write(f"{final_scan_result}\n")
     logger.info("Saved final penetration test report to: %s", path)
-
-
-def write_html_report(
-    run_dir: Path,
-    *,
-    final_scan_result: str | None,
-    run_record: dict[str, Any],
-    vulnerability_reports: list[dict[str, Any]],
-) -> None:
-    """Write the portable Viewer-style report for live and completed runs."""
-    from strix.report.html_report import render_html_report
-
-    path = run_dir / "penetration_test_report.html"
-    atomic_write_text(
-        path,
-        render_html_report(
-            final_scan_result=final_scan_result,
-            run_record=run_record,
-            vulnerability_reports=vulnerability_reports,
-        ),
-    )
-    logger.info("Saved HTML penetration test report to: %s", path)
 
 
 def write_vulnerabilities(
@@ -511,12 +180,7 @@ def write_vulnerabilities(
 
 
 def atomic_write_text(path: Path, payload: str) -> None:
-    """Write *payload* to *path* via a sibling temp file and an atomic rename.
-
-    ``newline=""`` disables newline translation so *payload* lands byte-for-byte:
-    the CSV index carries its own ``\\r\\n`` terminators, which text mode would turn
-    into ``\\r\\r\\n`` on Windows.
-    """
+    """Write *payload* via a sibling temp file and an atomic rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -532,9 +196,76 @@ def atomic_write_text(path: Path, payload: str) -> None:
     tmp_path.replace(path)
 
 
-def render_vulnerability_md(
-    report: dict[str, Any],
-) -> str:  # noqa: PLR0912, PLR0915
+def _attack_chain_nodes(report: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Normalize an ordered attack path for a renderer without changing report data."""
+    raw = report.get("attack_chain")
+
+    nodes: list[tuple[str, str, str]] = []
+    if isinstance(raw, list):
+        for index, item in enumerate(raw, 1):
+            if isinstance(item, str):
+                label = " ".join(item.split())
+                if label:
+                    nodes.append((f"步骤 {index}", label, ""))
+                continue
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("type") or item.get("kind") or f"步骤 {index}").strip()
+            label = str(
+                item.get("label")
+                or item.get("name")
+                or item.get("step")
+                or item.get("from")
+                or item.get("to")
+                or ""
+            ).strip()
+            if not label:
+                endpoint = str(item.get("endpoint") or item.get("path") or "").strip()
+                method = str(item.get("method") or "").strip()
+                label = f"{method} {endpoint}".strip()
+            details: list[str] = []
+            for key in (
+                "method",
+                "action",
+                "detail",
+                "observation",
+                "result",
+                "evidence",
+                "hypothesis",
+            ):
+                value = item.get(key)
+                if value and str(value).strip() != label:
+                    details.append(" ".join(str(value).split()))
+            if not label and details:
+                label, *details = details
+            if label:
+                nodes.append((kind, " ".join(label.split()), "；".join(details)))
+
+    if not nodes:
+        endpoint = str(report.get("endpoint") or "").strip()
+        method = str(report.get("method") or "").strip()
+        if endpoint:
+            nodes.append(("入口", f"{method} {endpoint}".strip(), ""))
+    return nodes
+
+
+def render_attack_chain(report: dict[str, Any]) -> list[str]:
+    """Render a Burp URL-view-like vertical path, never as a markdown table."""
+    nodes = _attack_chain_nodes(report)
+    if not nodes:
+        return []
+    lines = ["## 攻击链路\n", "```text", "攻击链路视图"]
+    for index, (kind, label, detail) in enumerate(nodes):
+        if index:
+            lines.extend(["    |", "    v"])
+        lines.append(f"[{kind}] {label}")
+        if detail:
+            lines.append(f"  {detail}")
+    lines.extend(["```", ""])
+    return lines
+
+
+def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PLR0915
     severity = _SEVERITY_LABELS_ZH.get(
         str(report.get("severity", "")).strip().lower(),
         str(report.get("severity", "未知")) or "未知",
@@ -555,8 +286,6 @@ def render_vulnerability_md(
         ("修复版本", dep_meta.get("fixed_version")),
         ("引入来源", dep_meta.get("introduced_by")),
         ("依赖链", dep_meta.get("dependency_path")),
-        ("清单文件", dep_meta.get("manifest_path")),
-        ("可达性级别", dep_meta.get("reachability")),
         ("接口", report.get("endpoint")),
         ("请求方法", report.get("method")),
         ("CVE", report.get("cve")),
@@ -567,9 +296,9 @@ def render_vulnerability_md(
         metadata.append(("CVSS", cvss))
     advisory_cvss = dep_meta.get("advisory_cvss")
     if advisory_cvss is not None and advisory_cvss != cvss:
-        metadata.append(("Advisory CVSS", advisory_cvss))
+        metadata.append(("公告 CVSS", advisory_cvss))
     if dep_meta.get("contextual_cvss_vector"):
-        metadata.append(("Contextual CVSS Vector", dep_meta["contextual_cvss_vector"]))
+        metadata.append(("情境化 CVSS 向量", dep_meta["contextual_cvss_vector"]))
     if report.get("confidence"):
         metadata.append(("置信度", str(report["confidence"]).title()))
     if report.get("fix_effort"):
@@ -584,48 +313,14 @@ def render_vulnerability_md(
 
     lines.append("")
     lines.append("## 漏洞描述\n")
-    lines.append(report.get("description") or "报告未记录漏洞描述；需结合证据补充。")
+    lines.append(report.get("description") or "报告未提供漏洞描述。")
     lines.append("")
 
-    if str(report.get("finding_class") or "dynamic").lower() != "dependency_cve":
-        lines.append("## 发现与复现过程\n")
-        lines.extend(render_structured_evidence_markdown(report))
-        lines.append("")
-
-    request, request_source = report_request_evidence(report)
-    response, response_source = report_response_evidence(report)
-    lines.extend(["## 请求与响应证据\n", "### Request\n"])
-    if request_source in {"request", "reproduction_request"}:
-        request_fence = safe_fence(request)
-        lines.extend([f"{request_fence}http", request, request_fence, ""])
-    else:
-        lines.extend([request, ""])
-    lines.extend(["### Response / 运行时现象\n"])
-    if response_source in {"response", "observed_response"}:
-        response_fence = safe_fence(response)
-        lines.extend([f"{response_fence}text", response, response_fence, ""])
-    else:
-        lines.extend([response, ""])
+    lines.extend(render_attack_chain(report))
 
     if report.get("evidence"):
         lines.append("## 证据\n")
         lines.append(str(report["evidence"]))
-        lines.append("")
-
-    provenance = report.get("credential_provenance")
-    if isinstance(provenance, dict) and provenance:
-        lines.append("## 凭据材料获取过程\n")
-        lines.extend(f"- {key}：{value}" for key, value in provenance.items())
-        lines.append("")
-
-    if dep_meta.get("reachability_evidence"):
-        lines.append("## Reachability 证据\n")
-        lines.append(str(dep_meta["reachability_evidence"]))
-        lines.append("")
-
-    if report.get("validation_evidence"):
-        lines.append("## 运行时验证\n")
-        lines.append(str(report["validation_evidence"]))
         lines.append("")
 
     if report.get("impact"):
@@ -717,7 +412,6 @@ def render_vulnerability_md(
         lines.append("")
 
     lines.extend(render_update_history(report.get("update_history")))
-
     return "\n".join(lines)
 
 
@@ -726,31 +420,31 @@ def render_update_history(history: Any) -> list[str]:
     if not isinstance(history, list):
         return []
     entries: list[dict[str, Any]] = [
-        cast("dict[str, Any]", e) for e in history if isinstance(e, dict)
+        cast("dict[str, Any]", entry) for entry in history if isinstance(entry, dict)
     ]
     if not entries:
         return []
 
-    lines = ["## Update History\n"]
+    lines = ["## 更新历史\n"]
     for entry in entries:
-        author = str(entry.get("agent_name") or entry.get("agent_id") or "an agent")
+        author = str(entry.get("agent_name") or entry.get("agent_id") or "代理")
         raw_fields = entry.get("fields")
         fields: list[Any] = raw_fields if isinstance(raw_fields, list) else []
-        changed = ", ".join(str(field) for field in fields)
-        timestamp = str(entry.get("timestamp") or "unknown")
-        lines.append(f"**{timestamp}** — {author} updated: {changed}")
+        changed = "、".join(str(field) for field in fields)
+        timestamp = str(entry.get("timestamp") or "未知")
+        lines.append(f"**{timestamp}** — {author} 更新：{changed}")
         raw_dropped = entry.get("dropped_fields")
         if isinstance(raw_dropped, list) and raw_dropped:
-            dropped = ", ".join(str(field) for field in raw_dropped)
-            lines.append(f"  Dropped as superseded: {dropped}")
+            dropped = "、".join(str(field) for field in raw_dropped)
+            lines.append(f"  因新证据被替换：{dropped}")
         for key, label in (
-            ("previous_severity", "severity"),
+            ("previous_severity", "严重性"),
             ("previous_cvss", "CVSS"),
-            ("previous_confidence", "confidence"),
+            ("previous_confidence", "置信度"),
         ):
             if entry.get(key) is not None:
-                lines.append(f"  Previous {label}: {entry[key]}")
+                lines.append(f"  原{label}：{entry[key]}")
         if entry.get("reason"):
-            lines.append(f"  Reason: {entry['reason']}")
+            lines.append(f"  原因：{entry['reason']}")
         lines.append("")
     return lines

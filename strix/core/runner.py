@@ -26,7 +26,6 @@ from strix.config.models import (
     supports_strict_tool_schemas,
     uses_chat_completions_tool_schema,
 )
-from strix.config.modes import normalize_mode
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
@@ -185,7 +184,6 @@ def _compose_root_instructions_override(
     is_whitebox: bool,
     is_diff_scoped: bool,
     interactive: bool,
-    mode: str,
     system_prompt_context: dict[str, Any],
 ) -> str | None:
     if root_instructions_override is None:
@@ -198,7 +196,6 @@ def _compose_root_instructions_override(
         is_root=True,
         is_diff_scoped=is_diff_scoped,
         interactive=interactive,
-        mode=mode,
         system_prompt_context=system_prompt_context,
     )
     return (
@@ -285,11 +282,8 @@ async def run_strix_scan(
     )
 
     settings = load_settings()
-    configured_mode = getattr(getattr(settings, "security", None), "mode", "normal")
-    security_mode = normalize_mode(scan_config.get("mode", configured_mode))
     scan_config = {
         **scan_config,
-        "mode": security_mode,
         "token_limit": configured_token_limit,
     }
     configure_sdk_model_defaults(settings)
@@ -562,7 +556,6 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
-            mode=security_mode,
             system_prompt_context=root_context,
         )
 
@@ -576,7 +569,6 @@ async def run_strix_scan(
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
-            mode=security_mode,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
         )
@@ -597,7 +589,6 @@ async def run_strix_scan(
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
-            mode=security_mode,
             system_prompt_context=scope_context,
         )
 
@@ -632,7 +623,6 @@ async def run_strix_scan(
             )
 
         context: dict[str, Any] = {
-            "security_mode": security_mode,
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
             "caido_client_ref": caido_client_ref,

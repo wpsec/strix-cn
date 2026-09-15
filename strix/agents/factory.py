@@ -725,7 +725,6 @@ def build_strix_agent(
     is_whitebox: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
-    mode: str = "normal",
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
@@ -754,7 +753,6 @@ def build_strix_agent(
             is_root=is_root,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
-            mode=mode,
             system_prompt_context=system_prompt_context,
         )
 
@@ -775,13 +773,12 @@ def build_strix_agent(
     ]
 
     logger.info(
-        "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, mode=%s, whitebox=%s)",
+        "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",
         "root" if is_root else "child",
         name,
         len(skills or []),
         len(tools),
         scan_mode,
-        mode,
         is_whitebox,
     )
 
@@ -815,7 +812,6 @@ def make_child_factory(
     is_whitebox: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
-    mode: str = "normal",
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
@@ -836,7 +832,6 @@ def make_child_factory(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
-            mode=mode,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,

@@ -8,12 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from strix.report.html_report import render_html_report
-from strix.report.state import ReportState
 from strix.report.writer import (
     atomic_write_text,
     read_run_record,
-    render_complete_report,
+    render_attack_chain,
     render_vulnerability_md,
     write_executive_report,
     write_run_record,
@@ -81,196 +79,6 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
     assert "## 概念验证" in md
     assert "## 修复建议" in md
     assert "**接口：** /api/login" in md
-
-
-def test_render_vulnerability_md_includes_discovery_matrix_and_replay_request() -> None:
-    raw_request = (
-        "POST /api/orders HTTP/1.1\n"
-        "Host: app.example.com\n"
-        "Authorization: Bearer demo-token\n"
-        "Cookie: sid=demo-cookie\n"
-        "Content-Type: application/json\n\n"
-        '{"orderId":"other-user-order"}'
-    )
-    report = _sample_report(
-        discovery_trace=[
-            {
-                "stage": "JS 分析",
-                "source": "app.js",
-                "location": "app.js:120",
-                "observation": "提取订单查询接口",
-                "inference": "orderId 可能影响授权对象",
-                "evidence": "fetch('/api/orders')",
-            }
-        ],
-        endpoint_matrix=[
-            {
-                "method": "POST",
-                "path": "/api/orders",
-                "purpose": "验证对象级授权",
-                "baseline": "当前订单返回 200",
-                "variant": "替换为其他订单 ID",
-                "result": "仍返回订单数据",
-                "evidence": "响应包含其他用户订单字段",
-            }
-        ],
-        reproduction_requests=[
-            {
-                "name": "跨对象读取",
-                "purpose": "复制到 Burp Repeater 验证 IDOR",
-                "request": raw_request,
-                "expected_response": "返回当前账号无权访问的订单",
-                "observed_response": "返回订单详情",
-            }
-        ],
-    )
-
-    markdown = render_vulnerability_md(report)
-    html = render_html_report(
-        final_scan_result=None,
-        run_record={"run_name": "evidence-run", "status": "completed"},
-        vulnerability_reports=[report],
-    )
-
-    for rendered in (markdown, html):
-        assert "发现入口与推理链" in rendered
-        assert "接口验证矩阵" in rendered
-        assert "Burp Repeater" in rendered
-        assert "Authorization: Bearer demo-token" in rendered
-        assert "Cookie: sid=demo-cookie" in rendered
-    assert '{"orderId":"other-user-order"}' in markdown
-    assert "&quot;orderId&quot;:&quot;other-user-order&quot;" in html
-
-
-def test_report_evidence_uses_replay_rows_and_exposes_gaps_without_fake_http_data() -> None:
-    raw_request = "GET /api/profile HTTP/1.1\nHost: app.example.com\n\n"
-    report = _sample_report(
-        request=None,
-        response=None,
-        reproduction_requests=[
-            {
-                "name": "主验证",
-                "request": raw_request,
-                "observed_response": "HTTP 200 with another user's profile",
-            }
-        ],
-    )
-
-    markdown = render_vulnerability_md(report)
-    html = render_html_report(
-        final_scan_result=None,
-        run_record={"run_name": "evidence-gap", "status": "completed"},
-        vulnerability_reports=[report],
-    )
-
-    assert "GET /api/profile HTTP/1.1\nHost: app.example.com" in markdown
-    assert "HTTP 200 with another user's profile" in markdown
-    assert "未提供请求数据" not in markdown
-    assert "证据缺口" not in markdown
-    assert "GET /api/profile HTTP/1.1" in html
-    assert "HTTP 200 with another user&#x27;s profile" in html or "HTTP 200 with another user's profile" in html
-
-    incomplete = _sample_report(request=None, response=None)
-    incomplete_markdown = render_vulnerability_md(incomplete)
-    incomplete_html = render_html_report(
-        final_scan_result=None,
-        run_record={"run_name": "incomplete-evidence", "status": "completed"},
-        vulnerability_reports=[incomplete],
-    )
-    assert "证据缺口" in incomplete_markdown
-    assert "未提供请求数据" not in incomplete_markdown
-    assert "证据缺口" in incomplete_html
-
-
-def test_dependency_report_marks_http_evidence_not_applicable() -> None:
-    report = _sample_report(
-        finding_class="dependency_cve",
-        dependency_metadata={"package_name": "demo", "installed_version": "1.0.0"},
-        request=None,
-        response=None,
-    )
-
-    markdown = render_vulnerability_md(report)
-    html = render_html_report(
-        final_scan_result=None,
-        run_record={"run_name": "dependency-evidence", "status": "completed"},
-        vulnerability_reports=[report],
-    )
-
-    assert "不适用：该发现基于依赖公告和版本证据" in markdown
-    assert "未提供请求数据" not in markdown
-    assert "不适用：该发现基于依赖公告和版本证据" in html
-
-
-def test_report_state_backfills_top_level_http_evidence_from_replay_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    state = ReportState(run_name="replay-backfill")
-    state.set_scan_config({"mode": "normal", "targets": [], "scan_mode": "quick"})
-    monkeypatch.setattr(state, "save_run_data", lambda: None)
-
-    state.add_vulnerability_report(
-        "Object access control",
-        "high",
-        endpoint="/api/profile",
-        request="未提供请求数据。",
-        response="未提供响应或运行时现象。",
-        reproduction_requests=[
-            {
-                "request": "GET /api/profile HTTP/1.1\nHost: app.example.com",
-                "observed_response": "HTTP 200 with another user's profile",
-            }
-        ],
-    )
-
-    report = state.vulnerability_reports[0]
-    assert report["request"].startswith("GET /api/profile HTTP/1.1")
-    assert report["response"] == "HTTP 200 with another user's profile"
-    assert "未提供" not in json.dumps(report, ensure_ascii=False)
-
-
-def test_token_boundary_reports_completed_and_uncovered_tasks() -> None:
-    record = {
-        "run_name": "token-run",
-        "status": "token_limit_exhausted",
-        "token_limit": 100,
-        "tokens_used": 100,
-        "tokens_remaining": 0,
-        "token_limit_status": "exhausted",
-        "stop_reason": "token_limit_exhausted",
-        "completed_priorities": ["P0", "P1"],
-        "planned_tasks": [
-            {
-                "task_id": "task-done",
-                "priority": "P0",
-                "status": "completed",
-                "task": "认证与授权检查",
-            },
-            {
-                "task_id": "task-open",
-                "priority": "P2",
-                "status": "failed",
-                "task": "中危业务逻辑扩展测试",
-            },
-        ],
-        "skipped_tasks": [
-            {"task_id": "task-skipped", "priority": "P3", "task": "低危边缘场景"}
-        ],
-        "coverage_by_severity": {"critical": 0, "high": 1, "medium": 0, "low": 0},
-    }
-    markdown = render_complete_report("# 执行摘要\n\n摘要", run_record=record)
-    html = render_html_report(
-        final_scan_result="# 执行摘要\n\n摘要",
-        run_record=record,
-        vulnerability_reports=[],
-    )
-
-    assert "认证与授权检查" in markdown
-    assert "中危业务逻辑扩展测试" in markdown
-    assert "低危边缘场景" in markdown
-    assert "认证与授权检查" in html
-    assert "中危业务逻辑扩展测试" in html
-    assert "低危边缘场景" in html
 
 
 def test_render_vulnerability_md_includes_dependency_fields() -> None:
@@ -429,144 +237,28 @@ def test_write_vulnerabilities_skips_already_saved_ids(tmp_path: Path) -> None:
 def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     write_executive_report(tmp_path, "Scan complete. No critical issues.")
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
-    assert "<h1>安全渗透测试报告</h1>" in content
-    assert "## 目录" in content
-    assert "#executive-summary" in content
+    assert content.startswith("# 安全渗透测试报告\n\n")
+    assert "## 目录" not in content
     assert "Scan complete. No critical issues." in content
 
 
-def test_complete_report_contains_cover_toc_risk_table_and_findings() -> None:
-    report = render_complete_report(
-        """# 执行摘要
-
-发现一个问题。
-
-# 测试方法
-
-使用代理流量和人工验证。
-
-# 技术分析
-
-分析详情。
-
-# 修复建议
-
-优先修复高危问题。
-""",
-        run_record={
-            "run_name": "交付测试",
-            "status": "completed",
-            "scan_mode": "deep",
-            "start_time": "2026-07-31T10:00:00+00:00",
-            "end_time": "2026-07-31T11:00:00+00:00",
-            "targets_info": [{"original": "https://app.example.com"}],
-        },
-        vulnerability_reports=[
-            _sample_report(
-                id="vuln-0001",
-                title="高危 SQL 注入",
-                severity="high",
-                description="已确认。",
-            ),
-            _sample_report(
-                id="vuln-0002",
-                title="低危信息泄露",
-                severity="low",
-                description="已确认。",
-            ),
-        ],
+def test_render_attack_chain_is_a_path_not_a_table() -> None:
+    report = _sample_report(
+        attack_chain=[
+            {"type": "入口", "label": "POST /login", "observation": "返回会话令牌"},
+            {"type": "利用", "label": "GET /admin/users", "detail": "低权限令牌可访问"},
+            {"type": "影响", "label": "读取其他用户数据"},
+        ]
     )
 
-    assert "<h1>安全渗透测试报告</h1>" in report
-    assert "[vuln-0001" in report
-    assert "| 高危 | 1 |" in report
-    assert "| 低危 | 1 |" in report
-    assert "| **合计** | **2** |" in report
-    assert "### vuln-0001" in report
-    assert "#### 漏洞描述" in report
-    assert "## 6. 附录：交付物说明" in report
+    markdown = render_vulnerability_md(report)
 
-
-def test_token_exhaustion_is_explicit_in_delivery_report() -> None:
-    report = render_complete_report(
-        "# 执行摘要\n\n测试因 Token 限制停止。",
-        run_record={
-            "run_name": "受限测试",
-            "status": "token_limit_exhausted",
-            "token_limit": 1000,
-            "tokens_used": 1000,
-            "tokens_remaining": 0,
-            "token_limit_status": "exhausted",
-            "stop_reason": "token_limit_exhausted",
-            "completed_priorities": ["P0", "P1"],
-            "skipped_tasks": [{"task_id": "task-low", "priority": "P3"}],
-            "planned_tasks": [{"task_id": "task-medium", "priority": "P2", "status": "admitted"}],
-            "coverage_by_severity": {"critical": 1, "high": 2, "medium": 0, "low": 0},
-        },
-    )
-
-    assert "Token 限制与覆盖边界" in report
-    assert "task\\-low \\(P3\\)" in report
-    assert "task\\-medium \\(P2\\)" in report
-    assert "报告不完整" in report
-
-
-def test_html_report_is_viewer_style_and_escapes_target_content() -> None:
-    report = render_html_report(
-        final_scan_result="""# 执行摘要
-
-已完成授权测试。
-
-# 测试方法
-
-基于代理流量验证。
-
-# 技术分析
-
-确认一个问题。
-
-# 修复建议
-
-优先修复高危问题。
-""",
-        run_record={
-            "run_name": "交付测试",
-            "status": "completed",
-            "scan_mode": "deep",
-            "targets_info": [{"original": "https://app.example.com"}],
-        },
-        vulnerability_reports=[
-            _sample_report(
-                title="SQL Injection <script>alert(1)</script>",
-                description="<img src=x onerror=alert(1)>",
-            )
-        ],
-    )
-
-    assert "安全渗透测试报告" in report
-    assert "最终报告" in report
-    assert "问题详情" in report
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in report
-    assert "<script>alert(1)</script>" not in report
-    assert "<img src=x" not in report
-
-
-def test_html_report_accepts_delivery_markdown_headings() -> None:
-    report = render_html_report(
-        final_scan_result="""## 1. 执行摘要
-
-历史运行摘要。
-
-## 2. 测试方法
-
-历史运行方法。
-""",
-        run_record={"run_name": "历史运行", "status": "completed"},
-        vulnerability_reports=[],
-    )
-
-    assert "历史运行摘要。" in report
-    assert "历史运行方法。" in report
+    assert "## 攻击链路" in markdown
+    assert "攻击链路视图" in markdown
+    assert "    v" in markdown
+    assert "[入口] POST /login" in markdown
+    assert "| --- |" not in markdown
+    assert render_attack_chain(report)[0] == "## 攻击链路\n"
 
 
 def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:

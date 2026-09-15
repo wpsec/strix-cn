@@ -464,7 +464,7 @@ def main() -> None:
 
     args = parse_arguments()
 
-    if args.mode == "verify":
+    if args.verify:
         # Verification requests run inside the same sandbox runtime as normal
         # scans. Only reap stale sessions here; defer all Docker startup until
         # the user has approved the generated verification plan.

@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   AlertCircle,
   Bot,
-  FileDown,
 } from "lucide-react";
 import type { Vulnerability, VulnerabilitySeverity } from "@/types/issues";
 import { SEVERITY_COLORS, SEVERITY_LABELS } from "@/types/issues";
@@ -204,16 +203,7 @@ export default function App() {
               <div className="text-base text-white font-medium tracking-tight">Strix</div>
             </div>
             {run && <LiveIndicator finished={run.finished} />}
-            <div className="ml-auto flex items-center gap-3">
-              <a
-                href="/api/report.html"
-                download
-                className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity hover:opacity-90"
-              >
-                下载 HTML 总报告
-                <FileDown className="w-3 h-3" aria-hidden="true" />
-              </a>
-            </div>
+            <div className="ml-auto" />
           </div>
         </div>
 

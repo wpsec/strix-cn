@@ -799,7 +799,7 @@ def test_verify_cli_is_a_small_mutually_exclusive_entrypoint(
         ],
     )
     args = cli_args.parse_arguments()
-    assert args.mode == "verify"
+    assert args.verify is True
     assert args.verification_request == str(request_file)
     assert args.verification_secondary_request == str(secondary_file)
     assert args.verification_approve is True
