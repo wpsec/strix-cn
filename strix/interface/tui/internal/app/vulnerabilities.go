@@ -373,6 +373,7 @@ func vulnerabilityBody(v map[string]any) string {
 		pocLang, pocCode := render.ParseFencedCode(poc)
 		b.WriteString("\n\n" + fieldStyle.Render("PoC Code") + "\n" + render.HighlightCode(pocCode, pocLang))
 	}
+	section("Burp Request", render.StringValue(v["burp_request"]))
 	section("Remediation", render.StringValue(v["remediation_steps"]))
 	section("Assumptions", render.StringValue(v["assumptions"]))
 	return b.String()

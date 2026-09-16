@@ -81,6 +81,16 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
     assert "**接口：** /api/login" in md
 
 
+def test_render_vulnerability_md_includes_copyable_burp_request() -> None:
+    request = (
+        "POST /api/login HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 9\r\n\r\nuser=test"
+    )
+    md = render_vulnerability_md(_sample_report(burp_request=request))
+
+    assert "## Burp 复现数据包" in md
+    assert f"```http\n{request}\n```" in md
+
+
 def test_render_vulnerability_md_includes_dependency_fields() -> None:
     md = render_vulnerability_md(
         _sample_report(

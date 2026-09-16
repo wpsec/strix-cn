@@ -79,6 +79,42 @@ sandbox's `HTTP_PROXY` env routes all such traffic through Caido
 automatically, so it shows up in `list_requests` and you can use
 `repeat_request` to replay-and-modify any of it.
 
+## Standalone PoC replay with optional Burp
+
+Customer-facing Python PoCs must remain runnable when Burp is either available
+or offline. Check whether Burp is listening at `127.0.0.1:8080` before sending
+the request. Route the request through Burp when it is available; otherwise
+send it directly without re-playing a request that may already have reached the
+target:
+
+```python
+import requests
+import socket
+
+BURP_PROXY = "http://127.0.0.1:8080"
+
+
+def burp_is_listening() -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", 8080), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def send_request(method: str, url: str, **kwargs) -> requests.Response:
+    session = requests.Session()
+    session.trust_env = False
+    proxies = {"http": BURP_PROXY, "https": BURP_PROXY} if burp_is_listening() else {}
+    return session.request(method, url, proxies=proxies, **kwargs)
+```
+
+Keep this selection logic inside the script included in `poc_script_code`. Do
+not catch response status codes or ordinary target-side errors, because those
+are part of the validation result. If the listener was available but the
+proxied request fails, surface that error instead of retrying the request
+directly; the target may already have processed it.
+
 ## Workflow
 
 For iterative exploit work, put code in a file:

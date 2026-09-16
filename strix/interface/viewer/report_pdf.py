@@ -589,6 +589,8 @@ def _finding_flowables(
     story.extend(_field_block(styles, "概念验证", vuln.get("poc_description")))
     poc_script = _strip_code_fence(vuln.get("poc_script_code"))
     story.extend(_field_block(styles, "PoC 脚本", poc_script, code=True))
+    burp_request = _strip_code_fence(vuln.get("burp_request"))
+    story.extend(_field_block(styles, "Burp 复现数据包", burp_request, code=True))
     story.extend(_field_block(styles, "证据", vuln.get("evidence"), code=True))
 
     remediation = vuln.get("remediation_steps")

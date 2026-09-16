@@ -84,6 +84,7 @@ func renderReport(args map[string]any, result any, heading, pending string) stri
 	if poc := StringValue(args["poc_script_code"]); poc != "" {
 		b.WriteString("\n\n" + Bold(Field).Render("概念验证代码") + "\n" + Col(Text).Render(poc))
 	}
+	section("Burp 复现数据包", StringValue(args["burp_request"]))
 	section("修复建议", StringValue(args["remediation_steps"]))
 	// Any applyable fix above is one click from the user's codebase, so how it
 	// was verified belongs next to it rather than in the artifact alone.

@@ -26,6 +26,7 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
   const technicalAnalysis = (args.technical_analysis as string) ?? "";
   const pocDescription = (args.poc_description as string) ?? "";
   const { language: pocLang, code: pocCode } = parseFencedCode((args.poc_script_code as string) ?? "");
+  const burpRequest = (args.burp_request as string) ?? "";
   const remediation = (args.remediation_steps as string) ?? "";
   const cve = (args.cve as string) ?? "";
   const cwe = (args.cwe as string) ?? "";
@@ -88,11 +89,17 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
           <div className="mt-1"><TruncatedText text={severityChangeConditions} maxLines={10} /></div>
         </div>
       )}
-      {(pocDescription || pocCode) && (
+      {(pocDescription || pocCode || burpRequest) && (
         <div>
           <span className="text-emerald-400/60 text-sm font-semibold">概念验证</span>
           {pocDescription && <div className="mt-1"><Markdown text={pocDescription} /></div>}
           {pocCode && <MdCodeBlock className={pocLang ? `language-${pocLang}` : undefined}>{pocCode}</MdCodeBlock>}
+          {burpRequest && (
+            <>
+              <span className="mt-3 block text-[#999] text-sm font-semibold">Burp 复现数据包</span>
+              <MdCodeBlock className="language-http">{burpRequest}</MdCodeBlock>
+            </>
+          )}
         </div>
       )}
       {remediation && (

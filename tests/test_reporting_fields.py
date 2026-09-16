@@ -94,6 +94,10 @@ def test_record_mcp_connection_status_persists_and_dedupes(
 
 
 async def test_create_report_persists_new_fields(report_state: ReportState) -> None:
+    burp_request = (
+        "GET /search?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E HTTP/1.1\n"
+        "Host: app.example.com\n\nbody-with-trailing-space \n"
+    )
     result = await _do_create(
         title="Reflected XSS in search",
         description="q reflects unencoded input.",
@@ -102,6 +106,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         technical_analysis="Input interpolated into HTML.",
         poc_description="1. open /search?q=<payload>",
         poc_script_code="GET /search?q=<script>alert(1)</script>",
+        burp_request=burp_request,
         remediation_steps="Context-encode output.",
         evidence="Response echoes the payload verbatim.",
         assumptions="Assumes a victim opens a crafted link.",
@@ -124,6 +129,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
     assert report["evidence"] == "Response echoes the payload verbatim."
+    assert report["burp_request"] == burp_request
     assert "validation_evidence" not in report
     assert report["assumptions"] == "Assumes a victim opens a crafted link."
     assert report["fix_effort"] == "low"
@@ -1439,6 +1445,20 @@ def test_update_vulnerability_report_records_chained_impact(report_state: Report
     assert updated["severity"] == "critical"
     assert updated["updated_at"]
     assert report_state.update_vulnerability_report("vuln-0404", {"severity": "high"}) is None
+
+
+def test_update_vulnerability_report_replaces_burp_request(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+
+    updated = report_state.update_vulnerability_report(
+        "vuln-0009",
+        {"burp_request": "GET /admin HTTP/1.1\nHost: cms.example.com\n\n"},
+        update_reason="Added the exact request needed for Burp Repeater replay.",
+    )
+
+    assert updated is not None
+    assert updated["burp_request"].startswith("GET /admin HTTP/1.1")
+    assert "burp_request" in updated["update_history"][0]["fields"]
 
 
 def test_update_vulnerability_report_ignores_identical_content(report_state: ReportState) -> None:

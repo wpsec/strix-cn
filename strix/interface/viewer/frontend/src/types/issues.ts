@@ -135,6 +135,7 @@ export interface Vulnerability {
   technical_analysis: string | null;
   poc_description: string | null;
   poc_script_code: string | null;
+  burp_request: string | null;
   code_diff: string | null;
   code_file: string | null;
   code_before: string | null;

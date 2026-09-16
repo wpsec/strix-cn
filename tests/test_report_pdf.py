@@ -54,6 +54,7 @@ def _make_run(base: Path, name: str = "sample") -> Path:
             "technical_analysis": "Details here.",
             "poc_description": "Send a crafted parameter.",
             "poc_script_code": "print('exploit')",
+            "burp_request": "POST /login HTTP/1.1\r\nHost: example.com\r\n\r\nuser=test",
             "evidence": "HTTP 500 with SQL error.",
             "remediation_steps": ["Use parameterized queries", "Validate input"],
             "target": "https://example.com",
@@ -75,6 +76,14 @@ def test_generate_report_pdf_has_pdf_header(tmp_path: Path) -> None:
     pdf = generate_report_pdf(run_dir)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
+
+
+def test_generate_report_pdf_includes_burp_request(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+
+    text = _pdf_text(generate_report_pdf(run_dir))
+
+    assert "POST /login HTTP/1.1" in text
 
 
 def test_generate_password_is_long_and_random() -> None:

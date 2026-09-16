@@ -367,6 +367,16 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append(fence)
             lines.append("")
 
+    burp_request = report.get("burp_request")
+    if isinstance(burp_request, str) and burp_request.strip():
+        request = burp_request
+        fence = safe_fence(request)
+        lines.append("## Burp 复现数据包\n")
+        lines.append(f"{fence}http")
+        lines.append(request)
+        lines.append(fence)
+        lines.append("")
+
     if report.get("code_locations"):
         lines.append("## 代码分析\n")
         for i, loc in enumerate(report["code_locations"]):

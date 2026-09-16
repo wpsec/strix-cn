@@ -108,7 +108,8 @@ func vulnerabilityMarkdownReport(v map[string]any) string {
 
 	pocDescription := render.StringValue(v["poc_description"])
 	pocScript := render.StringValue(v["poc_script_code"])
-	if pocDescription != "" || pocScript != "" {
+	burpRequest := render.StringValue(v["burp_request"])
+	if pocDescription != "" || pocScript != "" || burpRequest != "" {
 		lines = append(lines, "", "## Proof of Concept", "")
 		if pocDescription != "" {
 			lines = append(lines, pocDescription, "")
@@ -120,6 +121,10 @@ func vulnerabilityMarkdownReport(v map[string]any) string {
 			}
 			fence := safeFence(pocCode)
 			lines = append(lines, fence+pocLang, pocCode, fence)
+		}
+		if burpRequest != "" {
+			fence := safeFence(burpRequest)
+			lines = append(lines, "", "### Burp Reproduction Request", "", fence+"http", burpRequest, fence)
 		}
 	}
 

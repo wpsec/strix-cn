@@ -210,6 +210,7 @@ function emptyVulnerabilityDefaults(): Omit<
     technical_analysis: null,
     poc_description: null,
     poc_script_code: null,
+    burp_request: null,
     code_diff: null,
     code_file: null,
     code_before: null,
@@ -271,6 +272,7 @@ function parseOneVulnerability(
     technical_analysis: asStringOrNull(raw.technical_analysis),
     poc_description: asStringOrNull(raw.poc_description),
     poc_script_code: asStringOrNull(raw.poc_script_code),
+    burp_request: asStringOrNull(raw.burp_request),
     cwe,
     code_locations: Array.isArray(raw.code_locations)
       ? (raw.code_locations as Vulnerability["code_locations"])

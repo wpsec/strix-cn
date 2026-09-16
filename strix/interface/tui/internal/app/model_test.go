@@ -1636,11 +1636,12 @@ func TestVulnerabilityMarkdownReport(t *testing.T) {
 		"cvss":              8.1,
 		"description":       "Injectable parameter.",
 		"poc_script_code":   "```python\nprint('x')\n```",
+		"burp_request":      "GET /login?id=1%27 HTTP/1.1\nHost: app.example.com\n\n",
 		"remediation_steps": "Use bound parameters.",
 	})
 	for _, want := range []string{
 		"# SQLi in login", "**Severity:** HIGH", "**CVSS:** 8.1",
-		"## Description", "```python\nprint('x')\n```", "## Remediation",
+		"## Description", "```python\nprint('x')\n```", "### Burp Reproduction Request", "## Remediation",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("report missing %q:\n%s", want, report)

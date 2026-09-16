@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
-from strix.tools.nullish import clean_optional
+from strix.tools.nullish import clean_optional, is_nullish
 from strix.tools.proxy.tools import existing_request_ids
 
 
@@ -361,6 +361,7 @@ _UPDATE_TEXT_FIELDS = (
     "technical_analysis",
     "poc_description",
     "poc_script_code",
+    "burp_request",
     "remediation_steps",
     "evidence",
     "assumptions",
@@ -383,7 +384,15 @@ def _collect_update_changes(  # noqa: PLR0912
     changes: dict[str, Any] = {}
 
     for name in _UPDATE_TEXT_FIELDS:
-        value = clean_optional(fields.get(name))
+        raw_value = fields.get(name)
+        if name == "burp_request":
+            value = (
+                raw_value
+                if isinstance(raw_value, str) and raw_value.strip() and not is_nullish(raw_value)
+                else None
+            )
+        else:
+            value = clean_optional(raw_value)
         if value is not None:
             changes[name] = value
 
@@ -467,6 +476,7 @@ _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "method",
     "poc_description",
     "poc_script_code",
+    "burp_request",
     "http_exchange_ids",
     "attack_chain",
 )
@@ -712,6 +722,7 @@ async def _do_create(  # noqa: PLR0912
     agent_id: str | None = None,
     agent_name: str | None = None,
     attack_chain: list[dict[str, Any] | str] | None = None,
+    burp_request: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
         {
@@ -800,6 +811,7 @@ async def _do_create(  # noqa: PLR0912
             "technical_analysis": technical_analysis,
             "poc_description": poc_description,
             "poc_script_code": poc_script_code,
+            "burp_request": burp_request,
             "remediation_steps": remediation_steps,
             "evidence": evidence,
             "assumptions": assumptions,
@@ -913,6 +925,7 @@ async def create_vulnerability_report(
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     attack_chain: list[dict[str, Any] | str] | None = None,
+    burp_request: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -999,15 +1012,25 @@ async def create_vulnerability_report(
       file, annotate the fence, e.g.
       ```` ```python title=app.py startLineNumber=42 endLineNumber=50 ````.
     - Field discipline: ``poc_description`` is steps only — NO code (all
-      code goes in ``poc_script_code``); ``remediation_steps`` is prose
+      code goes in ``poc_script_code``); ``burp_request`` is the raw HTTP
+      request only, without Markdown fences; ``remediation_steps`` is prose
       only — NO code/diffs (code fixes go in ``code_locations``).
+    - **PoC replay**: for Python HTTP PoCs, check whether the optional Burp
+      listener at ``http://127.0.0.1:8080`` is available before sending. Use a
+      ``requests.Session`` (or equivalent) with proxy environment variables
+      disabled, route through Burp when it is listening, and otherwise send
+      directly. Do not retry after a proxied send has started: the target may
+      already have processed a non-idempotent request. Do not swallow target
+      responses or real request errors. Keep this routing logic in
+      ``poc_script_code`` itself.
     - Numbered steps allowed only in PoC and Remediation sections.
     - Avoid hedging language; be precise and non-vague.
     - Follow a standard pentest report structure across the fields:
       (1) overview (``description``), (2) severity & CVSS vector
       (``cvss_breakdown``), (3) affected asset(s) (``target`` /
       ``endpoint``), (4) technical details (``technical_analysis``),
-      (5) proof of concept (``poc_description`` + ``poc_script_code``),
+      (5) proof of concept (``poc_description`` + ``poc_script_code`` +
+      ``burp_request`` when HTTP replay is applicable),
       (6) impact (``impact``), (7) evidence (``evidence``), and
       (8) remediation (``remediation_steps``).
 
@@ -1125,6 +1148,11 @@ async def create_vulnerability_report(
         technical_analysis: The mechanism and root cause.
         poc_description: Step-by-step reproduction (steps only, no code).
         poc_script_code: Working PoC (Python preferred).
+        burp_request: Raw HTTP request that can be pasted directly into
+            Burp Repeater. Use the request line, Host header, relevant
+            headers, and body exactly as replayed (retrieve it from the
+            proving exchange with ``view_request``); do not wrap it in a
+            Markdown code fence. Omit for non-HTTP findings.
         remediation_steps: Specific, actionable fix (prose, no code).
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
@@ -1338,6 +1366,7 @@ async def create_vulnerability_report(
         technical_analysis=technical_analysis,
         poc_description=poc_description,
         poc_script_code=poc_script_code,
+        burp_request=burp_request,
         remediation_steps=remediation_steps,
         evidence=evidence,
         assumptions=assumptions,
@@ -1374,6 +1403,7 @@ async def update_vulnerability_report(
     technical_analysis: str | None = None,
     poc_description: str | None = None,
     poc_script_code: str | None = None,
+    burp_request: str | None = None,
     remediation_steps: str | None = None,
     evidence: str | None = None,
     assumptions: str | None = None,
@@ -1447,6 +1477,8 @@ async def update_vulnerability_report(
         technical_analysis: Replacement technical details.
         poc_description: Replacement PoC steps (no code).
         poc_script_code: Replacement exploit script or payload.
+        burp_request: Replacement raw HTTP request for Burp Repeater,
+            without Markdown fences. Omit for non-HTTP findings.
         remediation_steps: Replacement remediation prose (no code).
         evidence: Replacement evidence.
         assumptions: Replacement exploitability prerequisites.
@@ -1496,6 +1528,7 @@ async def update_vulnerability_report(
             "technical_analysis": technical_analysis,
             "poc_description": poc_description,
             "poc_script_code": poc_script_code,
+            "burp_request": burp_request,
             "remediation_steps": remediation_steps,
             "evidence": evidence,
             "assumptions": assumptions,
