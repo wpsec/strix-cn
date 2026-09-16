@@ -271,6 +271,91 @@ def test_render_attack_chain_is_a_path_not_a_table() -> None:
     assert render_attack_chain(report)[0] == "## 攻击链路\n"
 
 
+def test_render_structured_attack_chain_uses_microfrontend_template() -> None:
+    md = render_vulnerability_md(
+        _sample_report(
+            attack_chain=[
+                {
+                    "type": "entry_point",
+                    "title": "浏览器入口",
+                    "source": "直接访问",
+                    "route": "GET /shell.html",
+                    "parameters": "无",
+                    "evidence": "req 1",
+                },
+                {
+                    "type": "trust_boundary",
+                    "title": "主壳 → 微前端路由分发",
+                    "source": "主壳 HTML 引用的入口 JS",
+                    "route": "/shell.js",
+                    "framework": "qiankun",
+                    "child_apps": [
+                        {"path": "/orders/", "function": "订单功能", "source": "/shell.js:10"},
+                    ],
+                    "fallback": {
+                        "prefix": "/fallback/",
+                        "function": "未独立部署，回落主壳 catch-all",
+                        "source": "/shell.js:20",
+                    },
+                    "evidence": "req 2",
+                },
+                {
+                    "type": "input_tampering",
+                    "title": "路由声明与动态加载点",
+                    "redirect_chain": "/fallback/ → /orders/app.js（来源: 网络面板 / req 3）",
+                    "sensitive_route": "/orders/export",
+                    "route_declaration_source": "app.abc.js:1",
+                    "dynamic_load_source": "app.abc.js 内 dynamic import",
+                    "chunks": [{"id": "42", "file": "chunk-42.js", "source": "app.abc.js:1"}],
+                    "sensitive_function": "exportData",
+                    "function_definition_source": "chunk-42.js:8",
+                    "parameter_source": "exportData 调用处 → format → 请求体",
+                    "encoding": "无",
+                    "evidence": "req 3",
+                },
+                {
+                    "type": "aggregation_point",
+                    "title": "敏感功能汇聚点",
+                    "route": "/orders/export",
+                    "backend_api": "POST /api/export",
+                    "method": "POST",
+                    "parameters_detail": [
+                        {"name": "format", "position": "body", "encoding": "明文", "source": "chunk-42.js:8"},
+                    ],
+                    "auth": "无",
+                    "description": "前端可达敏感能力，需后端鉴权/参数化校验兜底",
+                    "evidence": "req 4",
+                },
+            ],
+        ),
+    )
+
+    assert "[入口点] 浏览器入口" in md
+    assert "[信任边界] 主壳 → 微前端路由分发" in md
+    assert "├── /orders/   订单功能   来源: /shell.js:10" in md
+    assert "└── /fallback/   未独立部署，回落主壳 catch-all   来源: /shell.js:20" in md
+    assert "[输入篡改] 路由声明与动态加载点" in md
+    assert "└── 42 → chunk-42.js   来源: app.abc.js:1" in md
+    assert "[汇聚点] 敏感功能汇聚点" in md
+    assert "[验证确认] 待补充" in md
+    assert "[阻断点] 待补充" in md
+    assert md.index(" 证据: req 1") < md.index(" 证据: req 2")
+
+
+def test_render_http_request_and_response_as_separate_lossless_blocks() -> None:
+    request = "POST /api/export HTTP/1.1\r\nHost: app.example.com\r\n\r\nformat=csv"
+    response = "HTTP/1.1 200 OK\r\nX-Diagnostic: full-response\r\n\r\nreport-body"
+    md = render_vulnerability_md(
+        _sample_report(http_request=request, http_response=response),
+    )
+
+    assert "## HTTP 证据" in md
+    assert f"### Request\n\n```http\n{request}\n```" in md
+    assert f"### Response\n\n```http\n{response}\n```" in md
+    assert md.index("### Request") < md.index("### Response")
+    assert "full-response" in md
+
+
 def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:
     """Confidence, the case against the finding, and retest status are part of
     the deliverable — storing them without rendering hides the reasoning."""

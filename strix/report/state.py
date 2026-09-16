@@ -81,6 +81,8 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "poc_description",
         "poc_script_code",
         "burp_request",
+        "http_request",
+        "http_response",
         "remediation_steps",
         "evidence",
         "assumptions",
@@ -444,6 +446,8 @@ class ReportState:
         agent_name: str | None = None,
         attack_chain: list[dict[str, Any] | str] | None = None,
         burp_request: str | None = None,
+        http_request: str | None = None,
+        http_response: str | None = None,
     ) -> str:
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
@@ -469,6 +473,10 @@ class ReportState:
             # This field is copied into Burp Repeater, so whitespace in the
             # request body must survive persistence unchanged.
             report["burp_request"] = burp_request
+        if isinstance(http_request, str) and http_request.strip():
+            report["http_request"] = http_request
+        if isinstance(http_response, str) and http_response.strip():
+            report["http_response"] = http_response
         if remediation_steps:
             report["remediation_steps"] = remediation_steps.strip()
         if evidence:
@@ -557,11 +565,14 @@ class ReportState:
             if isinstance(value, str):
                 if key == "title":
                     value = _clean_title(value)
-                elif key != "burp_request":
+                elif key not in {"burp_request", "http_request", "http_response"}:
                     value = value.strip()
                 if key in _LOWERCASE_REPORT_FIELDS:
                     value = value.lower()
-                if not value or (key == "burp_request" and not value.strip()):
+                if not value or (
+                    key in {"burp_request", "http_request", "http_response"}
+                    and not value.strip()
+                ):
                     continue
             if report.get(key) == value:
                 continue

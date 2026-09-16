@@ -125,11 +125,15 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
             {"type": "入口", "label": "GET /search", "observation": "发现 q 参数"},
             {"type": "利用", "label": "q=marker", "observation": "响应回显 marker"},
         ],
+        http_request="GET /search?q=marker HTTP/1.1\nHost: app.example.com\n\n",
+        http_response="HTTP/1.1 200 OK\nContent-Type: text/html\n\nmarker",
     )
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
     assert report["evidence"] == "Response echoes the payload verbatim."
     assert report["burp_request"] == burp_request
+    assert report["http_request"].startswith("GET /search?q=marker")
+    assert report["http_response"].endswith("marker")
     assert "validation_evidence" not in report
     assert report["assumptions"] == "Assumes a victim opens a crafted link."
     assert report["fix_effort"] == "low"
@@ -1132,6 +1136,8 @@ def test_vuln_tool_exposes_new_params() -> None:
         "fix_effort",
         "fix_pr_body",
         "attack_chain",
+        "http_request",
+        "http_response",
     ):
         assert field in props
 

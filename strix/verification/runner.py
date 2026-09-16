@@ -266,7 +266,6 @@ def _render_report(  # noqa: PLR0912
                 f"- 响应指纹：`{evidence.response_sha256 or '未捕获'}`",
                 "- 证据：",
                 evidence.evidence
-                or evidence.response_summary
                 or evidence.error
                 or "未记录具体证据；请结合响应状态、长度和指纹复核。",
                 "",
@@ -276,11 +275,35 @@ def _render_report(  # noqa: PLR0912
             evidence_fence = safe_fence(evidence.request)
             lines.extend(
                 [
-                    "- 可复制到 Burp Repeater 的请求：",
+                    "#### Request",
                     "",
                     f"{evidence_fence}http",
                     evidence.request,
                     evidence_fence,
+                    "",
+                ]
+            )
+        if evidence.response:
+            response_fence = safe_fence(evidence.response)
+            lines.extend(
+                [
+                    "#### Response",
+                    "",
+                    f"{response_fence}http",
+                    evidence.response,
+                    response_fence,
+                    "",
+                ]
+            )
+        elif evidence.response_summary:
+            # Older verification artifacts contain only the response body
+            # summary. Keep it under its own heading instead of presenting it
+            # as part of the request or as a fabricated raw response.
+            lines.extend(
+                [
+                    "#### Response（摘要）",
+                    "",
+                    evidence.response_summary,
                     "",
                 ]
             )
@@ -290,7 +313,8 @@ def _render_report(  # noqa: PLR0912
             "",
             f"`strix --verify --baseline {run_name} --request ./request-after-fix.txt`",
             "",
-            "报告中的请求保留完整 Header、Token、Cookie 和 Body，可直接复制到 Burp Repeater 复现。",
+            "报告中的 Request 和 Response 保留完整 Header、Token、Cookie 和 Body；"
+            "Request 可直接复制到 Burp Repeater 复现。",
             "",
         ]
     )

@@ -79,6 +79,7 @@ function parseAttackChain(raw: unknown): AttackChainNode[] | null {
   const fields = [
     "type",
     "kind",
+    "title",
     "label",
     "name",
     "endpoint",
@@ -93,6 +94,41 @@ function parseAttackChain(raw: unknown): AttackChainNode[] | null {
     "result",
     "evidence",
     "hypothesis",
+    "source",
+    "child_apps_source",
+    "app_manifest_source",
+    "manifest_source",
+    "route",
+    "parameters",
+    "framework",
+    "fallback",
+    "redirect_chain",
+    "sensitive_route",
+    "route_declaration_source",
+    "dynamic_load_source",
+    "sensitive_function",
+    "function_definition_source",
+    "parameter_source",
+    "encoding",
+    "backend_api",
+    "authentication",
+    "variants",
+    "conclusion",
+    "exclusions",
+    "attempt",
+    "response_features",
+    "block_reason",
+    "round_result",
+  ] as const;
+  const nestedFields = [
+    "child_apps",
+    "fallback",
+    "redirect_chain",
+    "chunks",
+    "parameters_detail",
+    "comparison_tests",
+    "comparison",
+    "tests",
   ] as const;
   const rows: AttackChainNode[] = [];
   for (const item of raw) {
@@ -106,6 +142,12 @@ function parseAttackChain(raw: unknown): AttackChainNode[] | null {
     for (const field of fields) {
       const value = source[field];
       if (typeof value === "string" && value.trim()) row[field] = value.trim();
+      else if (Array.isArray(value) && value.length > 0) row[field] = value as never;
+    }
+    for (const field of nestedFields) {
+      const value = source[field];
+      if (Array.isArray(value) && value.length > 0) row[field] = value as never;
+      else if (value && typeof value === "object") row[field] = value as never;
     }
     if (Array.isArray(source.http_exchange_ids)) {
       const ids = source.http_exchange_ids.filter(
@@ -211,6 +253,8 @@ function emptyVulnerabilityDefaults(): Omit<
     poc_description: null,
     poc_script_code: null,
     burp_request: null,
+    http_request: null,
+    http_response: null,
     code_diff: null,
     code_file: null,
     code_before: null,
@@ -273,6 +317,8 @@ function parseOneVulnerability(
     poc_description: asStringOrNull(raw.poc_description),
     poc_script_code: asStringOrNull(raw.poc_script_code),
     burp_request: asStringOrNull(raw.burp_request),
+    http_request: asStringOrNull(raw.http_request),
+    http_response: asStringOrNull(raw.http_response),
     cwe,
     code_locations: Array.isArray(raw.code_locations)
       ? (raw.code_locations as Vulnerability["code_locations"])

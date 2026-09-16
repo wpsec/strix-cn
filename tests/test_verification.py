@@ -1178,6 +1178,27 @@ def test_failed_probe_keeps_the_generated_request_for_reproduction(
     assert result.evidence[0].request.startswith("GET /items?id=1 HTTP/1.1")
 
 
+def test_probe_result_keeps_request_and_response_as_separate_raw_materials() -> None:
+    request = parse_request_text(
+        "GET https://app.test/items?id=1 HTTP/1.1\nHost: app.test\n\n"
+    )
+    observation = HttpObservation(
+        200,
+        {"Content-Type": "text/plain", "X-Diagnostic": "full-response"},
+        "response-body",
+    )
+
+    result = executor._probe_result(SimpleNamespace(probe_id="control"), request, observation)
+
+    assert result.request is not None
+    assert result.response is not None
+    assert "GET /items?id=1 HTTP/1.1" in result.request
+    assert "HTTP/1.1 200 OK\r\nContent-Type: text/plain" in result.response
+    assert "X-Diagnostic: full-response" in result.response
+    assert result.response.endswith("\r\n\r\nresponse-body")
+    assert "response-body" not in result.request
+
+
 def test_runner_creates_and_cleans_sandbox_for_approved_verification(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

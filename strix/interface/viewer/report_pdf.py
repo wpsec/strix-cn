@@ -45,6 +45,7 @@ from strix.interface.viewer.transcript import (
     read_vulnerabilities,
     severity_counts,
 )
+from strix.report.writer import render_attack_chain
 
 
 if TYPE_CHECKING:
@@ -561,6 +562,18 @@ def _field_block(
     return flow
 
 
+def _attack_chain_text(vuln: dict[str, Any]) -> str | None:
+    """Return the path body without Markdown wrapper lines for PDF output."""
+    rendered = render_attack_chain(vuln)
+    if not rendered:
+        return None
+    return "\n".join(
+        line.rstrip("\n")
+        for line in rendered
+        if line.strip() not in {"## 攻击链路", "```text", "```"}
+    ).strip()
+
+
 def _finding_flowables(
     styles: dict[str, ParagraphStyle], index: int, vuln: dict[str, Any]
 ) -> list[Flowable]:
@@ -586,11 +599,14 @@ def _finding_flowables(
     story.extend(_field_block(styles, "漏洞描述", vuln.get("description")))
     story.extend(_field_block(styles, "影响", vuln.get("impact")))
     story.extend(_field_block(styles, "技术分析", vuln.get("technical_analysis")))
+    story.extend(_field_block(styles, "攻击链路", _attack_chain_text(vuln), code=True))
     story.extend(_field_block(styles, "概念验证", vuln.get("poc_description")))
     poc_script = _strip_code_fence(vuln.get("poc_script_code"))
     story.extend(_field_block(styles, "PoC 脚本", poc_script, code=True))
-    burp_request = _strip_code_fence(vuln.get("burp_request"))
-    story.extend(_field_block(styles, "Burp 复现数据包", burp_request, code=True))
+    http_request = _strip_code_fence(vuln.get("http_request") or vuln.get("burp_request"))
+    story.extend(_field_block(styles, "HTTP Request", http_request, code=True))
+    http_response = _strip_code_fence(vuln.get("http_response"))
+    story.extend(_field_block(styles, "HTTP Response", http_response, code=True))
     story.extend(_field_block(styles, "证据", vuln.get("evidence"), code=True))
 
     remediation = vuln.get("remediation_steps")

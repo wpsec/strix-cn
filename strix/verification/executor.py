@@ -21,6 +21,7 @@ from strix.verification.models import (
     VerificationResult,
     VerificationStatus,
     render_raw_request,
+    render_raw_response,
     request_shape_sha256,
 )
 from strix.verification.request import (
@@ -194,6 +195,11 @@ def _probe_result(
         response_length=len(observation.body.encode("utf-8")),
         response_sha256=_fingerprint(observation),
         response_summary=observation.body[:2048],
+        response=render_raw_response(
+            observation.status_code,
+            observation.headers,
+            observation.body,
+        ),
         request=render_raw_request(request),
     )
 

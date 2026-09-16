@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from http import HTTPStatus
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlunsplit
 
@@ -270,12 +271,28 @@ class ProbeResult:
     response_length: int = 0
     response_sha256: str | None = None
     response_summary: str = ""
+    response: str | None = None
     evidence: str = ""
     error: str | None = None
     request: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def render_raw_response(
+    status_code: int,
+    headers: dict[str, str],
+    body: str,
+) -> str:
+    """Render the observed HTTP response without changing its content."""
+    try:
+        reason = HTTPStatus(status_code).phrase
+    except ValueError:
+        reason = ""
+    status_line = f"HTTP/1.1 {status_code}{f' {reason}' if reason else ''}"
+    header_lines = [f"{name}: {value}" for name, value in headers.items()]
+    return "\r\n".join([status_line, *header_lines, "", body])
 
 
 @dataclass(slots=True)

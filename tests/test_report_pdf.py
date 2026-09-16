@@ -86,6 +86,30 @@ def test_generate_report_pdf_includes_burp_request(tmp_path: Path) -> None:
     assert "POST /login HTTP/1.1" in text
 
 
+def test_generate_report_pdf_separates_http_materials_and_attack_chain(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    vulnerabilities_path = run_dir / "vulnerabilities.json"
+    vulnerabilities = json.loads(vulnerabilities_path.read_text(encoding="utf-8"))
+    vulnerabilities[0].update(
+        {
+            "http_request": "GET /shell HTTP/1.1\r\nHost: example.com\r\n\r\n",
+            "http_response": "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n",
+            "attack_chain": [
+                {"type": "entry_point", "title": "Browser entry", "route": "GET /"},
+            ],
+        }
+    )
+    vulnerabilities_path.write_text(json.dumps(vulnerabilities), encoding="utf-8")
+
+    text = _pdf_text(generate_report_pdf(run_dir))
+
+    assert "HTTP REQUEST" in text
+    assert "GET /shell HTTP/1.1" in text
+    assert "HTTP RESPONSE" in text
+    assert "403 Forbidden" in text
+    assert "Browser entry" in text
+
+
 def test_generate_password_is_long_and_random() -> None:
     first = generate_password()
     second = generate_password()

@@ -96,8 +96,10 @@ export interface CVSSBreakdown {
 }
 
 export interface AttackChainNode {
+  [key: string]: unknown;
   type?: string;
   kind?: string;
+  title?: string;
   label?: string;
   name?: string;
   endpoint?: string;
@@ -113,6 +115,35 @@ export interface AttackChainNode {
   evidence?: string;
   hypothesis?: string;
   http_exchange_ids?: string[];
+  source?: string;
+  child_apps_source?: string;
+  app_manifest_source?: string;
+  manifest_source?: string;
+  route?: string;
+  parameters?: string | string[];
+  framework?: string;
+  child_apps?: Record<string, unknown>[];
+  fallback?: string | Record<string, unknown>;
+  redirect_chain?: string | string[];
+  sensitive_route?: string;
+  route_declaration_source?: string;
+  dynamic_load_source?: string;
+  chunks?: Record<string, unknown>[];
+  sensitive_function?: string;
+  function_definition_source?: string;
+  parameter_source?: string;
+  encoding?: string;
+  backend_api?: string;
+  authentication?: string;
+  parameters_detail?: Record<string, unknown>[];
+  comparison_tests?: Record<string, unknown>[];
+  variants?: string | string[];
+  conclusion?: string;
+  exclusions?: string | string[];
+  attempt?: string;
+  response_features?: string;
+  block_reason?: string;
+  round_result?: string;
 }
 
 export interface Vulnerability {
@@ -136,6 +167,8 @@ export interface Vulnerability {
   poc_description: string | null;
   poc_script_code: string | null;
   burp_request: string | null;
+  http_request: string | null;
+  http_response: string | null;
   code_diff: string | null;
   code_file: string | null;
   code_before: string | null;

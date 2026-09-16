@@ -362,6 +362,8 @@ _UPDATE_TEXT_FIELDS = (
     "poc_description",
     "poc_script_code",
     "burp_request",
+    "http_request",
+    "http_response",
     "remediation_steps",
     "evidence",
     "assumptions",
@@ -376,7 +378,7 @@ _UPDATE_TEXT_FIELDS = (
 )
 
 
-def _collect_update_changes(  # noqa: PLR0912
+def _collect_update_changes(  # noqa: PLR0912, PLR0915
     fields: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
     """Validate the fields a revision replaces and return them with any errors."""
@@ -385,7 +387,7 @@ def _collect_update_changes(  # noqa: PLR0912
 
     for name in _UPDATE_TEXT_FIELDS:
         raw_value = fields.get(name)
-        if name == "burp_request":
+        if name in {"burp_request", "http_request", "http_response"}:
             value = (
                 raw_value
                 if isinstance(raw_value, str) and raw_value.strip() and not is_nullish(raw_value)
@@ -723,6 +725,8 @@ async def _do_create(  # noqa: PLR0912
     agent_name: str | None = None,
     attack_chain: list[dict[str, Any] | str] | None = None,
     burp_request: str | None = None,
+    http_request: str | None = None,
+    http_response: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
         {
@@ -812,6 +816,8 @@ async def _do_create(  # noqa: PLR0912
             "poc_description": poc_description,
             "poc_script_code": poc_script_code,
             "burp_request": burp_request,
+            "http_request": http_request,
+            "http_response": http_response,
             "remediation_steps": remediation_steps,
             "evidence": evidence,
             "assumptions": assumptions,
@@ -926,6 +932,8 @@ async def create_vulnerability_report(
     fix_pr_body: str | None = None,
     attack_chain: list[dict[str, Any] | str] | None = None,
     burp_request: str | None = None,
+    http_request: str | None = None,
+    http_response: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -994,8 +1002,10 @@ async def create_vulnerability_report(
     - No internal/system details: never mention paths like
       ``/workspace``, internal tools, agents, sandboxes, models, system
       prompts, internal errors / stack traces, or tester environment.
-      Never leak internal identifiers (proxy request IDs, internal
-      report IDs) into any field.
+      Internal report IDs remain forbidden. Verified proxy request IDs are
+      allowed only as evidence references in structured ``attack_chain``
+      fields, formatted as ``证据: req <id>``, and in
+      ``http_exchange_ids``. Do not copy them into general narrative text.
     - **Language**: unless the user explicitly requests another
       language, every customer-facing narrative field must be written in
       Simplified Chinese. Keep literal technical identifiers unchanged,
@@ -1015,6 +1025,12 @@ async def create_vulnerability_report(
       code goes in ``poc_script_code``); ``burp_request`` is the raw HTTP
       request only, without Markdown fences; ``remediation_steps`` is prose
       only — NO code/diffs (code fixes go in ``code_locations``).
+    - HTTP evidence: ``http_request`` and ``http_response`` are separate raw
+      HTTP materials. Keep each in its own field; do not concatenate them into
+      ``evidence`` or another combined block. Preserve headers, cookies,
+      tokens, and bodies exactly as observed; report rendering does not redact
+      these fields. ``burp_request`` remains supported as the request-only
+      Burp Repeater field.
     - **PoC replay**: for Python HTTP PoCs, check whether the optional Burp
       listener at ``http://127.0.0.1:8080`` is available before sending. Use a
       ``requests.Session`` (or equivalent) with proxy environment variables
@@ -1153,6 +1169,13 @@ async def create_vulnerability_report(
             headers, and body exactly as replayed (retrieve it from the
             proving exchange with ``view_request``); do not wrap it in a
             Markdown code fence. Omit for non-HTTP findings.
+        http_request: Complete raw HTTP request for the report's standalone
+            Request evidence block. Keep it separate from ``http_response``
+            and preserve it byte-for-byte. Omit when ``burp_request`` already
+            carries the same request.
+        http_response: Complete raw HTTP response for the report's standalone
+            Response evidence block. Keep it separate from ``http_request``;
+            do not redact response headers, cookies, tokens, or body content.
         remediation_steps: Specific, actionable fix (prose, no code).
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
@@ -1195,7 +1218,9 @@ async def create_vulnerability_report(
         http_exchange_ids: Proxy request IDs that prove this finding. Copy
             them from ``list_requests`` or ``view_request``. Include the
             relevant control and exploit exchanges; omit this field only for
-            findings without captured HTTP evidence. Never invent IDs.
+            findings without captured HTTP evidence. Never invent IDs. When
+            using structured ``attack_chain``, cite a verified ID only as
+            ``证据: req <id>``.
 
             **How ``fix_before`` / ``fix_after`` work**: they're used as
             literal GitHub/GitLab PR suggestion blocks. When a reviewer
@@ -1299,6 +1324,13 @@ async def create_vulnerability_report(
             black-box findings.
         attack_chain: Ordered attack-path nodes. Optional for a single-step
             finding; use it when the finding depends on a request sequence.
+            For a front-end or micro-frontend chain, use the structured node
+            types ``entry_point``, ``trust_boundary``, ``input_tampering``,
+            ``aggregation_point``, ``verification``, and ``blocked``. Use
+            ``source``, ``route``, ``parameters``, ``evidence``, ``framework``,
+            ``child_apps``, ``chunks``, ``comparison_tests``, and the
+            stage-specific fields shown by the report renderer. Missing
+            verification or blocking material is rendered as ``待补充``.
     Example (abbreviated — mirror this structure)::
 
         title: "Reflected XSS in /search q parameter"
@@ -1385,6 +1417,8 @@ async def create_vulnerability_report(
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
         attack_chain=attack_chain,
+        http_request=http_request,
+        http_response=http_response,
         agent_id=agent_id,
         agent_name=agent_name,
     )
@@ -1404,6 +1438,8 @@ async def update_vulnerability_report(
     poc_description: str | None = None,
     poc_script_code: str | None = None,
     burp_request: str | None = None,
+    http_request: str | None = None,
+    http_response: str | None = None,
     remediation_steps: str | None = None,
     evidence: str | None = None,
     assumptions: str | None = None,
@@ -1479,6 +1515,11 @@ async def update_vulnerability_report(
         poc_script_code: Replacement exploit script or payload.
         burp_request: Replacement raw HTTP request for Burp Repeater,
             without Markdown fences. Omit for non-HTTP findings.
+        http_request: Replacement raw HTTP request for the standalone Request
+            evidence block. Keep it separate from ``http_response``.
+        http_response: Replacement raw HTTP response for the standalone
+            Response evidence block. Preserve the complete response without
+            redaction.
         remediation_steps: Replacement remediation prose (no code).
         evidence: Replacement evidence.
         assumptions: Replacement exploitability prerequisites.
@@ -1529,6 +1570,8 @@ async def update_vulnerability_report(
             "poc_description": poc_description,
             "poc_script_code": poc_script_code,
             "burp_request": burp_request,
+            "http_request": http_request,
+            "http_response": http_response,
             "remediation_steps": remediation_steps,
             "evidence": evidence,
             "assumptions": assumptions,

@@ -249,8 +249,373 @@ def _attack_chain_nodes(report: dict[str, Any]) -> list[tuple[str, str, str]]:
     return nodes
 
 
+_CHAIN_STAGE_LABELS = {
+    "entry_point": "入口点",
+    "entry": "入口点",
+    "入口点": "入口点",
+    "trust_boundary": "信任边界",
+    "信任边界": "信任边界",
+    "input_tampering": "输入篡改",
+    "输入篡改": "输入篡改",
+    "aggregation_point": "汇聚点",
+    "aggregation": "汇聚点",
+    "sink": "汇聚点",
+    "汇聚点": "汇聚点",
+    "verification": "验证确认",
+    "validation": "验证确认",
+    "verification_confirmation": "验证确认",
+    "验证确认": "验证确认",
+    "blocked": "阻断点",
+    "blocking_point": "阻断点",
+    "阻断点": "阻断点",
+}
+_CHAIN_STAGE_ORDER = ("入口点", "信任边界", "输入篡改", "汇聚点", "验证确认", "阻断点")
+_STRUCTURED_CHAIN_KEYS = frozenset(
+    {
+        "source",
+        "route",
+        "framework",
+        "child_apps",
+        "fallback",
+        "redirect_chain",
+        "chunks",
+        "sensitive_route",
+        "sensitive_function",
+        "backend_api",
+        "comparison_tests",
+        "attempt",
+        "block_reason",
+    }
+)
+
+
+def _chain_stage(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return _CHAIN_STAGE_LABELS.get(normalized)
+
+
+def _has_structured_attack_chain(raw: Any) -> bool:
+    if not isinstance(raw, list):
+        return False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if _chain_stage(item.get("type") or item.get("kind")):
+            return True
+        if _STRUCTURED_CHAIN_KEYS.intersection(item):
+            return True
+    return False
+
+
+def _chain_value(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = item.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str | list | dict) and not value:
+            continue
+        return value
+    return None
+
+
+def _chain_text(value: Any, *, separator: str = " / ") -> str:
+    if isinstance(value, list | tuple):
+        return separator.join(
+            _chain_text(item, separator=separator) for item in value if item is not None
+        )
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    return str(value).strip()
+
+
+def _append_chain_field(lines: list[str], label: str, value: Any) -> None:
+    if value is None:
+        return
+    text = _chain_text(value)
+    if not text:
+        return
+    if "\n" not in text:
+        lines.append(f" {label}: {text}")
+        return
+    lines.append(f" {label}:")
+    lines.extend(f"   {line}" for line in text.splitlines())
+
+
+def _append_chain_tests(lines: list[str], value: Any) -> None:
+    if not isinstance(value, list) or not value:
+        return
+    lines.append(" 对照测试:")
+    for test in value:
+        if isinstance(test, str):
+            lines.append(f"   - {test}")
+            continue
+        if not isinstance(test, dict):
+            continue
+        kind = _chain_text(_chain_value(test, "kind", "type", "label", "name")) or "测试"
+        parameter = _chain_text(_chain_value(test, "parameter", "field", "param"))
+        value_text = _chain_text(_chain_value(test, "value", "input", "payload"))
+        result = _chain_text(_chain_value(test, "result", "response", "observed", "outcome"))
+        evidence = _chain_text(_chain_value(test, "evidence", "evidence_ref", "request_id"))
+        subject = " ".join(part for part in (parameter, "=", value_text) if part)
+        detail = f"{kind} {subject}".strip()
+        if result:
+            detail += f" → {result}"
+        if evidence:
+            detail += f"  证据: {evidence}"
+        lines.append(f"   - {detail}")
+
+
+def _append_chain_items(
+    lines: list[str],
+    value: Any,
+    *,
+    fallback: bool = False,
+    has_following: bool = False,
+) -> None:
+    if not isinstance(value, list) or not value:
+        return
+    for index, child in enumerate(value):
+        if isinstance(child, str):
+            path = child.strip()
+            function = ""
+            source = ""
+        elif isinstance(child, dict):
+            path = _chain_text(_chain_value(child, "path", "prefix", "route", "name", "id"))
+            function = _chain_text(
+                _chain_value(child, "function", "feature", "description", "label")
+            )
+            source = _chain_text(_chain_value(child, "source", "code_source", "location"))
+        else:
+            continue
+        if not path and not function:
+            continue
+        connector = "└──" if index == len(value) - 1 and not has_following else "├──"
+        if fallback:
+            connector = "└──"
+        detail = "   ".join(part for part in (path, function) if part)
+        if source:
+            detail += f"   来源: {source}"
+        lines.append(f"   {connector} {detail}")
+
+
+def _append_chain_chunks(lines: list[str], value: Any) -> None:
+    if not isinstance(value, list) or not value:
+        return
+    for index, chunk in enumerate(value):
+        if isinstance(chunk, str):
+            chunk_id, filename, source = chunk, "", ""
+        elif isinstance(chunk, dict):
+            chunk_id = _chain_text(_chain_value(chunk, "id", "chunk_id", "name"))
+            filename = _chain_text(_chain_value(chunk, "file", "filename", "chunk_file", "path"))
+            source = _chain_text(_chain_value(chunk, "source", "location", "code_source"))
+        else:
+            continue
+        if not chunk_id and not filename:
+            continue
+        connector = "└──" if index == len(value) - 1 else "├──"
+        target = " → ".join(part for part in (chunk_id, filename) if part)
+        if source:
+            target += f"   来源: {source}"
+        lines.append(f"   {connector} {target}")
+
+
+def _chain_evidence(item: dict[str, Any]) -> Any:
+    evidence = _chain_value(item, "evidence", "evidence_ref")
+    if evidence is not None:
+        return evidence
+    request_ids = item.get("http_exchange_ids")
+    if isinstance(request_ids, list):
+        return " / ".join(f"req {request_id}" for request_id in request_ids)
+    if isinstance(request_ids, str) and request_ids.strip():
+        return f"req {request_ids.strip()}"
+    return None
+
+
+def _structured_attack_chain(  # noqa: PLR0912, PLR0915
+    report: dict[str, Any],
+) -> list[str]:
+    raw = report.get("attack_chain")
+    if not isinstance(raw, list):
+        return []
+
+    grouped: dict[str, list[dict[str, Any]]] = {stage: [] for stage in _CHAIN_STAGE_ORDER}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        stage = _chain_stage(item.get("type") or item.get("kind"))
+        if stage:
+            grouped[stage].append(item)
+
+    lines = ["## 攻击链路\n", "```text", "攻击链路视图"]
+    for stage_index, stage in enumerate(_CHAIN_STAGE_ORDER):
+        is_placeholder = not grouped[stage]
+        stage_items = grouped[stage] or [{"label": "待补充"}]
+        for item_index, item in enumerate(stage_items):
+            if stage_index or item_index:
+                lines.extend(["    |", "    v"])
+            title = _chain_text(
+                _chain_value(item, "title", "label", "name", "step", "action")
+            ) or "待补充"
+            lines.append(f"[{stage}] {title}")
+
+            _append_chain_field(lines, "来源", _chain_value(item, "source", "origin"))
+            _append_chain_field(
+                lines,
+                "接口/路由",
+                _chain_value(item, "route", "interface", "endpoint", "path"),
+            )
+            parameters = _chain_value(item, "parameters", "parameter", "params")
+            if stage != "汇聚点" or not isinstance(parameters, list):
+                _append_chain_field(lines, "参数", parameters)
+
+            if stage == "信任边界":
+                _append_chain_field(lines, "框架", _chain_value(item, "framework"))
+                _append_chain_field(
+                    lines,
+                    "子应用清单来源",
+                    _chain_value(
+                        item,
+                        "child_apps_source",
+                        "app_manifest_source",
+                        "manifest_source",
+                    ),
+                )
+                fallback = _chain_value(item, "fallback", "catch_all", "fallback_route")
+                child_apps = _chain_value(item, "child_apps", "children")
+                _append_chain_items(lines, child_apps, has_following=bool(fallback))
+                if isinstance(fallback, dict):
+                    _append_chain_items(lines, [fallback], fallback=True)
+                elif fallback:
+                    lines.append(f"   └── {_chain_text(fallback)}")
+
+            if stage == "输入篡改":
+                redirect_chain = _chain_value(item, "redirect_chain", "jump_chain")
+                _append_chain_field(lines, "跳转链", redirect_chain)
+                _append_chain_field(
+                    lines,
+                    "敏感路由",
+                    _chain_value(item, "sensitive_route", "sensitive_routes", "sensitive_endpoint"),
+                )
+                _append_chain_field(
+                    lines,
+                    "路由声明来源",
+                    _chain_value(item, "route_declaration_source", "route_source"),
+                )
+                _append_chain_field(
+                    lines,
+                    "动态加载清单来源",
+                    _chain_value(item, "dynamic_load_source", "dynamic_load_manifest_source"),
+                )
+                _append_chain_chunks(lines, _chain_value(item, "chunks", "dynamic_chunks"))
+                _append_chain_field(lines, "敏感函数", _chain_value(item, "sensitive_function"))
+                _append_chain_field(
+                    lines,
+                    "函数定义来源",
+                    _chain_value(item, "function_definition_source", "function_source"),
+                )
+                _append_chain_field(lines, "参数来源", _chain_value(item, "parameter_source"))
+                _append_chain_field(lines, "编码/转义", _chain_value(item, "encoding", "escaping"))
+
+            if stage == "汇聚点":
+                _append_chain_field(lines, "后端接口", _chain_value(item, "backend_api", "api"))
+                _append_chain_field(lines, "方法", _chain_value(item, "method"))
+                params = _chain_value(
+                    item,
+                    "parameters_detail",
+                    "parameter_details",
+                    "params_detail",
+                    "parameters",
+                )
+                if isinstance(params, list):
+                    lines.append(" 参数:")
+                    for param in params:
+                        if isinstance(param, str):
+                            lines.append(f"   - {param}")
+                        elif isinstance(param, dict):
+                            name = _chain_text(_chain_value(param, "name", "parameter", "key"))
+                            position = _chain_text(_chain_value(param, "position", "in"))
+                            encoding = _chain_text(_chain_value(param, "encoding", "format"))
+                            source = _chain_text(_chain_value(param, "source", "location"))
+                            parts = [name]
+                            if position:
+                                parts.append(f"位置: {position}")
+                            if encoding:
+                                parts.append(f"编码: {encoding}")
+                            if source:
+                                parts.append(f"来源: {source}")
+                            lines.append(f"   - {'  '.join(part for part in parts if part)}")
+                _append_chain_field(lines, "认证", _chain_value(item, "authentication", "auth"))
+                _append_chain_field(lines, "说明", _chain_value(item, "description", "detail"))
+
+            if stage == "验证确认":
+                _append_chain_tests(
+                    lines,
+                    _chain_value(
+                        item,
+                        "comparison_tests",
+                        "comparison",
+                        "comparisons",
+                        "tests",
+                        "control_tests",
+                    ),
+                )
+                _append_chain_field(lines, "变体", _chain_value(item, "variants", "variant"))
+                _append_chain_field(lines, "结论", _chain_value(item, "conclusion"))
+                _append_chain_field(lines, "排除项", _chain_value(item, "exclusions", "excluded"))
+                if is_placeholder:
+                    lines.extend(
+                        [
+                            " 对照测试: 待补充",
+                            " 变体: 待补充",
+                            " 结论: 待补充",
+                            " 排除项: 待补充",
+                        ]
+                    )
+
+            if stage == "阻断点":
+                _append_chain_field(
+                    lines,
+                    "尝试手法",
+                    _chain_value(item, "attempt", "technique", "payload"),
+                )
+                _append_chain_field(
+                    lines,
+                    "响应特征",
+                    _chain_value(item, "response_features", "response_feature", "response"),
+                )
+                _append_chain_field(
+                    lines,
+                    "阻断原因",
+                    _chain_value(item, "block_reason", "blocking_reason", "reason"),
+                )
+                _append_chain_field(lines, "本轮结果", _chain_value(item, "round_result", "result"))
+                if is_placeholder:
+                    lines.extend(
+                        [
+                            " 尝试手法: 待补充",
+                            " 响应特征: 待补充",
+                            " 阻断原因: 待补充",
+                            " 本轮结果: 待补充",
+                        ]
+                    )
+
+            # Keep legacy agent-authored observations visible when the new
+            # structured fields were not populated for a node.
+            _append_chain_field(
+                lines,
+                "说明",
+                _chain_value(item, "observation", "observed", "observed_result", "hypothesis"),
+            )
+            _append_chain_field(lines, "证据", _chain_evidence(item))
+
+    lines.extend(["```", ""])
+    return lines
+
+
 def render_attack_chain(report: dict[str, Any]) -> list[str]:
     """Render a Burp URL-view-like vertical path, never as a markdown table."""
+    if _has_structured_attack_chain(report.get("attack_chain")):
+        return _structured_attack_chain(report)
     nodes = _attack_chain_nodes(report)
     if not nodes:
         return []
@@ -262,6 +627,69 @@ def render_attack_chain(report: dict[str, Any]) -> list[str]:
         if detail:
             lines.append(f"  {detail}")
     lines.extend(["```", ""])
+    return lines
+
+
+def _http_materials(report: dict[str, Any]) -> list[tuple[str | None, str | None, str | None]]:
+    """Return raw HTTP request/response pairs without combining or redacting them."""
+    materials: list[tuple[str | None, str | None, str | None]] = []
+    exchanges = report.get("http_exchanges")
+    if isinstance(exchanges, list):
+        for exchange in exchanges:
+            if not isinstance(exchange, dict):
+                continue
+            request = exchange.get("request")
+            response = exchange.get("response")
+            if not isinstance(request, str):
+                request = None
+            if not isinstance(response, str):
+                response = None
+            request_id = exchange.get("request_id") or exchange.get("evidence")
+            materials.append(
+                (str(request_id) if request_id is not None else None, request, response)
+            )
+
+    explicit_request = report.get("http_request") or report.get("request")
+    explicit_response = (
+        report.get("http_response")
+        or report.get("burp_response")
+        or report.get("response")
+    )
+    # ``burp_request`` is intentionally left on the legacy request-only
+    # renderer. It becomes the request half of this section only when a
+    # response (or an explicit HTTP request field) is also present.
+    request = explicit_request
+    if not request and explicit_response:
+        request = report.get("burp_request")
+    response = explicit_response
+    if isinstance(request, str) or isinstance(response, str):
+        materials.insert(
+            0,
+            (
+                None,
+                request if isinstance(request, str) else None,
+                response if isinstance(response, str) else None,
+            ),
+        )
+    return [item for item in materials if item[1] or item[2]]
+
+
+def render_http_materials(report: dict[str, Any]) -> list[str]:
+    """Render request and response as independent, lossless code blocks."""
+    materials = _http_materials(report)
+    if not materials:
+        return []
+    lines = ["## HTTP 证据\n"]
+    for index, (request_id, request, response) in enumerate(materials, 1):
+        if len(materials) > 1:
+            title = f"### Exchange {request_id or index}"
+            lines.extend([title, ""])
+        if request:
+            fence = safe_fence(request)
+            lines.extend(["### Request", "", f"{fence}http", request, fence, ""])
+        if response:
+            fence = safe_fence(response)
+            lines.extend(["### Response", "", f"{fence}http", response, fence, ""])
     return lines
 
 
@@ -367,8 +795,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append(fence)
             lines.append("")
 
-    burp_request = report.get("burp_request")
-    if isinstance(burp_request, str) and burp_request.strip():
+    http_materials = render_http_materials(report)
+    if http_materials:
+        lines.extend(http_materials)
+    elif isinstance(report.get("burp_request"), str) and report["burp_request"].strip():
+        burp_request = report["burp_request"]
         request = burp_request
         fence = safe_fence(request)
         lines.append("## Burp 复现数据包\n")
