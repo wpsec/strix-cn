@@ -42,7 +42,6 @@ from strix.interface.utils import (
     build_final_stats_text,
 )
 from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
-from strix.runtime import session_manager
 from strix.telemetry import posthog, report_error, scarf, set_scan_phase
 from strix.telemetry.logging import configure_dependency_logging
 
@@ -466,9 +465,8 @@ def main() -> None:
 
     if args.verify:
         # Verification requests run inside the same sandbox runtime as normal
-        # scans. Only reap stale sessions here; defer all Docker startup until
-        # the user has approved the generated verification plan.
-        session_manager.reap_stale_docker_sessions()
+        # scans. Defer all Docker startup until the user has approved the
+        # generated verification plan.
         from strix.interface.verification_cli import run_verification_cli
 
         sys.exit(asyncio.run(run_verification_cli(args)))
@@ -483,7 +481,6 @@ def main() -> None:
     pull_docker_image()
     validate_environment()
     wait_for_import_warmup()
-    session_manager.reap_stale_docker_sessions()
 
     if args.non_interactive:
         _bootstrap_scan(args)

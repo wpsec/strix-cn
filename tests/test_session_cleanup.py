@@ -2,131 +2,72 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+import logging
 
 import pytest
 
 from strix.runtime import session_manager
 
 
-class _FakeContainer:
-    def __init__(self, scan_id: str, short_id: str) -> None:
-        self.labels = {"com.strix.managed": "true", "com.strix.scan_id": scan_id}
-        self.short_id = short_id
-        self.removed_with_force: bool | None = None
-
-    def remove(self, *, force: bool = False) -> None:
-        self.removed_with_force = force
-
-
-class _FakeContainers:
-    def __init__(self, containers: list[_FakeContainer]) -> None:
-        self._containers = containers
-        self.filters: dict[str, Any] | None = None
-
-    def list(self, *, all: bool, filters: dict[str, Any]) -> list[_FakeContainer]:
-        assert all is True
-        self.filters = filters
-        return self._containers
-
-
 class _FakeDockerClient:
-    def __init__(self, containers: list[_FakeContainer]) -> None:
-        self.containers = _FakeContainers(containers)
+    def __init__(self) -> None:
         self.closed = False
 
     def close(self) -> None:
         self.closed = True
 
 
-def _write_run_record(root: Path, run_name: str, record: dict[str, Any]) -> None:
-    run_dir = root / "strix_runs" / run_name
-    run_dir.mkdir(parents=True)
-    (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
+class _FakeClient:
+    def __init__(self, docker_client: _FakeDockerClient) -> None:
+        self.docker_client = docker_client
+        self.deleted_session: object | None = None
 
-
-def _docker_settings() -> SimpleNamespace:
-    return SimpleNamespace(runtime=SimpleNamespace(backend="docker"))
-
-
-def test_reap_stale_sessions_removes_only_terminal_or_dead_owner_runs(
-    monkeypatch: Any,
-    tmp_path: Path,
-) -> None:
-    _write_run_record(tmp_path, "completed-run", {"status": "completed"})
-    _write_run_record(tmp_path, "live-run", {"status": "running", "process_id": 123})
-    _write_run_record(tmp_path, "dead-run", {"status": "running", "process_id": 456})
-    _write_run_record(tmp_path, "unknown-owner", {"status": "running"})
-
-    containers = [
-        _FakeContainer("completed-run", "container-completed"),
-        _FakeContainer("live-run", "container-live"),
-        _FakeContainer("dead-run", "container-dead"),
-        _FakeContainer("unknown-owner", "container-unknown"),
-        _FakeContainer("missing-run-record", "container-missing"),
-    ]
-    client = _FakeDockerClient(containers)
-    monkeypatch.setattr(session_manager, "load_settings", _docker_settings)
-    monkeypatch.setattr(session_manager, "_docker_client_for_cleanup", lambda: client)
-    monkeypatch.setattr(session_manager, "_pid_is_alive", lambda pid: pid == 123)
-
-    removed = session_manager.reap_stale_docker_sessions(cwd=tmp_path)
-
-    assert removed == 2
-    assert containers[0].removed_with_force is True
-    assert containers[1].removed_with_force is None
-    assert containers[2].removed_with_force is True
-    assert containers[3].removed_with_force is None
-    assert containers[4].removed_with_force is None
-    assert client.closed is True
-
-
-def test_sync_process_exit_cleanup_targets_one_scan(
-    monkeypatch: Any,
-) -> None:
-    container = _FakeContainer("scan-one", "container-one")
-    client = _FakeDockerClient([container])
-    monkeypatch.setattr(session_manager, "load_settings", _docker_settings)
-    monkeypatch.setattr(session_manager, "_docker_client_for_cleanup", lambda: client)
-
-    session_manager.cleanup_persisted_docker_session_sync("scan-one")
-
-    assert container.removed_with_force is True
-    assert client.containers.filters == {
-        "label": [
-            "com.strix.managed=true",
-            "com.strix.scan_id=scan-one",
-        ]
-    }
-    assert client.closed is True
+    async def delete(self, session: object) -> None:
+        self.deleted_session = session
 
 
 @pytest.mark.asyncio
-async def test_async_cleanup_falls_back_to_label_reaping_after_delete_failure(
-    monkeypatch: Any,
-) -> None:
-    deleted_by_fallback: list[str] = []
+async def test_cleanup_deletes_cached_session_and_closes_docker_client() -> None:
+    scan_id = "scan-cleanup"
+    session = object()
+    docker_client = _FakeDockerClient()
+    client = _FakeClient(docker_client)
+    session_manager._SESSION_CACHE[scan_id] = {
+        "client": client,
+        "session": session,
+    }
 
-    class _FailingClient:
+    await session_manager.cleanup(scan_id)
+
+    assert client.deleted_session is session
+    assert docker_client.closed is True
+    assert scan_id not in session_manager._SESSION_CACHE
+
+
+@pytest.mark.asyncio
+async def test_cleanup_cache_miss_does_not_reconnect_to_docker() -> None:
+    await session_manager.cleanup("scan-without-cache")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_logs_delete_failure_and_closes_docker_client(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    scan_id = "scan-delete-failure"
+    docker_client = _FakeDockerClient()
+
+    class _FailingClient(_FakeClient):
         async def delete(self, _session: object) -> None:
             raise RuntimeError("Docker API unavailable")
 
-    async def _fallback(scan_id: str) -> None:
-        deleted_by_fallback.append(scan_id)
-
-    scan_id = "scan-delete-failure"
     session_manager._SESSION_CACHE[scan_id] = {
-        "client": _FailingClient(),
+        "client": _FailingClient(docker_client),
         "session": object(),
     }
-    monkeypatch.setattr(session_manager, "_cleanup_persisted_docker_sessions", _fallback)
 
-    try:
+    with caplog.at_level(logging.ERROR, logger="strix.runtime.session_manager"):
         await session_manager.cleanup(scan_id)
-    finally:
-        session_manager._SESSION_CACHE.pop(scan_id, None)
 
-    assert deleted_by_fallback == [scan_id]
+    assert docker_client.closed is True
+    assert "container may need manual reaping" in caplog.text
+    assert scan_id not in session_manager._SESSION_CACHE

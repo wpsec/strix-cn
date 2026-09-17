@@ -263,56 +263,6 @@ async def test_create_or_reuse_removes_staging_when_preflight_fails(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_reclaims_persisted_labeled_container(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    scan_id = "scan-persisted"
-    captured: dict[str, object] = {}
-
-    class _Container:
-        short_id = "container-1"
-
-        def remove(self, *, force: bool) -> None:
-            captured["force"] = force
-
-    class _Containers:
-        def list(self, *, all: bool, filters: dict[str, object]) -> list[_Container]:
-            captured["all"] = all
-            captured["filters"] = filters
-            return [_Container()]
-
-    class _DockerClient:
-        containers = _Containers()
-
-        def close(self) -> None:
-            captured["closed"] = True
-
-    monkeypatch.setattr(
-        session_manager,
-        "load_settings",
-        lambda: SimpleNamespace(runtime=SimpleNamespace(backend="docker")),
-    )
-    monkeypatch.setattr(
-        session_manager,
-        "_docker_client_for_cleanup",
-        lambda: _DockerClient(),
-    )
-    session_manager._SESSION_CACHE.pop(scan_id, None)
-
-    await session_manager.cleanup(scan_id)
-
-    assert captured["all"] is True
-    assert captured["force"] is True
-    assert captured["closed"] is True
-    assert captured["filters"] == {
-        "label": [
-            "com.strix.managed=true",
-            "com.strix.scan_id=scan-persisted",
-        ]
-    }
-
-
-@pytest.mark.asyncio
 async def test_create_or_reuse_deletes_session_when_endpoint_resolution_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
