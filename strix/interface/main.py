@@ -318,6 +318,16 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
         resume_text.append(f"strix --resume {args.run_name}", style="#22c55e")
         panel_parts.extend(["\n", resume_text])
 
+        token_resume_text = Text()
+        token_resume_text.append("\n")
+        token_resume_text.append("追加 Token", style="dim")
+        token_resume_text.append("  ")
+        token_resume_text.append(
+            f"strix --resume {args.run_name} --token-limit 200M",
+            style="#22c55e",
+        )
+        panel_parts.extend(["\n", token_resume_text])
+
     panel_content = Text.assemble(*panel_parts)
 
     border_style = "#22c55e" if scan_completed else "#eab308"

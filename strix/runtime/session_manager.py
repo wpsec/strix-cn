@@ -655,6 +655,8 @@ async def create_or_reuse(
             if burp_port
             else None,
         }
+        if backend_name == "docker":
+            backend_kwargs["scan_id"] = scan_id
         client, session = await backend(
             **backend_kwargs,
         )

@@ -340,7 +340,8 @@ async def test_create_or_reuse_bootstraps_caido_with_host_bridge_proxy(
         async def delete(self, _session: object) -> None:
             self.deleted = True
 
-    async def _backend(**_kwargs: object) -> tuple[object, object]:
+    async def _backend(**kwargs: object) -> tuple[object, object]:
+        captured["scan_id"] = kwargs["scan_id"]
         return _FakeClient(), _FakeSession()
 
     class _FakeBridge:
@@ -402,6 +403,7 @@ async def test_create_or_reuse_bootstraps_caido_with_host_bridge_proxy(
         assert bundle["caido_ui_url"] == "http://127.0.0.1:52123"
         assert captured["host_url"] == "http://127.0.0.1:52123"
         assert captured["container_url"] == "http://127.0.0.1:48080"
+        assert captured["scan_id"] == scan_id
         assert captured["upstream_proxy"].host == "host.docker.internal"
         assert captured["upstream_proxy"].port == 18081
         assert captured["upstream_proxy"].is_tls is False

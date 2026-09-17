@@ -88,3 +88,5 @@ def test_display_completion_message_uses_chinese_labels_and_resume_hint(
     assert "查看" in plain
     assert "继续运行" in plain
     assert "strix --resume pentest_demo" in plain
+    assert "追加 Token" in plain
+    assert "strix --resume pentest_demo --token-limit 200M" in plain

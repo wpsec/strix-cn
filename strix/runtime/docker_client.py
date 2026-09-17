@@ -25,8 +25,10 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import uuid
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from agents.sandbox.errors import ExposedPortUnavailableError
 from agents.sandbox.manifest import Manifest
@@ -52,6 +54,31 @@ logger = logging.getLogger(__name__)
 
 
 _SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
+_CONTAINER_NAME_MAX_LENGTH = 63
+_CONTAINER_NAME_SESSION_SUFFIX_LENGTH = 8
+
+
+def _docker_container_name(
+    scan_id: str | None,
+    session_id: uuid.UUID | None,
+) -> str:
+    """Build a readable, unique Docker name without copying the target URL."""
+    raw_scan_id = str(scan_id or "scan").strip().lower()
+    parsed_scan_id = urlsplit(raw_scan_id)
+    if parsed_scan_id.hostname:
+        raw_scan_id = parsed_scan_id.hostname
+    else:
+        raw_scan_id = re.split(r"[?#]", raw_scan_id, maxsplit=1)[0]
+    scan_component = re.sub(r"[^a-z0-9_.-]+", "-", raw_scan_id).strip("-_.")
+    if not scan_component:
+        scan_component = "scan"
+
+    session_component = (session_id.hex if session_id is not None else uuid.uuid4().hex)[
+        :_CONTAINER_NAME_SESSION_SUFFIX_LENGTH
+    ]
+    reserved_length = len("strix--") + len(session_component)
+    scan_component = scan_component[: _CONTAINER_NAME_MAX_LENGTH - reserved_length].rstrip("-_.")
+    return f"strix-{scan_component or 'scan'}-{session_component}"
 
 
 def _sandbox_network() -> str | None:
@@ -177,6 +204,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] | None = None
     strix_exposed_port_bindings: dict[int, int | None] | None = None
+    strix_scan_id: str | None = None
 
     async def _create_container(
         self,
@@ -249,6 +277,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
         _apply_run_labels(create_kwargs)
+        create_kwargs["name"] = _docker_container_name(self.strix_scan_id, session_id)
 
         # Strix injection: local source trees, sorted shallowest-first so a
         # nested spec lands on top of the tree it covers.
@@ -266,7 +295,8 @@ class StrixDockerSandboxClient(DockerSandboxClient):
                 )
 
         logger.debug(
-            "Creating sandbox container: image=%s caps=%s exposed_ports=%s",
+            "Creating sandbox container: name=%s image=%s caps=%s exposed_ports=%s",
+            create_kwargs["name"],
             image,
             cap_add,
             list(exposed_ports),

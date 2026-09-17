@@ -19,6 +19,7 @@ SandboxBackend = Callable[..., Awaitable[tuple[Any, Any]]]
 
 async def _docker_backend(
     *,
+    scan_id: str | None = None,
     image: str,
     manifest: Manifest,
     exposed_ports: tuple[int, ...],
@@ -44,6 +45,7 @@ async def _docker_backend(
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
     client = StrixDockerSandboxClient(docker.from_env())
+    client.strix_scan_id = scan_id
     client.strix_bind_mounts = bind_mounts or []
     client.strix_exposed_port_bindings = exposed_port_bindings or {}
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
