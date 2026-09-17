@@ -1,8 +1,4 @@
-<!-- 这是一张图片，ocr 内容为： -->
-
-![](https://cdn.nlark.com/yuque/0/2026/png/27875807/1771932705094-c88426f2-74cc-4214-8f91-e3a4c8882279.png)
-
-# Strix CN
+# Strix-cn
 
 Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已合并上游 `v1.6.2`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
 
@@ -129,6 +125,18 @@ export STRIX_LLM="openai/your-compatible-model"
 export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="https://your-gateway.example/v1"
 
+# 可选 思考推理等级
+export STRIX_REASONING_EFFORT="high"
+
+# 支持的推理等级，根据你的模型而来，正常写high就行了
+比如 GPT的模型
+low 轻度
+medium	中
+high	高
+xhigh	高
+max	Ultra
+
+
 # 也可以将配置写入项目目录的 .env；已 export 的变量优先级更高
 # STRIX_LLM=openai/your-compatible-model
 # LLM_API_KEY=your-api-key
@@ -139,9 +147,6 @@ export LLM_EXTRA_HEADERS='{"X-Tenant":"acme"}'
 
 # 可选：受限网络或兼容网关流式不稳定时关闭 streaming
 export LLM_DISABLE_STREAMING="false"
-
-# 可选：推理强度
-export STRIX_REASONING_EFFORT="high"
 
 # 可选：启用实时 Web 搜索（二选一或同时配置）
 # export PERPLEXITY_API_KEY="your-perplexity-api-key"
