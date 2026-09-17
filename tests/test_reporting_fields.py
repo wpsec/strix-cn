@@ -17,6 +17,7 @@ from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
     _do_update,
+    _validate_attack_chain,
     create_dependency_report,
     create_vulnerability_report,
     update_vulnerability_report,
@@ -55,6 +56,41 @@ _DEP_CONTEXT_VECTOR = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
 _DEP_EVIDENCE = "src/render.ts:14 imports the package."
 
 _DEP_REASONING = "Only scripts/import.py reaches the sink, so the impact is availability only."
+
+
+def test_structured_entry_point_requires_reproducible_provenance() -> None:
+    errors = _validate_attack_chain(
+        [
+            {
+                "type": "entry_point",
+                "route": "POST /api/export",
+                "parameters": "format=csv",
+                "discovery_method": "多层 JS 提取",
+                "url_source": "index.html",
+                "parameter_source": "chunk.js:10",
+            }
+        ]
+    )
+
+    assert any("provenance_chain" in error for error in errors)
+
+
+def test_structured_entry_point_accepts_direct_request_provenance() -> None:
+    assert (
+        _validate_attack_chain(
+            [
+                {
+                    "type": "entry_point",
+                    "route": "POST /api/export",
+                    "parameters": "无",
+                    "discovery_method": "direct_request",
+                    "url_source": "直接访问目标",
+                    "parameter_source": "直接构造请求",
+                }
+            ]
+        )
+        == []
+    )
 
 
 @pytest.fixture

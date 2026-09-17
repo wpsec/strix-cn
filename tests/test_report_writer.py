@@ -278,7 +278,9 @@ def test_render_structured_attack_chain_uses_microfrontend_template() -> None:
                 {
                     "type": "entry_point",
                     "title": "浏览器入口",
-                    "source": "直接访问",
+                    "discovery_method": "direct_request",
+                    "url_source": "直接访问目标首页",
+                    "parameter_source": "直接构造 HTTP 请求",
                     "route": "GET /shell.html",
                     "parameters": "无",
                     "evidence": "req 1",
@@ -320,7 +322,12 @@ def test_render_structured_attack_chain_uses_microfrontend_template() -> None:
                     "backend_api": "POST /api/export",
                     "method": "POST",
                     "parameters_detail": [
-                        {"name": "format", "position": "body", "encoding": "明文", "source": "chunk-42.js:8"},
+                        {
+                            "name": "format",
+                            "position": "body",
+                            "encoding": "明文",
+                            "source": "chunk-42.js:8",
+                        },
                     ],
                     "auth": "无",
                     "description": "前端可达敏感能力，需后端鉴权/参数化校验兜底",
@@ -331,6 +338,11 @@ def test_render_structured_attack_chain_uses_microfrontend_template() -> None:
     )
 
     assert "[入口点] 浏览器入口" in md
+    assert " 接口来源方式: direct_request" in md
+    assert " URL/接口: GET /shell.html" in md
+    assert " 参数: 无" in md
+    assert " URL来源: 直接访问目标首页" in md
+    assert " 参数来源: 直接构造 HTTP 请求" in md
     assert "[信任边界] 主壳 → 微前端路由分发" in md
     assert "├── /orders/   订单功能   来源: /shell.js:10" in md
     assert "└── /fallback/   未独立部署，回落主壳 catch-all   来源: /shell.js:20" in md
@@ -340,6 +352,66 @@ def test_render_structured_attack_chain_uses_microfrontend_template() -> None:
     assert "[验证确认] 待补充" in md
     assert "[阻断点] 待补充" in md
     assert md.index(" 证据: req 1") < md.index(" 证据: req 2")
+
+
+def test_render_structured_entry_shows_multilayer_extraction_chain() -> None:
+    md = render_vulnerability_md(
+        _sample_report(
+            attack_chain=[
+                {
+                    "type": "entry_point",
+                    "title": "动态接口入口",
+                    "discovery_method": "js_extracted",
+                    "url_source": "index.html 中的 app.js",
+                    "parameter_source": "chunk-42.js:88",
+                    "route": "POST /api/export",
+                    "parameters": "format=csv",
+                    "provenance_chain": [
+                        {
+                            "from": "index.html",
+                            "action": "读取 script[src]",
+                            "to": "app.js",
+                            "evidence": "req 10",
+                        },
+                        {
+                            "from": "app.js",
+                            "action": "解析 dynamic import",
+                            "to": "chunk-42.js",
+                            "evidence": "req 11",
+                        },
+                        {
+                            "from": "chunk-42.js:88",
+                            "action": "读取请求定义",
+                            "to": "POST /api/export?format=csv",
+                            "evidence": "req 12",
+                        },
+                    ],
+                },
+            ],
+        ),
+    )
+
+    assert " 接口来源方式: js_extracted" in md
+    assert " 来源链路:" in md
+    assert "1. index.html --读取 script[src]--> app.js（来源: req 10）" in md
+    assert "2. app.js --解析 dynamic import--> chunk-42.js（来源: req 11）" in md
+    assert "3. chunk-42.js:88 --读取请求定义--> POST /api/export?format=csv（来源: req 12）" in md
+
+
+def test_render_structured_entry_marks_missing_provenance() -> None:
+    md = render_vulnerability_md(
+        _sample_report(
+            attack_chain=[
+                {"type": "entry_point", "title": "未说明来源的入口"},
+            ],
+        ),
+    )
+
+    assert " 接口来源方式: 待补充" in md
+    assert " URL/接口: 待补充" in md
+    assert " 参数: 待补充" in md
+    assert " URL来源: 待补充" in md
+    assert " 参数来源: 待补充" in md
 
 
 def test_render_http_request_and_response_as_separate_lossless_blocks() -> None:

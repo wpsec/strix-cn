@@ -273,6 +273,10 @@ _CHAIN_STAGE_ORDER = ("入口点", "信任边界", "输入篡改", "汇聚点", 
 _STRUCTURED_CHAIN_KEYS = frozenset(
     {
         "source",
+        "discovery_method",
+        "url_source",
+        "provenance_chain",
+        "extraction_chain",
         "route",
         "framework",
         "child_apps",
@@ -339,6 +343,54 @@ def _append_chain_field(lines: list[str], label: str, value: Any) -> None:
         return
     lines.append(f" {label}:")
     lines.extend(f"   {line}" for line in text.splitlines())
+
+
+def _append_chain_extraction(lines: list[str], value: Any) -> None:
+    """Render ordered interface-provenance hops without flattening them."""
+    if not value:
+        return
+    hops = value if isinstance(value, list) else [value]
+    lines.append(" 来源链路:")
+    for index, hop in enumerate(hops, 1):
+        if isinstance(hop, str):
+            text = " ".join(hop.split())
+        elif isinstance(hop, dict):
+            source = _chain_text(_chain_value(hop, "from", "source", "input"))
+            action = _chain_text(_chain_value(hop, "action", "operation", "extract"))
+            target = _chain_text(_chain_value(hop, "to", "target", "output"))
+            if source and action and target:
+                text = f"{source} --{action}--> {target}"
+            else:
+                text = _chain_text(hop)
+            evidence = _chain_text(
+                _chain_value(hop, "evidence", "evidence_ref", "source_ref", "location")
+            )
+            if evidence:
+                text += f"（来源: {evidence}）"
+        else:
+            continue
+        if text:
+            lines.append(f"   {index}. {text}")
+
+
+def _chain_discovery_method(item: dict[str, Any]) -> Any:
+    return _chain_value(
+        item,
+        "discovery_method",
+        "acquisition_method",
+        "entry_origin",
+        "entry_source_type",
+    )
+
+
+def _chain_extraction_chain(item: dict[str, Any]) -> Any:
+    return _chain_value(
+        item,
+        "provenance_chain",
+        "extraction_chain",
+        "source_chain",
+        "asset_chain",
+    )
 
 
 def _append_chain_tests(lines: list[str], value: Any) -> None:
@@ -453,20 +505,58 @@ def _structured_attack_chain(  # noqa: PLR0912, PLR0915
         for item_index, item in enumerate(stage_items):
             if stage_index or item_index:
                 lines.extend(["    |", "    v"])
-            title = _chain_text(
-                _chain_value(item, "title", "label", "name", "step", "action")
-            ) or "待补充"
+            title = (
+                _chain_text(_chain_value(item, "title", "label", "name", "step", "action"))
+                or "待补充"
+            )
             lines.append(f"[{stage}] {title}")
 
-            _append_chain_field(lines, "来源", _chain_value(item, "source", "origin"))
-            _append_chain_field(
-                lines,
-                "接口/路由",
-                _chain_value(item, "route", "interface", "endpoint", "path"),
-            )
             parameters = _chain_value(item, "parameters", "parameter", "params")
-            if stage != "汇聚点" or not isinstance(parameters, list):
-                _append_chain_field(lines, "参数", parameters)
+            route = _chain_value(item, "route", "interface", "endpoint", "path", "url")
+            if stage == "入口点":
+                # An entry is only reproducible when the report says how its
+                # URL and parameters were obtained. Keep missing provenance
+                # visible instead of silently presenting an inferred route.
+                _append_chain_field(
+                    lines,
+                    "接口来源方式",
+                    _chain_discovery_method(item) or "待补充",
+                )
+                _append_chain_field(lines, "URL/接口", route or "待补充")
+                _append_chain_field(lines, "参数", parameters or "待补充")
+                _append_chain_field(
+                    lines,
+                    "URL来源",
+                    _chain_value(item, "url_source")
+                    or _chain_value(item, "source", "origin")
+                    or "待补充",
+                )
+                _append_chain_field(
+                    lines,
+                    "参数来源",
+                    _chain_value(item, "parameter_source") or "待补充",
+                )
+                extraction_chain = _chain_extraction_chain(item)
+                if extraction_chain:
+                    _append_chain_extraction(lines, extraction_chain)
+                elif _chain_discovery_method(item) and any(
+                    marker in _chain_text(_chain_discovery_method(item)).lower()
+                    for marker in (
+                        "多层",
+                        "多跳",
+                        "链路",
+                        "multi_layer",
+                        "multi-hop",
+                        "multi_hop",
+                        "重定向链",
+                    )
+                ):
+                    _append_chain_field(lines, "来源链路", "待补充")
+            else:
+                _append_chain_field(lines, "来源", _chain_value(item, "source", "origin"))
+                _append_chain_field(lines, "接口/路由", route)
+                if stage != "汇聚点" or not isinstance(parameters, list):
+                    _append_chain_field(lines, "参数", parameters)
 
             if stage == "信任边界":
                 _append_chain_field(lines, "框架", _chain_value(item, "framework"))

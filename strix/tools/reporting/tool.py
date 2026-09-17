@@ -314,6 +314,89 @@ def _validate_analysis_fields(
     return errors
 
 
+_ENTRY_POINT_TYPES = frozenset({"entry_point", "entry", "入口点"})
+_CHAINED_SOURCE_MARKERS = (
+    "多层",
+    "多跳",
+    "链路",
+    "multi_layer",
+    "multi-hop",
+    "multi_hop",
+    "重定向链",
+)
+
+
+def _attack_chain_value(item: dict[str, Any], *keys: str) -> Any:
+    """Return the first non-empty value from an attack-chain node."""
+    for key in keys:
+        value = item.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, dict)) and not value:
+            continue
+        return value
+    return None
+
+
+def _validate_attack_chain(raw: Any) -> list[str]:
+    """Require reproducible provenance for structured entry-point nodes."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return ["attack_chain 必须是按顺序排列的节点列表"]
+
+    errors: list[str] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        node_type = str(item.get("type") or item.get("kind") or "").strip()
+        normalized_type = node_type.lower().replace("-", "_").replace(" ", "_")
+        if normalized_type not in _ENTRY_POINT_TYPES:
+            continue
+
+        prefix = f"attack_chain[{index}]"
+        if not _attack_chain_value(item, "route", "interface", "endpoint", "path", "url"):
+            errors.append(f"{prefix} 入口点缺少 URL/接口；不得仅用标题推断入口")
+        if not _attack_chain_value(item, "parameters", "parameter", "params"):
+            errors.append(f"{prefix} 入口点缺少参数；无参数时必须明确填写‘无’")
+
+        discovery_method = _attack_chain_value(
+            item,
+            "discovery_method",
+            "acquisition_method",
+            "entry_origin",
+            "entry_source_type",
+        )
+        if not discovery_method:
+            errors.append(
+                f"{prefix} 入口点缺少接口来源方式；必须说明是直接请求、页面/脚本、"
+                "API 文档、Sitemap、重定向或其他来源"
+            )
+
+        if not _attack_chain_value(item, "url_source", "source", "origin"):
+            errors.append(f"{prefix} 入口点缺少 URL 来源；请填写直接请求或具体页面/脚本")
+        if not _attack_chain_value(item, "parameter_source"):
+            errors.append(f"{prefix} 入口点缺少参数来源；请填写直接构造或具体页面/脚本")
+
+        method_text = str(discovery_method or "").lower()
+        if any(
+            marker in method_text for marker in _CHAINED_SOURCE_MARKERS
+        ) and not _attack_chain_value(
+            item,
+            "provenance_chain",
+            "extraction_chain",
+            "source_chain",
+            "asset_chain",
+        ):
+            errors.append(
+                f"{prefix} 已声明来源存在多层/多跳关系，但缺少 provenance_chain；"
+                "请按顺序记录每一层来源、动作和结果"
+            )
+    return errors
+
+
 def _validate_fix_verification(
     locations: list[dict[str, Any]] | None,
     fix_verification: str | None,
@@ -463,9 +546,9 @@ def _collect_update_changes(  # noqa: PLR0912, PLR0915
 
     raw_attack_chain = fields.get("attack_chain")
     if raw_attack_chain is not None:
-        if not isinstance(raw_attack_chain, list):
-            errors.append("attack_chain 必须是按顺序排列的节点列表")
-        elif raw_attack_chain:
+        attack_chain_errors = _validate_attack_chain(raw_attack_chain)
+        errors.extend(attack_chain_errors)
+        if isinstance(raw_attack_chain, list) and raw_attack_chain and not attack_chain_errors:
             changes["attack_chain"] = raw_attack_chain
 
     return changes, errors
@@ -767,6 +850,7 @@ async def _do_create(  # noqa: PLR0912
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
     errors.extend(identifier_errors)
+    errors.extend(_validate_attack_chain(attack_chain))
 
     normalized_http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(
         http_exchange_ids
@@ -1326,11 +1410,21 @@ async def create_vulnerability_report(
             finding; use it when the finding depends on a request sequence.
             For a front-end or micro-frontend chain, use the structured node
             types ``entry_point``, ``trust_boundary``, ``input_tampering``,
-            ``aggregation_point``, ``verification``, and ``blocked``. Use
-            ``source``, ``route``, ``parameters``, ``evidence``, ``framework``,
-            ``child_apps``, ``chunks``, ``comparison_tests``, and the
-            stage-specific fields shown by the report renderer. Missing
-            verification or blocking material is rendered as ``待补充``.
+            ``aggregation_point``, ``verification``, and ``blocked``. An
+            ``entry_point`` must include the exact URL/interface and
+            parameters plus ``discovery_method``, ``url_source``, and
+            ``parameter_source``. The source method may be a direct request,
+            HTML, JavaScript, OpenAPI/Swagger, Sitemap, redirect, source file,
+            configuration, or another explicitly named source. When multiple
+            pages, scripts, documents, redirects, or other assets yielded the
+            URL or parameters, include ordered ``provenance_chain`` hops with
+            ``from``, ``action``, ``to``, and a source/evidence reference;
+            ``extraction_chain`` remains a compatibility alias. Use ``source``
+            as a legacy fallback only when it identifies the concrete
+            request/page/script/document/configuration. Missing provenance is rejected;
+            use ``discovery_method: unverified`` and describe the gap when it
+            cannot be established. Missing verification or blocking material
+            is rendered as ``待补充``.
     Example (abbreviated — mirror this structure)::
 
         title: "Reflected XSS in /search q parameter"

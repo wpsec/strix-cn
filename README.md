@@ -175,6 +175,12 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 
 # Burp/Caido 流量驱动常规渗透测试
 .venv/bin/strix --burp-port 8081
+
+# Token 限制
+.venv/bin/strix --token-limit 100M --target https://example.com
+
+# 将已经在测试的任务，token上线重新标定
+.venv/bin/strix --resume <run_name> --token-limit 200M
 ```
 
 ### 单请求入口

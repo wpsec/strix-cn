@@ -104,6 +104,7 @@ export interface AttackChainNode {
   name?: string;
   endpoint?: string;
   path?: string;
+  url?: string;
   step?: string;
   from?: string;
   to?: string;
@@ -116,6 +117,10 @@ export interface AttackChainNode {
   hypothesis?: string;
   http_exchange_ids?: string[];
   source?: string;
+  discovery_method?: string;
+  url_source?: string;
+  provenance_chain?: (string | Record<string, unknown>)[];
+  extraction_chain?: (string | Record<string, unknown>)[];
   child_apps_source?: string;
   app_manifest_source?: string;
   manifest_source?: string;
