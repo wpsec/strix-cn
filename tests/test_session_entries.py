@@ -39,6 +39,31 @@ def test_source_becomes_writable_bind_mount(tmp_path: Path) -> None:
     ]
 
 
+def test_persistent_workspace_becomes_root_bind_mount(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    mounts = build_bind_mounts(
+        [_source("repo", str(repo))],
+        persistent_workspace=workspace,
+    )
+
+    assert mounts == [
+        {
+            "source": str(workspace.resolve()),
+            "target": "/workspace",
+            "read_only": False,
+        },
+        {
+            "source": str(repo.resolve()),
+            "target": "/workspace/repo",
+            "read_only": False,
+        },
+    ]
+
+
 def test_git_dir_is_remounted_read_only_when_protected(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
 

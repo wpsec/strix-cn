@@ -198,12 +198,12 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 
 入口边界如下：
 
-| 入口 | 适用目的 | 执行引擎 |
-| --- | --- | --- |
-| `--verify --request` | 确定性复测、修复回归、证明已知假设 | 受限验证执行器 |
-| `--request` | 以单个数据包为入口的完整 AI 渗透测试 | 完整 AI Agent 图 |
-| `--burp-port` | 从 Burp/Caido 流量采集并测试功能点 | 完整目标级扫描链路 |
-| `--target` | 常规目标级渗透测试 | 常规 Agent 图 |
+| 入口                 | 适用目的                             | 执行引擎           |
+| -------------------- | ------------------------------------ | ------------------ |
+| `--verify --request` | 确定性复测、修复回归、证明已知假设   | 受限验证执行器     |
+| `--request`          | 以单个数据包为入口的完整 AI 渗透测试 | 完整 AI Agent 图   |
+| `--burp-port`        | 从 Burp/Caido 流量采集并测试功能点   | 完整目标级扫描链路 |
+| `--target`           | 常规目标级渗透测试                   | 常规 Agent 图      |
 
 因此，`--verify` 的结果是“复测证据”，不代表它已经完成一次完整的单包测试；想让 AI 自主扩展测试面，应使用常规扫描入口的 `--request`。
 
@@ -415,7 +415,8 @@ Viewer 默认只绑定到本机回环地址，读取本地 `strix_runs/` 目录�
 ```bash
 strix auth login chatgpt
 
-export STRIX_LLM="chatgpt/gpt-5.4"
+export STRIX_LLM="chatgpt/gpt-5.6-luna"
+export STRIX_REASONING_EFFORT="high"
 strix --target ./app-directory
 
 strix auth status

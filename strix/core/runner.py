@@ -364,11 +364,21 @@ async def run_strix_scan(
 
     logger.info("Bringing up sandbox session for scan %s", scan_id)
     set_scan_phase("sandbox_init")
+    persistent_workspace = run_dir / "workspace"
+    try:
+        persistent_workspace.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f"无法创建持久化 workspace 目录: {persistent_workspace}: {exc}"
+        ) from exc
+    logger.info("Persistent sandbox workspace for scan %s: %s", scan_id, persistent_workspace)
     try:
         bundle = await session_manager.create_or_reuse(
             scan_id,
             image=image,
             local_sources=local_sources or [],
+            persistent_workspace=persistent_workspace,
+            allow_stale_reap=is_resume,
             extra_files=extra_files,
             burp_port=scan_config.get("burp_port"),
             status_sink=status_sink,
@@ -810,22 +820,40 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
-        configure_spill_writer(None)
-        # Settle descendants before closing sessions: on a clean finish a child
-        # can still be mid-turn, and closing its session underneath it crashes it.
-        if root_id is not None:
+
+        async def _finalize_scan() -> None:
+            configure_spill_writer(None)
+            # Settle descendants before closing sessions: on a clean finish a
+            # child can still be mid-turn, and closing its session underneath it crashes it.
+            if root_id is not None:
+                with contextlib.suppress(Exception):
+                    await coordinator.cancel_descendants(root_id)
+            for s in sessions_to_close:
+                with contextlib.suppress(Exception):
+                    s.close()
+            for mcp_session in mcp_sessions:
+                with contextlib.suppress(Exception):
+                    await mcp_session.aclose()
             with contextlib.suppress(Exception):
-                await coordinator.cancel_descendants(root_id)
-        for s in sessions_to_close:
+                await coordinator._maybe_snapshot()
+            if cleanup_on_exit:
+                logger.info("Tearing down sandbox session for scan %s", scan_id)
+                await session_manager.cleanup(scan_id)
+            logger.info("Strix scan %s done", scan_id)
+            teardown_logging()
+
+        # TUI shutdown can cancel this task immediately after a token stop. Run
+        # teardown in a shielded child so Docker containers and fixed Burp ports
+        # are released before the cancellation is propagated to the caller.
+        finalization_task = asyncio.create_task(_finalize_scan())
+        try:
+            await asyncio.shield(finalization_task)
+        except asyncio.CancelledError:
+            while not finalization_task.done():
+                try:
+                    await asyncio.shield(finalization_task)
+                except asyncio.CancelledError:
+                    continue
             with contextlib.suppress(Exception):
-                s.close()
-        for mcp_session in mcp_sessions:
-            with contextlib.suppress(Exception):
-                await mcp_session.aclose()
-        with contextlib.suppress(Exception):
-            await coordinator._maybe_snapshot()
-        if cleanup_on_exit:
-            logger.info("Tearing down sandbox session for scan %s", scan_id)
-            await session_manager.cleanup(scan_id)
-        logger.info("Strix scan %s done", scan_id)
-        teardown_logging()
+                finalization_task.result()
+            raise

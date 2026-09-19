@@ -63,22 +63,31 @@ def _docker_container_name(
     session_id: uuid.UUID | None,
 ) -> str:
     """Build a readable, unique Docker name without copying the target URL."""
-    raw_scan_id = str(scan_id or "scan").strip().lower()
-    parsed_scan_id = urlsplit(raw_scan_id)
-    if parsed_scan_id.hostname:
-        raw_scan_id = parsed_scan_id.hostname
-    else:
-        raw_scan_id = re.split(r"[?#]", raw_scan_id, maxsplit=1)[0]
-    scan_component = re.sub(r"[^a-z0-9_.-]+", "-", raw_scan_id).strip("-_.")
-    if not scan_component:
-        scan_component = "scan"
-
+    prefix = _docker_container_name_prefix(scan_id)
     session_component = (session_id.hex if session_id is not None else uuid.uuid4().hex)[
         :_CONTAINER_NAME_SESSION_SUFFIX_LENGTH
     ]
-    reserved_length = len("strix--") + len(session_component)
+    return f"{prefix}{session_component}"
+
+
+def _docker_container_name_prefix(scan_id: str | None) -> str:
+    """Return the stable name prefix shared by one scan's containers."""
+    raw_scan_id = str(scan_id or "scan").strip().lower()
+    parsed_scan_id = urlsplit(raw_scan_id)
+    raw_scan_id = parsed_scan_id.hostname or re.split(r"[?#]", raw_scan_id, maxsplit=1)[0]
+    scan_component = re.sub(r"[^a-z0-9_.-]+", "-", raw_scan_id).strip("-_.")
+    if not scan_component:
+        scan_component = "scan"
+    reserved_length = len("strix--") + _CONTAINER_NAME_SESSION_SUFFIX_LENGTH
     scan_component = scan_component[: _CONTAINER_NAME_MAX_LENGTH - reserved_length].rstrip("-_.")
-    return f"strix-{scan_component or 'scan'}-{session_component}"
+    return f"strix-{scan_component or 'scan'}-"
+
+
+def _docker_container_name_matches_scan(name: str, scan_id: str | None) -> bool:
+    """Check a full container name without confusing similar scan prefixes."""
+    prefix = _docker_container_name_prefix(scan_id)
+    suffix = name[len(prefix) :] if name.startswith(prefix) else ""
+    return bool(re.fullmatch(r"[0-9a-f]{8}", suffix))
 
 
 def _sandbox_network() -> str | None:
@@ -148,8 +157,8 @@ def _docker_port_bindings(
     }
 
 
-def _apply_run_labels(create_kwargs: dict[str, Any]) -> None:
-    run_id = os.getenv("STRIX_RUN_ID")
+def _apply_run_labels(create_kwargs: dict[str, Any], *, run_id: str | None = None) -> None:
+    run_id = run_id or os.getenv("STRIX_RUN_ID")
     if not run_id:
         return
     labels = create_kwargs.setdefault("labels", {})
@@ -276,7 +285,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         _apply_sandbox_network(create_kwargs)
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
-        _apply_run_labels(create_kwargs)
+        _apply_run_labels(create_kwargs, run_id=self.strix_scan_id)
         create_kwargs["name"] = _docker_container_name(self.strix_scan_id, session_id)
 
         # Strix injection: local source trees, sorted shallowest-first so a

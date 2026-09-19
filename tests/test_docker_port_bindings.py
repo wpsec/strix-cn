@@ -10,6 +10,8 @@ import pytest
 from strix.runtime.docker_client import (
     StrixDockerSandboxClient,
     _docker_container_name,
+    _docker_container_name_matches_scan,
+    _docker_container_name_prefix,
     _docker_port_bindings,
 )
 
@@ -33,6 +35,11 @@ def test_docker_port_bindings_honor_fixed_host_port_override() -> None:
 
 
 def test_docker_container_name_uses_scan_id_and_session_suffix() -> None:
+    assert _docker_container_name_prefix("example-com_abcd") == "strix-example-com_abcd-"
+    assert _docker_container_name_matches_scan("strix-example-com_abcd-01234567", "example-com_abcd")
+    assert not _docker_container_name_matches_scan(
+        "strix-example-com_abcd-other-01234567", "example-com_abcd"
+    )
     assert (
         _docker_container_name(
             "example-com_abcd",
@@ -72,3 +79,4 @@ async def test_create_container_passes_target_aligned_name_to_docker() -> None:
 
     create_kwargs = client.docker_client.containers.create.call_args.kwargs
     assert create_kwargs["name"] == "strix-example-com_abcd-01234567"
+    assert create_kwargs["labels"] == {"strix-run-id": "example-com_abcd"}

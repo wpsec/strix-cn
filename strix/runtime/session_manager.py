@@ -14,6 +14,7 @@ import shutil
 import socket
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -48,6 +49,14 @@ _CONTAINER_CAIDO_PROXY_PORT = 48081
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 _CONTAINER_PROXY_COMPAT_LOG = "/tmp/strix-caido-proxy-compat.log"
 _CONTAINER_PROXY_COMPAT_PID = "/tmp/strix-caido-proxy-compat.pid"
+_BURP_PORT_RELEASE_TIMEOUT_SECONDS = 2.0
+_BURP_PORT_UNAVAILABLE_ERRNOS = {
+    errno.ECONNREFUSED,
+    errno.ETIMEDOUT,
+    errno.EHOSTUNREACH,
+    errno.ENETUNREACH,
+    errno.EADDRNOTAVAIL,
+}
 
 # Manifest root inside the container; entry keys hang off this path.
 _WORKSPACE_ROOT = "/workspace"
@@ -91,33 +100,119 @@ def _caido_ui_metadata(*, host_ui_url: str) -> str | None:
     return host_ui_url
 
 
-def _assert_burp_port_available(*, backend_name: str, burp_port: int | None) -> None:
+def _probe_burp_port(burp_port: int) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.2)
+        return probe.connect_ex(("127.0.0.1", burp_port))
+
+
+def _wait_for_burp_port_release(burp_port: int) -> bool:
+    deadline = time.monotonic() + _BURP_PORT_RELEASE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _probe_burp_port(burp_port) in _BURP_PORT_UNAVAILABLE_ERRNOS:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _reap_stale_docker_sessions(*, scan_id: str, burp_port: int) -> bool:
+    """Remove leftover containers belonging to a resumed run.
+
+    A resume can run in a new Python process, so the in-memory session cache is
+    unavailable even though Docker still owns the fixed Burp host port. The
+    stable scan-name prefix scopes cleanup to this run; unrelated containers
+    are never removed.
+    """
+    try:
+        import docker  # noqa: PLC0415
+        from docker import errors as docker_errors  # noqa: PLC0415
+        from requests.exceptions import RequestException  # noqa: PLC0415
+
+        from strix.runtime.docker_client import (  # noqa: PLC0415
+            _docker_container_name_matches_scan,
+            _docker_container_name_prefix,
+        )
+    except (ImportError, OSError) as exc:
+        logger.warning("无法连接 Docker 以回收 run=%s 的残留会话: %s", scan_id, exc)
+        return False
+    try:
+        docker_client = docker.from_env()
+    except (docker_errors.DockerException, RequestException, OSError) as exc:
+        logger.warning("无法连接 Docker 以回收 run=%s 的残留会话: %s", scan_id, exc)
+        return False
+
+    prefix = _docker_container_name_prefix(scan_id)
+    removed = False
+    try:
+        candidates = docker_client.containers.list(all=True, filters={"name": prefix})
+        for container in candidates:
+            name = str(getattr(container, "name", "") or "")
+            labels = getattr(container, "labels", {}) or {}
+            labeled_scan_id = labels.get("strix-run-id") if isinstance(labels, dict) else None
+            matches_scan = (
+                labeled_scan_id == scan_id
+                if isinstance(labeled_scan_id, str)
+                else _docker_container_name_matches_scan(name, scan_id)
+            )
+            if not matches_scan or not name.startswith(prefix):
+                continue
+            try:
+                logger.warning(
+                    "回收 run=%s 的残留 sandbox 容器 %s (释放 Burp 端口 127.0.0.1:%s)",
+                    scan_id,
+                    name,
+                    burp_port,
+                )
+                container.remove(force=True)
+                removed = True
+            except (docker_errors.DockerException, RequestException) as exc:
+                logger.warning("回收残留 sandbox 容器 %s 失败: %s", name, exc)
+    except (docker_errors.DockerException, RequestException) as exc:
+        logger.warning("查询 run=%s 的残留 sandbox 失败: %s", scan_id, exc)
+    finally:
+        with contextlib.suppress(Exception):
+            docker_client.close()
+
+    return removed
+
+
+def _assert_burp_port_available(
+    *,
+    backend_name: str,
+    burp_port: int | None,
+    scan_id: str | None = None,
+    allow_stale_reap: bool = False,
+) -> None:
     if backend_name != "docker" or not burp_port:
         return
 
     if os.environ.get(_DOCKER_SANDBOX_NETWORK_ENV, "").strip():
         return
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.settimeout(0.2)
-        result = probe.connect_ex(("127.0.0.1", burp_port))
-        if result == 0:
-            raise RuntimeError(
-                f"Burp 监听端口 127.0.0.1:{burp_port} 已被占用。"
-                "请关闭占用该端口的 Strix/其他程序，或改用新的 --burp-port 后重试。"
-            )
-        if result not in {
-            errno.ECONNREFUSED,
-            errno.ETIMEDOUT,
-            errno.EHOSTUNREACH,
-            errno.ENETUNREACH,
-            errno.EADDRNOTAVAIL,
-        }:
-            logger.debug(
-                "Burp port probe for 127.0.0.1:%s returned errno=%s; continuing startup",
-                burp_port,
-                result,
-            )
+    result = _probe_burp_port(burp_port)
+    if result == 0:
+        if (
+            allow_stale_reap
+            and scan_id
+            and _reap_stale_docker_sessions(scan_id=scan_id, burp_port=burp_port)
+        ):
+            result = _probe_burp_port(burp_port)
+            released = result in _BURP_PORT_UNAVAILABLE_ERRNOS
+            if not released and result != 0:
+                released = _wait_for_burp_port_release(burp_port)
+            if released:
+                logger.info("已释放 run=%s 的残留 Burp 端口 127.0.0.1:%s", scan_id, burp_port)
+                return
+        raise RuntimeError(
+            f"Burp 监听端口 127.0.0.1:{burp_port} 已被占用。"
+            "请关闭占用该端口的 Strix/其他程序，或改用新的 --burp-port 后重试。"
+        )
+    if result not in _BURP_PORT_UNAVAILABLE_ERRNOS:
+        logger.debug(
+            "Burp port probe for 127.0.0.1:%s returned errno=%s; continuing startup",
+            burp_port,
+            result,
+        )
 
 
 def _result_stream_text(stream: Any) -> str:
@@ -342,8 +437,21 @@ def _target_credential_environment(
     }
 
 
-def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_bind_mounts(
+    local_sources: list[dict[str, Any]],
+    *,
+    persistent_workspace: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build writable workspace mounts, including the per-run workspace root."""
     bind_mounts: list[dict[str, Any]] = []
+    if persistent_workspace is not None:
+        bind_mounts.append(
+            {
+                "source": str(Path(persistent_workspace).expanduser().resolve()),
+                "target": _WORKSPACE_ROOT,
+                "read_only": False,
+            }
+        )
     for src in local_sources:
         ws_subdir = src.get("workspace_subdir") or ""
         host_path = src.get("source_path") or ""
@@ -556,6 +664,8 @@ async def create_or_reuse(
     *,
     image: str,
     local_sources: list[dict[str, Any]],
+    persistent_workspace: str | Path | None = None,
+    allow_stale_reap: bool = False,
     burp_port: int | None = None,
     extra_files: list[dict[str, Any]] | None = None,
     status_sink: StatusSink | None = None,
@@ -571,6 +681,14 @@ async def create_or_reuse(
     regardless of backend: an in-memory ``File`` manifest entry on manifest
     backends, a read-only bind mount of a host-staged copy on bind-mount
     backends.
+
+    ``persistent_workspace`` is the host directory mounted at ``/workspace``
+    for bind-mount backends. It keeps agent-created evidence available after
+    the sandbox container is removed and lets a resumed run reuse the same
+    workspace.
+
+    ``allow_stale_reap`` is reserved for an explicit resume. Fresh scans do
+    not remove another container that happens to own the requested Burp port.
     """
 
     def report(phase: str) -> None:
@@ -600,7 +718,19 @@ async def create_or_reuse(
     caido_ui_url: str | None = None
     try:
         if backend_supports_bind_mounts(backend_name):
-            bind_mounts = build_bind_mounts(local_sources)
+            if persistent_workspace is not None:
+                persistent_workspace_path = Path(persistent_workspace).expanduser()
+                try:
+                    persistent_workspace_path.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"无法创建持久化 workspace 目录: {persistent_workspace_path}: {exc}"
+                    ) from exc
+                persistent_workspace = persistent_workspace_path.resolve()
+            bind_mounts = build_bind_mounts(
+                local_sources,
+                persistent_workspace=persistent_workspace,
+            )
             entries: dict[str | Path, BaseEntry] = {}
             if extra_files:
                 staging_dir = extra_file_staging_dir(scan_id)
@@ -608,6 +738,13 @@ async def create_or_reuse(
                     build_extra_file_bind_mounts(extra_files, staging_dir, local_sources)
                 )
         else:
+            if persistent_workspace is not None:
+                logger.warning(
+                    "Runtime backend %s does not support host bind mounts; "
+                    "persistent workspace is unavailable for scan %s",
+                    backend_name,
+                    scan_id,
+                )
             bind_mounts = []
             entries = build_manifest_entries(local_sources)
             if extra_files:
@@ -636,7 +773,12 @@ async def create_or_reuse(
             ),
         )
 
-        _assert_burp_port_available(backend_name=backend_name, burp_port=burp_port)
+        _assert_burp_port_available(
+            backend_name=backend_name,
+            burp_port=burp_port,
+            scan_id=scan_id,
+            allow_stale_reap=allow_stale_reap,
+        )
         logger.info(
             "Creating sandbox session for scan %s (backend=%s, image=%s)",
             scan_id,

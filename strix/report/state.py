@@ -891,6 +891,10 @@ class ReportState:
                 "diff_scope": config.get("diff_scope", {"active": False}),
                 "non_interactive": bool(config.get("non_interactive", False)),
                 "local_sources": config.get("local_sources", []),
+                "persistent_workspace_path": config.get(
+                    "persistent_workspace_path",
+                    str(self.get_run_dir() / "workspace"),
+                ),
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
                 "burp_port": config.get("burp_port"),

@@ -367,6 +367,7 @@ def _persist(
         "verification_strategy": plan.strategy_kind,
         "verification_intent_confidence": plan.intent_confidence,
         "verification_runtime": execution_runtime,
+        "persistent_workspace_path": str(run_dir / "workspace"),
     }
     write_run_record(run_dir, record)
     return run_dir
@@ -582,11 +583,14 @@ async def run_verification_case_in_sandbox(
             raise ValueError("未配置 sandbox 镜像")
         bundle: dict[str, Any] | None = None
         execution_runtime = "docker-sandbox"
+        persistent_workspace = run_dir_for(selected_run_name) / "workspace"
+        persistent_workspace.mkdir(parents=True, exist_ok=True)
         try:
             bundle = await session_manager.create_or_reuse(
                 selected_run_name,
                 image=image,
                 local_sources=[],
+                persistent_workspace=persistent_workspace,
                 status_sink=status_sink,
             )
             result = await execute_plan_in_sandbox(

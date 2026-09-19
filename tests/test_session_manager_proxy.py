@@ -186,6 +186,127 @@ def test_assert_burp_port_available_rejects_occupied_loopback_port(
         )
 
 
+def test_assert_burp_port_available_reaps_same_run_stale_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Socket:
+        results = iter(
+            [
+                0,
+                session_manager.errno.ECONNREFUSED,
+            ]
+        )
+
+        def __enter__(self) -> "_Socket":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def settimeout(self, _timeout: float) -> None:
+            return None
+
+        def connect_ex(self, _address: tuple[str, int]) -> int:
+            return next(self.results)
+
+    reaped: dict[str, object] = {}
+
+    def _reap(*, scan_id: str, burp_port: int) -> bool:
+        reaped.update(scan_id=scan_id, burp_port=burp_port)
+        return True
+
+    monkeypatch.setattr(session_manager.socket, "socket", lambda *_a, **_k: _Socket())
+    monkeypatch.setattr(session_manager, "_reap_stale_docker_sessions", _reap)
+
+    session_manager._assert_burp_port_available(
+        backend_name="docker",
+        burp_port=8081,
+        scan_id="scan-resume",
+        allow_stale_reap=True,
+    )
+
+    assert reaped == {"scan_id": "scan-resume", "burp_port": 8081}
+
+
+def test_assert_burp_port_available_does_not_reap_for_a_fresh_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _OccupiedSocket:
+        def __enter__(self) -> _OccupiedSocket:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def settimeout(self, _timeout: float) -> None:
+            return None
+
+        def connect_ex(self, _address: tuple[str, int]) -> int:
+            return 0
+
+    reaped = False
+
+    def _reap(**_kwargs: object) -> bool:
+        nonlocal reaped
+        reaped = True
+        return True
+
+    monkeypatch.setattr(session_manager.socket, "socket", lambda *_a, **_k: _OccupiedSocket())
+    monkeypatch.setattr(session_manager, "_reap_stale_docker_sessions", _reap)
+
+    with pytest.raises(RuntimeError, match=r"127\.0\.0\.1:8081 已被占用"):
+        session_manager._assert_burp_port_available(
+            backend_name="docker",
+            burp_port=8081,
+            scan_id="scan-active",
+        )
+
+    assert reaped is False
+
+
+def test_reap_stale_docker_sessions_only_removes_same_run_containers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import docker  # noqa: PLC0415
+
+    class _Container:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.removed = False
+
+        def remove(self, *, force: bool) -> None:
+            assert force is True
+            self.removed = True
+
+    matching = _Container("strix-scan-resume-01234567")
+    unrelated = _Container("strix-other-run-01234567")
+
+    class _DockerClient:
+        class _Containers:
+            def list(self, **_kwargs: object) -> list[_Container]:
+                return [matching, unrelated]
+
+        containers = _Containers()
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    client = _DockerClient()
+    monkeypatch.setattr(docker, "from_env", lambda: client)
+
+    assert (
+        session_manager._reap_stale_docker_sessions(
+            scan_id="scan-resume",
+            burp_port=8081,
+        )
+        is True
+    )
+    assert matching.removed is True
+    assert unrelated.removed is False
+    assert client.closed is True
+
+
 @pytest.mark.asyncio
 async def test_create_or_reuse_rejects_occupied_burp_port_before_backend(
     monkeypatch: pytest.MonkeyPatch,

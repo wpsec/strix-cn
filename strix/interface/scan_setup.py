@@ -265,6 +265,9 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         # Persisted so --resume can remount the workspace: it is not a target,
         # so it cannot be rebuilt from targets_info.
         "workspace_mount": getattr(args, "workspace_mount", None),
+        # Agent-created files are stored outside the container and remounted at
+        # /workspace when the same run is resumed.
+        "persistent_workspace_path": str(run_dir / "workspace"),
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,

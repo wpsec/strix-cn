@@ -1311,6 +1311,7 @@ def test_runner_creates_and_cleans_sandbox_for_approved_verification(
             "scan_id": "verify-sandbox-runner",
             "image": "test-sandbox:local",
             "local_sources": [],
+            "persistent_workspace": tmp_path / "strix_runs" / "verify-sandbox-runner" / "workspace",
             "status_sink": None,
         }
     ]
