@@ -603,10 +603,54 @@ def _finding_flowables(
     story.extend(_field_block(styles, "概念验证", vuln.get("poc_description")))
     poc_script = _strip_code_fence(vuln.get("poc_script_code"))
     story.extend(_field_block(styles, "PoC 脚本", poc_script, code=True))
-    http_request = _strip_code_fence(vuln.get("http_request") or vuln.get("burp_request"))
-    story.extend(_field_block(styles, "HTTP Request", http_request, code=True))
-    http_response = _strip_code_fence(vuln.get("http_response"))
-    story.extend(_field_block(styles, "HTTP Response", http_response, code=True))
+    http_exchanges = vuln.get("http_exchanges")
+    exchange_rows = (
+        [exchange for exchange in http_exchanges if isinstance(exchange, dict)]
+        if isinstance(http_exchanges, list)
+        else []
+    )
+    raw_request = vuln.get("http_request") or vuln.get("burp_request")
+    if isinstance(raw_request, str) and not any(
+        exchange.get("request") == raw_request for exchange in exchange_rows
+    ):
+        story.extend(
+            _field_block(
+                styles,
+                "HTTP Request",
+                _strip_code_fence(raw_request),
+                code=True,
+            )
+        )
+    raw_response = vuln.get("http_response")
+    if isinstance(raw_response, str) and not any(
+        exchange.get("response") == raw_response for exchange in exchange_rows
+    ):
+        story.extend(
+            _field_block(
+                styles,
+                "HTTP Response",
+                _strip_code_fence(raw_response),
+                code=True,
+            )
+        )
+    for exchange_index, exchange in enumerate(exchange_rows, 1):
+        exchange_label = exchange.get("request_id") or exchange_index
+        story.extend(
+            _field_block(
+                styles,
+                f"HTTP 交换 #{exchange_label} Request",
+                exchange.get("request"),
+                code=True,
+            )
+        )
+        story.extend(
+            _field_block(
+                styles,
+                f"HTTP 交换 #{exchange_label} Response",
+                exchange.get("response"),
+                code=True,
+            )
+        )
     story.extend(_field_block(styles, "证据", vuln.get("evidence"), code=True))
 
     remediation = vuln.get("remediation_steps")

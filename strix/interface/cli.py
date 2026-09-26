@@ -154,7 +154,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         sys.exit(1)
 
     atexit.register(cleanup_on_exit)
-    signal.signal(signal.SIGINT, signal_handler)
+    # asyncio.run owns SIGINT so Ctrl+C cancels the scan and lets main() render
+    # its normal interrupted-run summary and resume commands.
     signal.signal(signal.SIGTERM, signal_handler)
     if hasattr(signal, "SIGHUP"):
         signal.signal(signal.SIGHUP, signal_handler)

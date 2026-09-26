@@ -273,6 +273,7 @@ _CHAIN_STAGE_ORDER = ("入口点", "信任边界", "输入篡改", "汇聚点", 
 _STRUCTURED_CHAIN_KEYS = frozenset(
     {
         "source",
+        "children",
         "discovery_method",
         "url_source",
         "provenance_chain",
@@ -287,6 +288,7 @@ _STRUCTURED_CHAIN_KEYS = frozenset(
         "sensitive_function",
         "backend_api",
         "comparison_tests",
+        "parameter_tests",
         "attempt",
         "block_reason",
     }
@@ -345,32 +347,159 @@ def _append_chain_field(lines: list[str], label: str, value: Any) -> None:
     lines.extend(f"   {line}" for line in text.splitlines())
 
 
+def _evidence_reference(value: Any) -> str:
+    text = _chain_text(value)
+    for prefix in ("证据:", "证据：", "evidence:"):
+        if text.lower().startswith(prefix.lower()):
+            return text[len(prefix) :].strip()
+    return text
+
+
+def _tree_node_label(item: Any) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if not isinstance(item, dict):
+        return ""
+
+    chunk_id = _chain_text(_chain_value(item, "chunk_id", "chunk"))
+    chunk_file = _chain_text(_chain_value(item, "filename", "chunk_file", "file"))
+    if chunk_id and chunk_file:
+        return f"{chunk_id} → {chunk_file}"
+
+    label = _chain_text(
+        _chain_value(
+            item,
+            "title",
+            "label",
+            "name",
+            "path",
+            "route",
+            "endpoint",
+            "url",
+            "file",
+            "filename",
+            "id",
+            "function",
+        )
+    )
+    if label:
+        return label
+
+    source = _chain_text(_chain_value(item, "from", "source", "input"))
+    action = _chain_text(_chain_value(item, "action", "operation", "extract"))
+    target = _chain_text(_chain_value(item, "to", "target", "output"))
+    if source and action and target:
+        return f"{source} --{action}--> {target}"
+    return target or action or source
+
+
+def _append_tree_nodes(
+    lines: list[str],
+    value: Any,
+    *,
+    prefix: str = "   ",
+    depth: int = 0,
+) -> None:
+    if not isinstance(value, list) or depth >= 16:
+        return
+    nodes = [item for item in value if _tree_node_label(item)]
+    for index, item in enumerate(nodes):
+        is_last = index == len(nodes) - 1
+        connector = "└──" if is_last else "├──"
+        label = _tree_node_label(item)
+        lines.append(f"{prefix}{connector} {label}")
+        child_prefix = prefix + ("   " if is_last else "│  ")
+        if isinstance(item, dict):
+            for field, label_text in (
+                ("source", "来源"),
+                ("action", "操作"),
+                ("result", "结果"),
+                ("observation", "观察结果"),
+                ("function", "功能"),
+                ("feature", "功能"),
+                ("description", "说明"),
+                ("parameter_source", "参数来源"),
+                ("route_declaration_source", "路由声明来源"),
+                ("dynamic_load_source", "动态加载清单来源"),
+            ):
+                detail = _chain_value(item, field)
+                if detail is not None and _chain_text(detail) != label:
+                    text = _chain_text(detail)
+                    if "\n" in text:
+                        lines.append(f"{child_prefix}   {label_text}:")
+                        lines.extend(f"{child_prefix}      {line}" for line in text.splitlines())
+                    else:
+                        lines.append(f"{child_prefix}   {label_text}: {text}")
+            evidence = _chain_evidence(item)
+            if evidence is not None:
+                lines.append(f"{child_prefix}   证据: {evidence}")
+            children = _chain_value(item, "children", "nodes")
+            _append_parameter_tests(
+                lines,
+                _chain_value(item, "parameter_tests"),
+                prefix=child_prefix + "   ",
+            )
+            for field, group_label in (
+                ("child_apps", "子应用"),
+                ("chunks", "动态加载模块"),
+                ("provenance_chain", "来源链路"),
+                ("extraction_chain", "来源链路"),
+                ("comparison_tests", "对照测试"),
+                ("tests", "测试记录"),
+            ):
+                nested = _chain_value(item, field)
+                if isinstance(nested, list) and nested:
+                    lines.append(f"{child_prefix}   {group_label}:")
+                    _append_tree_nodes(
+                        lines,
+                        nested,
+                        prefix=child_prefix + "      ",
+                        depth=depth + 1,
+                    )
+            _append_tree_nodes(lines, children, prefix=child_prefix, depth=depth + 1)
+
+
+def _append_parameter_tests(lines: list[str], value: Any, *, prefix: str = " ") -> None:
+    if not isinstance(value, list) or not value:
+        return
+    tests: list[tuple[str, str, str, Any]] = []
+    for test in value:
+        if not isinstance(test, dict):
+            continue
+        parameter = _chain_text(
+            _chain_value(test, "parameter", "parameter_name", "candidate", "name", "key")
+        )
+        if not parameter:
+            continue
+        candidate_value = _chain_text(_chain_value(test, "value", "input", "payload"))
+        result = _chain_text(
+            _chain_value(test, "result", "response_features", "response", "outcome")
+        )
+        evidence = _chain_evidence(test)
+        tests.append((parameter, candidate_value, result, evidence))
+    if not tests:
+        return
+
+    lines.append(f"{prefix}参数测试:")
+    for index, (parameter, candidate_value, result, evidence) in enumerate(tests):
+        subject = f"`{parameter}`"
+        if candidate_value:
+            subject += f" = `{candidate_value}`"
+        if result:
+            subject += f" → {result}"
+        if evidence:
+            subject += f"  证据: {_evidence_reference(evidence)}"
+        connector = "└──" if index == len(tests) - 1 else "├──"
+        lines.append(f"{prefix}   {connector} {subject}")
+
+
 def _append_chain_extraction(lines: list[str], value: Any) -> None:
-    """Render ordered interface-provenance hops without flattening them."""
+    """Render interface-provenance hops as a source tree."""
     if not value:
         return
     hops = value if isinstance(value, list) else [value]
     lines.append(" 来源链路:")
-    for index, hop in enumerate(hops, 1):
-        if isinstance(hop, str):
-            text = " ".join(hop.split())
-        elif isinstance(hop, dict):
-            source = _chain_text(_chain_value(hop, "from", "source", "input"))
-            action = _chain_text(_chain_value(hop, "action", "operation", "extract"))
-            target = _chain_text(_chain_value(hop, "to", "target", "output"))
-            if source and action and target:
-                text = f"{source} --{action}--> {target}"
-            else:
-                text = _chain_text(hop)
-            evidence = _chain_text(
-                _chain_value(hop, "evidence", "evidence_ref", "source_ref", "location")
-            )
-            if evidence:
-                text += f"（来源: {evidence}）"
-        else:
-            continue
-        if text:
-            lines.append(f"   {index}. {text}")
+    _append_tree_nodes(lines, hops)
 
 
 def _chain_discovery_method(item: dict[str, Any]) -> Any:
@@ -407,7 +536,7 @@ def _append_chain_tests(lines: list[str], value: Any) -> None:
         parameter = _chain_text(_chain_value(test, "parameter", "field", "param"))
         value_text = _chain_text(_chain_value(test, "value", "input", "payload"))
         result = _chain_text(_chain_value(test, "result", "response", "observed", "outcome"))
-        evidence = _chain_text(_chain_value(test, "evidence", "evidence_ref", "request_id"))
+        evidence = _chain_evidence(test)
         subject = " ".join(part for part in (parameter, "=", value_text) if part)
         detail = f"{kind} {subject}".strip()
         if result:
@@ -448,6 +577,12 @@ def _append_chain_items(
         if source:
             detail += f"   来源: {source}"
         lines.append(f"   {connector} {detail}")
+        if isinstance(child, dict):
+            _append_tree_nodes(
+                lines,
+                _chain_value(child, "children", "nodes"),
+                prefix="      ",
+            )
 
 
 def _append_chain_chunks(lines: list[str], value: Any) -> None:
@@ -469,18 +604,27 @@ def _append_chain_chunks(lines: list[str], value: Any) -> None:
         if source:
             target += f"   来源: {source}"
         lines.append(f"   {connector} {target}")
+        if isinstance(chunk, dict):
+            _append_tree_nodes(
+                lines,
+                _chain_value(chunk, "children", "nodes"),
+                prefix="      ",
+            )
 
 
 def _chain_evidence(item: dict[str, Any]) -> Any:
-    evidence = _chain_value(item, "evidence", "evidence_ref")
+    evidence = _chain_value(item, "evidence", "evidence_ref", "evidence_refs")
     if evidence is not None:
-        return evidence
-    request_ids = item.get("http_exchange_ids")
-    if isinstance(request_ids, list):
-        return " / ".join(f"req {request_id}" for request_id in request_ids)
-    if isinstance(request_ids, str) and request_ids.strip():
-        return f"req {request_ids.strip()}"
-    return None
+        return _evidence_reference(evidence)
+    request_id = _chain_value(item, "request_id", "http_exchange_id", "http_exchange_ids")
+    if request_id is not None:
+        ids = request_id if isinstance(request_id, list) else [request_id]
+        return " / ".join(
+            f"req {value}" if str(value).strip().isdigit() else str(value)
+            for value in ids
+        )
+    source_ref = _chain_value(item, "source_ref", "location")
+    return _evidence_reference(source_ref) if source_ref is not None else None
 
 
 def _structured_attack_chain(  # noqa: PLR0912, PLR0915
@@ -571,7 +715,7 @@ def _structured_attack_chain(  # noqa: PLR0912, PLR0915
                     ),
                 )
                 fallback = _chain_value(item, "fallback", "catch_all", "fallback_route")
-                child_apps = _chain_value(item, "child_apps", "children")
+                child_apps = _chain_value(item, "child_apps")
                 _append_chain_items(lines, child_apps, has_following=bool(fallback))
                 if isinstance(fallback, dict):
                     _append_chain_items(lines, [fallback], fallback=True)
@@ -697,15 +841,45 @@ def _structured_attack_chain(  # noqa: PLR0912, PLR0915
                 _chain_value(item, "observation", "observed", "observed_result", "hypothesis"),
             )
             _append_chain_field(lines, "证据", _chain_evidence(item))
+            _append_parameter_tests(lines, _chain_value(item, "parameter_tests"))
+            _append_tree_nodes(lines, _chain_value(item, "children", "nodes"))
 
+    untyped_items = [
+        item
+        for item in raw
+        if not isinstance(item, dict)
+        or not _chain_stage(item.get("type") or item.get("kind"))
+    ]
+    if untyped_items:
+        lines.extend(["", "补充来源链路"])
+        _append_tree_nodes(lines, untyped_items)
+
+    lines.extend(["```", ""])
+    return lines
+
+
+def _render_tree_attack_chain(raw: list[Any]) -> list[str]:
+    lines = ["## 攻击链路\n", "```text", "攻击链路视图"]
+    _append_tree_nodes(lines, raw)
+    if len(lines) == 3:
+        return []
     lines.extend(["```", ""])
     return lines
 
 
 def render_attack_chain(report: dict[str, Any]) -> list[str]:
     """Render a Burp URL-view-like vertical path, never as a markdown table."""
-    if _has_structured_attack_chain(report.get("attack_chain")):
-        return _structured_attack_chain(report)
+    attack_chain = report.get("attack_chain")
+    if _has_structured_attack_chain(attack_chain):
+        if any(
+            isinstance(item, dict)
+            and _chain_stage(item.get("type") or item.get("kind"))
+            for item in attack_chain
+        ):
+            return _structured_attack_chain(report)
+        tree_lines = _render_tree_attack_chain(attack_chain)
+        if tree_lines:
+            return tree_lines
     nodes = _attack_chain_nodes(report)
     if not nodes:
         return []
@@ -753,14 +927,13 @@ def _http_materials(report: dict[str, Any]) -> list[tuple[str | None, str | None
         request = report.get("burp_request")
     response = explicit_response
     if isinstance(request, str) or isinstance(response, str):
-        materials.insert(
-            0,
-            (
-                None,
-                request if isinstance(request, str) else None,
-                response if isinstance(response, str) else None,
-            ),
+        pair = (
+            None,
+            request if isinstance(request, str) else None,
+            response if isinstance(response, str) else None,
         )
+        if not any(existing[1:] == pair[1:] for existing in materials):
+            materials.insert(0, pair)
     return [item for item in materials if item[1] or item[2]]
 
 

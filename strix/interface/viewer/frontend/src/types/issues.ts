@@ -114,6 +114,7 @@ export interface AttackChainNode {
   observation?: string;
   result?: string;
   evidence?: string;
+  evidence_refs?: string[];
   hypothesis?: string;
   http_exchange_ids?: string[];
   source?: string;
@@ -121,6 +122,8 @@ export interface AttackChainNode {
   url_source?: string;
   provenance_chain?: (string | Record<string, unknown>)[];
   extraction_chain?: (string | Record<string, unknown>)[];
+  children?: (string | AttackChainNode)[];
+  nodes?: (string | AttackChainNode)[];
   child_apps_source?: string;
   app_manifest_source?: string;
   manifest_source?: string;
@@ -142,6 +145,7 @@ export interface AttackChainNode {
   authentication?: string;
   parameters_detail?: Record<string, unknown>[];
   comparison_tests?: Record<string, unknown>[];
+  parameter_tests?: Record<string, unknown>[];
   variants?: string | string[];
   conclusion?: string;
   exclusions?: string | string[];
@@ -149,6 +153,12 @@ export interface AttackChainNode {
   response_features?: string;
   block_reason?: string;
   round_result?: string;
+}
+
+export interface HTTPExchangeEvidence {
+  request_id?: string;
+  request: string;
+  response?: string;
 }
 
 export interface Vulnerability {
@@ -174,6 +184,7 @@ export interface Vulnerability {
   burp_request: string | null;
   http_request: string | null;
   http_response: string | null;
+  http_exchanges?: HTTPExchangeEvidence[] | null;
   code_diff: string | null;
   code_file: string | null;
   code_before: string | null;

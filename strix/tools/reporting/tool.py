@@ -220,6 +220,116 @@ def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]
     return normalized, errors
 
 
+def _validate_raw_http_materials(
+    *,
+    burp_request: Any = None,
+    http_request: Any = None,
+    http_response: Any = None,
+    http_exchanges: Any = None,
+) -> list[str]:
+    """Reject raw HTTP blocks that cannot be parsed past their header section."""
+    errors: list[str] = []
+
+    def validate_block(value: Any, field_name: str) -> None:
+        if value is None:
+            return
+        if not isinstance(value, str):
+            errors.append(f"{field_name} 必须是原始 HTTP 文本")
+            return
+        if value.strip() and "\r\n\r\n" not in value and "\n\n" not in value:
+            errors.append(f"{field_name} 缺少头部与正文之间的空行（CRLF CRLF 或 LF LF）")
+
+    validate_block(burp_request, "burp_request")
+    validate_block(http_request, "http_request")
+    validate_block(http_response, "http_response")
+    if http_exchanges is None:
+        return errors
+    if not isinstance(http_exchanges, list):
+        errors.append("http_exchanges 必须是请求/响应交换列表")
+        return errors
+
+    for index, exchange in enumerate(http_exchanges):
+        prefix = f"http_exchanges[{index}]"
+        if not isinstance(exchange, dict):
+            errors.append(f"{prefix} 必须是包含 request 和 response 的对象")
+            continue
+        request = exchange.get("request")
+        if not isinstance(request, str) or not request.strip():
+            errors.append(f"{prefix}.request 必须包含原始 HTTP 请求")
+        else:
+            validate_block(request, f"{prefix}.request")
+        response = exchange.get("response")
+        if response is not None:
+            validate_block(response, f"{prefix}.response")
+        request_id = exchange.get("request_id")
+        if request_id is not None and (
+            not isinstance(request_id, str) or not request_id.strip().isdigit()
+        ):
+            errors.append(f"{prefix}.request_id 必须是数字代理请求 ID")
+    return errors
+
+
+def _exchange_ids_in_materials(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return list(
+        dict.fromkeys(
+            exchange["request_id"]
+            for exchange in raw
+            if isinstance(exchange, dict)
+            and isinstance(exchange.get("request_id"), str)
+            and exchange["request_id"].strip()
+        )
+    )
+
+
+def _request_ids_in_attack_chain(raw: Any) -> list[str]:
+    request_ids: list[str] = []
+
+    def add_id(value: Any) -> None:
+        if isinstance(value, str) and value.strip().isdigit():
+            request_ids.append(value.strip())
+        elif isinstance(value, list):
+            for item in value:
+                add_id(item)
+
+    def add_evidence(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                add_evidence(item)
+            return
+        if not isinstance(value, str):
+            return
+        evidence = re.sub(r"^证据\s*[:：]\s*", "", value.strip(), flags=re.IGNORECASE)
+        match = re.fullmatch(r"req\s+(\d+)", evidence, flags=re.IGNORECASE)
+        if match:
+            request_ids.append(match.group(1))
+
+    def walk(nodes: Any, depth: int = 0) -> None:
+        if not isinstance(nodes, list) or depth > 16:
+            return
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            for field in ("request_id", "http_exchange_id", "http_exchange_ids"):
+                add_id(node.get(field))
+            for field in ("evidence", "evidence_ref", "evidence_refs"):
+                add_evidence(node.get(field))
+            tests = node.get("parameter_tests")
+            if isinstance(tests, list):
+                for test in tests:
+                    if not isinstance(test, dict):
+                        continue
+                    for field in ("request_id", "http_exchange_id", "http_exchange_ids"):
+                        add_id(test.get(field))
+                    for field in ("evidence", "evidence_ref", "evidence_refs"):
+                        add_evidence(test.get(field))
+            walk(node.get("children", node.get("nodes")), depth + 1)
+
+    walk(raw)
+    return list(dict.fromkeys(request_ids))
+
+
 _HTTP_EXCHANGE_DROPPED_WARNING = (
     "代理项目当前无法访问，http_exchange_ids 未保存；代理恢复后请使用 "
     "update_vulnerability_report 补充。"
@@ -245,6 +355,68 @@ async def _verify_http_exchange_ids(
     if missing_ids:
         return None, ["http_exchange_ids 不存在于当前代理项目：" + ", ".join(missing_ids)], None
     return request_ids, [], None
+
+
+async def _verify_http_exchange_id_batches(
+    ctx: RunContextWrapper,
+    request_ids: list[str],
+) -> tuple[list[str] | None, list[str], str | None]:
+    verified: list[str] = []
+    for start in range(0, len(request_ids), _MAX_HTTP_EXCHANGE_IDS):
+        batch, errors, warning = await _verify_http_exchange_ids(
+            ctx,
+            request_ids[start : start + _MAX_HTTP_EXCHANGE_IDS],
+        )
+        if errors or warning:
+            return None, errors, warning
+        verified.extend(batch or [])
+    return verified, [], None
+
+
+async def _verify_report_http_references(
+    ctx: RunContextWrapper,
+    *,
+    http_exchange_ids: Any,
+    http_exchanges: Any,
+    attack_chain: Any,
+) -> tuple[list[str] | None, list[str], str | None]:
+    supplied_ids, errors = _normalize_http_exchange_ids(http_exchange_ids)
+    if errors:
+        return None, errors, None
+
+    material_ids = _exchange_ids_in_materials(http_exchanges)
+    chain_ids = _request_ids_in_attack_chain(attack_chain)
+    embedded_ids = list(dict.fromkeys([*material_ids, *chain_ids]))
+    ids_to_verify = list(dict.fromkeys([*(supplied_ids or []), *material_ids]))
+    verified_ids, errors, warning = await _verify_http_exchange_ids(
+        ctx,
+        ids_to_verify or supplied_ids,
+    )
+    if errors:
+        return None, errors, None
+    if warning and embedded_ids:
+        return None, [
+            "http_exchanges 或 attack_chain 中的请求 ID 无法向当前代理项目核验；"
+            "代理恢复后重试，或移除这些 ID。"
+        ], None
+
+    additional_chain_ids = [
+        request_id for request_id in chain_ids if request_id not in ids_to_verify
+    ]
+    if additional_chain_ids:
+        _verified_chain_ids, errors, warning = await _verify_http_exchange_id_batches(
+            ctx,
+            additional_chain_ids,
+        )
+        if errors:
+            return None, errors, None
+        if warning:
+            return None, [
+                "attack_chain 中的请求 ID 无法向当前代理项目核验；"
+                "代理恢复后重试，或移除这些 ID。"
+            ], None
+
+    return verified_ids, [], warning
 
 
 def _with_warning(result: dict[str, Any], warning: str | None) -> dict[str, Any]:
@@ -341,16 +513,125 @@ def _attack_chain_value(item: dict[str, Any], *keys: str) -> Any:
 
 
 def _validate_attack_chain(raw: Any) -> list[str]:
-    """Require reproducible provenance for structured entry-point nodes."""
+    """Require reproducible entry points and bounded, evidenced report trees."""
     if raw is None:
         return []
     if not isinstance(raw, list):
         return ["attack_chain 必须是按顺序排列的节点列表"]
 
     errors: list[str] = []
+    visited = 0
+
+    def string_values(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, str)]
+        return []
+
+    def validate_parameter_tests(value: Any, prefix: str) -> None:
+        if value is None:
+            return
+        if not isinstance(value, list):
+            errors.append(f"{prefix}.parameter_tests 必须是列表")
+            return
+        for test_index, test in enumerate(value):
+            test_prefix = f"{prefix}.parameter_tests[{test_index}]"
+            if not isinstance(test, dict):
+                errors.append(f"{test_prefix} 必须是对象")
+                continue
+            if not _attack_chain_value(
+                test, "parameter", "parameter_name", "candidate", "name", "key"
+            ):
+                errors.append(f"{test_prefix} 缺少候选参数名")
+            if not _attack_chain_value(
+                test, "result", "response_features", "response", "outcome"
+            ):
+                errors.append(f"{test_prefix} 缺少观察结果")
+            if not _attack_chain_value(
+                test,
+                "evidence",
+                "evidence_ref",
+                "evidence_refs",
+                "request_id",
+                "http_exchange_id",
+                "http_exchange_ids",
+                "source_ref",
+                "location",
+            ):
+                errors.append(f"{test_prefix} 缺少请求 ID 或来源证据")
+            validate_request_id_fields(test, test_prefix)
+
+    def validate_request_id_fields(item: dict[str, Any], prefix: str) -> None:
+        for field in ("request_id", "http_exchange_id"):
+            value = item.get(field)
+            if value is not None and (
+                not isinstance(value, str) or not value.strip().isdigit()
+            ):
+                errors.append(f"{prefix}.{field} 必须是数字代理请求 ID")
+        request_ids = item.get("http_exchange_ids")
+        if request_ids is not None:
+            _normalized, id_errors = _normalize_http_exchange_ids(request_ids)
+            errors.extend(f"{prefix}.{error}" for error in id_errors)
+        for field in (
+            "evidence",
+            "evidence_ref",
+            "evidence_refs",
+            "source_ref",
+            "location",
+        ):
+            for reference in string_values(item.get(field)):
+                normalized = re.sub(
+                    r"^证据\s*[:：]\s*", "", reference.strip(), flags=re.IGNORECASE
+                )
+                if re.match(r"^req(?:\s|$)", normalized, flags=re.IGNORECASE) and not re.fullmatch(
+                    r"req\s+\d+", normalized, flags=re.IGNORECASE
+                ):
+                    errors.append(
+                        f"{prefix}.{field} 中的 req 引用必须是数字代理请求 ID"
+                    )
+
+    def validate_nested_nodes(nodes: Any, prefix: str, depth: int) -> None:
+        nonlocal visited
+        if not isinstance(nodes, list):
+            errors.append(f"{prefix} 必须是节点列表")
+            return
+        if depth > 16:
+            errors.append(f"{prefix} 超过最大嵌套深度 16")
+            return
+        for child_index, child in enumerate(nodes):
+            visited += 1
+            child_prefix = f"{prefix}[{child_index}]"
+            if visited > 500:
+                errors.append("attack_chain 最多包含 500 个树节点")
+                return
+            if isinstance(child, str):
+                if not child.strip():
+                    errors.append(f"{child_prefix} 不能为空")
+                continue
+            if not isinstance(child, dict):
+                errors.append(f"{child_prefix} 必须是字符串或对象")
+                continue
+
+            validate_request_id_fields(child, child_prefix)
+            validate_parameter_tests(child.get("parameter_tests"), child_prefix)
+
+            children = child.get("children", child.get("nodes"))
+            if children is not None:
+                validate_nested_nodes(children, f"{child_prefix}.children", depth + 1)
+
     for index, item in enumerate(raw):
+        visited += 1
+        if visited > 500:
+            errors.append("attack_chain 最多包含 500 个树节点")
+            break
         if not isinstance(item, dict):
             continue
+        validate_request_id_fields(item, f"attack_chain[{index}]")
+        nested_children = item.get("children", item.get("nodes"))
+        if nested_children is not None:
+            validate_nested_nodes(nested_children, f"attack_chain[{index}].children", 1)
+        validate_parameter_tests(item.get("parameter_tests"), f"attack_chain[{index}]")
         node_type = str(item.get("type") or item.get("kind") or "").strip()
         normalized_type = node_type.lower().replace("-", "_").replace(" ", "_")
         if normalized_type not in _ENTRY_POINT_TYPES:
@@ -481,6 +762,12 @@ def _collect_update_changes(  # noqa: PLR0912, PLR0915
         if value is not None:
             changes[name] = value
 
+    raw_http_exchanges = fields.get("http_exchanges")
+    if raw_http_exchanges is not None:
+        errors.extend(_validate_raw_http_materials(http_exchanges=raw_http_exchanges))
+        if isinstance(raw_http_exchanges, list):
+            changes["http_exchanges"] = raw_http_exchanges
+
     confidence = clean_optional(fields.get("confidence"))
     if confidence is not None:
         confidence = confidence.lower()
@@ -551,6 +838,14 @@ def _collect_update_changes(  # noqa: PLR0912, PLR0915
         if isinstance(raw_attack_chain, list) and raw_attack_chain and not attack_chain_errors:
             changes["attack_chain"] = raw_attack_chain
 
+    errors.extend(
+        _validate_raw_http_materials(
+            burp_request=fields.get("burp_request"),
+            http_request=fields.get("http_request"),
+            http_response=fields.get("http_response"),
+        )
+    )
+
     return changes, errors
 
 
@@ -563,6 +858,7 @@ _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "poc_script_code",
     "burp_request",
     "http_exchange_ids",
+    "http_exchanges",
     "attack_chain",
 )
 
@@ -810,6 +1106,7 @@ async def _do_create(  # noqa: PLR0912
     burp_request: str | None = None,
     http_request: str | None = None,
     http_response: str | None = None,
+    http_exchanges: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
         {
@@ -851,6 +1148,14 @@ async def _do_create(  # noqa: PLR0912
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
     errors.extend(identifier_errors)
     errors.extend(_validate_attack_chain(attack_chain))
+    errors.extend(
+        _validate_raw_http_materials(
+            burp_request=burp_request,
+            http_request=http_request,
+            http_response=http_response,
+            http_exchanges=http_exchanges,
+        )
+    )
 
     normalized_http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(
         http_exchange_ids
@@ -902,6 +1207,7 @@ async def _do_create(  # noqa: PLR0912
             "burp_request": burp_request,
             "http_request": http_request,
             "http_response": http_response,
+            "http_exchanges": http_exchanges,
             "remediation_steps": remediation_steps,
             "evidence": evidence,
             "assumptions": assumptions,
@@ -1018,6 +1324,7 @@ async def create_vulnerability_report(
     burp_request: str | None = None,
     http_request: str | None = None,
     http_response: str | None = None,
+    http_exchanges: list[dict[str, Any]] | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
@@ -1037,8 +1344,12 @@ async def create_vulnerability_report(
 
     **攻击链路视图**：
 
-    - 对包含多个请求、权限变化或影响步骤的发现，按实际顺序填写
-      ``attack_chain``。报告会把这些节点渲染为纵向路径视图，不使用表格。
+    - 对多步发现填写 ``attack_chain``，节点可通过 ``children`` 构造递归树。
+      每个节点记录标签、来源、操作、结果和证据；参数名枚举写入
+      ``parameter_tests``，关键正向/负向样本的原始 HTTP 请求/响应写入
+      ``http_exchanges``。前端入口、微前端、路由、动态模块、敏感函数和后端
+      接口应按实际发现顺序逐层嵌套；节点之间的关系用 ``children`` 表示，
+      不要把多跳来源压缩成“来自前端”之类的描述。
 
     **Reporting and severity gate**:
 
@@ -1088,7 +1399,7 @@ async def create_vulnerability_report(
       prompts, internal errors / stack traces, or tester environment.
       Internal report IDs remain forbidden. Verified proxy request IDs are
       allowed only as evidence references in structured ``attack_chain``
-      fields, formatted as ``证据: req <id>``, and in
+      fields, formatted as ``req <id>`` (the renderer adds ``证据:``), and in
       ``http_exchange_ids``. Do not copy them into general narrative text.
     - **Language**: unless the user explicitly requests another
       language, every customer-facing narrative field must be written in
@@ -1113,8 +1424,11 @@ async def create_vulnerability_report(
       HTTP materials. Keep each in its own field; do not concatenate them into
       ``evidence`` or another combined block. Preserve headers, cookies,
       tokens, and bodies exactly as observed; report rendering does not redact
-      these fields. ``burp_request`` remains supported as the request-only
-      Burp Repeater field.
+      these fields. Every raw request/response must retain the empty line
+      between its header block and body (``\\r\\n\\r\\n`` or ``\\n\\n``),
+      including requests with no body, so copying the request into Burp Repeater
+      does not merge headers and body or wait for more input. ``burp_request``
+      remains supported as the request-only Burp Repeater field.
     - **PoC replay**: for Python HTTP PoCs, check whether the optional Burp
       listener at ``http://127.0.0.1:8080`` is available before sending. Use a
       ``requests.Session`` (or equivalent) with proxy environment variables
@@ -1250,9 +1564,9 @@ async def create_vulnerability_report(
         poc_script_code: Working PoC (Python preferred).
         burp_request: Raw HTTP request that can be pasted directly into
             Burp Repeater. Use the request line, Host header, relevant
-            headers, and body exactly as replayed (retrieve it from the
-            proving exchange with ``view_request``); do not wrap it in a
-            Markdown code fence. Omit for non-HTTP findings.
+            headers, the empty line after headers, and body exactly as replayed
+            (retrieve it from the proving exchange with ``view_request``); do not
+            wrap it in a Markdown code fence. Omit for non-HTTP findings.
         http_request: Complete raw HTTP request for the report's standalone
             Request evidence block. Keep it separate from ``http_response``
             and preserve it byte-for-byte. Omit when ``burp_request`` already
@@ -1260,6 +1574,12 @@ async def create_vulnerability_report(
         http_response: Complete raw HTTP response for the report's standalone
             Response evidence block. Keep it separate from ``http_request``;
             do not redact response headers, cookies, tokens, or body content.
+        http_exchanges: Ordered raw request/response pairs for key positive/control
+            comparisons. Include the binding parameter and a non-binding or
+            negative-control sample when applicable. Each item uses ``request_id``
+            (optional), ``request`` (required), and ``response`` (when captured);
+            retrieve packets with ``view_request`` and retain the empty line
+            between headers and body.
         remediation_steps: Specific, actionable fix (prose, no code).
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
@@ -1303,8 +1623,8 @@ async def create_vulnerability_report(
             them from ``list_requests`` or ``view_request``. Include the
             relevant control and exploit exchanges; omit this field only for
             findings without captured HTTP evidence. Never invent IDs. When
-            using structured ``attack_chain``, cite a verified ID only as
-            ``证据: req <id>``.
+            using structured ``attack_chain``, cite a verified ID as
+            ``req <id>`` without the ``证据:`` prefix; the report adds it.
 
             **How ``fix_before`` / ``fix_after`` work**: they're used as
             literal GitHub/GitLab PR suggestion blocks. When a reviewer
@@ -1417,14 +1737,55 @@ async def create_vulnerability_report(
             HTML, JavaScript, OpenAPI/Swagger, Sitemap, redirect, source file,
             configuration, or another explicitly named source. When multiple
             pages, scripts, documents, redirects, or other assets yielded the
-            URL or parameters, include ordered ``provenance_chain`` hops with
-            ``from``, ``action``, ``to``, and a source/evidence reference;
-            ``extraction_chain`` remains a compatibility alias. Use ``source``
-            as a legacy fallback only when it identifies the concrete
-            request/page/script/document/configuration. Missing provenance is rejected;
-            use ``discovery_method: unverified`` and describe the gap when it
-            cannot be established. Missing verification or blocking material
-            is rendered as ``待补充``.
+            URL or parameters, preserve each as a nested ``children`` node with
+            its concrete label, ``source``, ``action``, observed ``result``, and
+            evidence reference. Use ordered ``provenance_chain`` hops with
+            ``from``, ``action``, ``to``, and a source/evidence reference when a
+            linear hop list is a better fit; ``extraction_chain`` remains a
+            compatibility alias. Record every tested parameter candidate under
+            ``parameter_tests`` with its value when applicable, observed result,
+            and request ID. Use ``source`` as a legacy fallback only when it
+            identifies the concrete request/page/script/document/configuration.
+            Missing entry-point provenance fails validation; when a later hop
+            cannot be established, mark that node ``unverified`` and describe
+            the proof gap. Missing verification or blocking material is rendered
+            as ``待补充``.
+            A nested node can use this shape (replace every value with observed
+            evidence; do not copy placeholder values):
+
+                {
+                  "type": "entry_point",
+                  "title": "浏览器入口",
+                  "route": "GET /api/example",
+                  "parameters": ["name"],
+                  "discovery_method": "js_extracted",
+                  "url_source": "实际页面或脚本及行/位置",
+                  "parameter_source": "实际调用点及参数绑定依据",
+                  "children": [
+                    {
+                      "label": "主应用脚本",
+                      "source": "实际页面引用的脚本",
+                      "action": "注册微前端并声明路由",
+                      "result": "实际发现的子应用路由",
+                      "children": [
+                        {
+                          "label": "GET /api/example",
+                          "source": "实际动态模块及调用位置",
+                          "action": "调用后端接口",
+                          "result": "实际观察到的响应"
+                        }
+                      ]
+                    }
+                  ],
+                  "parameter_tests": [
+                    {
+                      "parameter": "name",
+                      "value": "实际测试值",
+                      "result": "响应差异",
+                      "request_id": "实际代理请求 ID"
+                    }
+                  ]
+                }
     Example (abbreviated — mirror this structure)::
 
         title: "Reflected XSS in /search q parameter"
@@ -1474,7 +1835,12 @@ async def create_vulnerability_report(
         http_exchange_ids,
         http_exchange_errors,
         http_exchange_warning,
-    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    ) = await _verify_report_http_references(
+        ctx,
+        http_exchange_ids=http_exchange_ids,
+        http_exchanges=http_exchanges,
+        attack_chain=attack_chain,
+    )
     if http_exchange_errors:
         return json.dumps(
             {"success": False, "error": "校验失败", "errors": http_exchange_errors},
@@ -1513,6 +1879,7 @@ async def create_vulnerability_report(
         attack_chain=attack_chain,
         http_request=http_request,
         http_response=http_response,
+        http_exchanges=http_exchanges,
         agent_id=agent_id,
         agent_name=agent_name,
     )
@@ -1553,6 +1920,7 @@ async def update_vulnerability_report(
     fix_pr_body: str | None = None,
     contextual_cvss_reasoning: str | None = None,
     attack_chain: list[dict[str, Any] | str] | None = None,
+    http_exchanges: list[dict[str, Any]] | None = None,
 ) -> str:
     """Revise a vulnerability report that is already filed, keeping its id.
 
@@ -1608,12 +1976,17 @@ async def update_vulnerability_report(
         poc_description: Replacement PoC steps (no code).
         poc_script_code: Replacement exploit script or payload.
         burp_request: Replacement raw HTTP request for Burp Repeater,
-            without Markdown fences. Omit for non-HTTP findings.
+            without Markdown fences. Preserve the empty line after headers.
+            Omit for non-HTTP findings.
         http_request: Replacement raw HTTP request for the standalone Request
             evidence block. Keep it separate from ``http_response``.
         http_response: Replacement raw HTTP response for the standalone
             Response evidence block. Preserve the complete response without
             redaction.
+        http_exchanges: Replacement ordered request/response evidence pairs.
+            Each item uses ``request_id`` (optional), ``request`` (required),
+            and ``response`` (when captured). Keep the empty line between each
+            header block and body.
         remediation_steps: Replacement remediation prose (no code).
         evidence: Replacement evidence.
         assumptions: Replacement exploitability prerequisites.
@@ -1638,11 +2011,17 @@ async def update_vulnerability_report(
             observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
     """
+    supplied_http_exchange_ids = http_exchange_ids is not None
     (
         http_exchange_ids,
         http_exchange_errors,
         http_exchange_warning,
-    ) = await _verify_http_exchange_ids(ctx, http_exchange_ids)
+    ) = await _verify_report_http_references(
+        ctx,
+        http_exchange_ids=http_exchange_ids,
+        http_exchanges=http_exchanges,
+        attack_chain=attack_chain,
+    )
     if http_exchange_errors:
         return json.dumps(
             {"success": False, "error": "校验失败", "errors": http_exchange_errors},
@@ -1666,6 +2045,7 @@ async def update_vulnerability_report(
             "burp_request": burp_request,
             "http_request": http_request,
             "http_response": http_response,
+            "http_exchanges": http_exchanges,
             "remediation_steps": remediation_steps,
             "evidence": evidence,
             "assumptions": assumptions,
@@ -1680,7 +2060,9 @@ async def update_vulnerability_report(
             "cve": cve,
             "cwe": cwe,
             "code_locations": code_locations,
-            "http_exchange_ids": http_exchange_ids,
+            "http_exchange_ids": (
+                http_exchange_ids if supplied_http_exchange_ids else None
+            ),
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "contextual_cvss_reasoning": contextual_cvss_reasoning,

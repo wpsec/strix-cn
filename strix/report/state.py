@@ -83,6 +83,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "burp_request",
         "http_request",
         "http_response",
+        "http_exchanges",
         "remediation_steps",
         "evidence",
         "assumptions",
@@ -448,6 +449,7 @@ class ReportState:
         burp_request: str | None = None,
         http_request: str | None = None,
         http_response: str | None = None,
+        http_exchanges: list[dict[str, Any]] | None = None,
     ) -> str:
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
@@ -477,6 +479,8 @@ class ReportState:
             report["http_request"] = http_request
         if isinstance(http_response, str) and http_response.strip():
             report["http_response"] = http_response
+        if http_exchanges:
+            report["http_exchanges"] = http_exchanges
         if remediation_steps:
             report["remediation_steps"] = remediation_steps.strip()
         if evidence:
@@ -565,7 +569,12 @@ class ReportState:
             if isinstance(value, str):
                 if key == "title":
                     value = _clean_title(value)
-                elif key not in {"burp_request", "http_request", "http_response"}:
+                elif key not in {
+                    "burp_request",
+                    "http_request",
+                    "http_response",
+                    "http_exchanges",
+                }:
                     value = value.strip()
                 if key in _LOWERCASE_REPORT_FIELDS:
                     value = value.lower()

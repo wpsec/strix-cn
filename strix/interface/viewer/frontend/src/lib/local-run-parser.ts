@@ -1,5 +1,6 @@
 import type {
   AttackChainNode,
+  HTTPExchangeEvidence,
   Vulnerability,
   VulnerabilitySeverity,
   VulnerabilityStatus,
@@ -94,12 +95,15 @@ function parseAttackChain(raw: unknown): AttackChainNode[] | null {
     "observation",
     "result",
     "evidence",
+    "evidence_refs",
     "hypothesis",
     "source",
     "discovery_method",
     "url_source",
     "provenance_chain",
     "extraction_chain",
+    "children",
+    "nodes",
     "child_apps_source",
     "app_manifest_source",
     "manifest_source",
@@ -132,6 +136,7 @@ function parseAttackChain(raw: unknown): AttackChainNode[] | null {
     "chunks",
     "parameters_detail",
     "comparison_tests",
+    "parameter_tests",
     "comparison",
     "tests",
   ] as const;
@@ -163,6 +168,25 @@ function parseAttackChain(raw: unknown): AttackChainNode[] | null {
     if (Object.keys(row).length > 0) rows.push(row);
   }
   return rows.length > 0 ? rows : null;
+}
+
+function parseHttpExchanges(raw: unknown): HTTPExchangeEvidence[] | null {
+  if (!Array.isArray(raw)) return null;
+  const exchanges: HTTPExchangeEvidence[] = [];
+  for (const value of raw) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const exchange = value as Record<string, unknown>;
+    if (typeof exchange.request !== "string" || !exchange.request.trim()) continue;
+    const parsed: HTTPExchangeEvidence = { request: exchange.request };
+    if (typeof exchange.request_id === "string" && exchange.request_id.trim()) {
+      parsed.request_id = exchange.request_id;
+    }
+    if (typeof exchange.response === "string" && exchange.response.length > 0) {
+      parsed.response = exchange.response;
+    }
+    exchanges.push(parsed);
+  }
+  return exchanges.length > 0 ? exchanges : null;
 }
 
 function parseJson(text: string, label: string): unknown {
@@ -260,6 +284,7 @@ function emptyVulnerabilityDefaults(): Omit<
     burp_request: null,
     http_request: null,
     http_response: null,
+    http_exchanges: null,
     code_diff: null,
     code_file: null,
     code_before: null,
@@ -324,6 +349,7 @@ function parseOneVulnerability(
     burp_request: asStringOrNull(raw.burp_request),
     http_request: asStringOrNull(raw.http_request),
     http_response: asStringOrNull(raw.http_response),
+    http_exchanges: parseHttpExchanges(raw.http_exchanges),
     cwe,
     code_locations: Array.isArray(raw.code_locations)
       ? (raw.code_locations as Vulnerability["code_locations"])

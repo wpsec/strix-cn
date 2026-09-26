@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import sys
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -70,6 +71,8 @@ import logging  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+_RESUME_TOKEN_INCREMENT = 200_000_000
+
 _ROOT_SUBCOMMAND_HELP = """
 Additional commands:
   strix cloud ...          Use the managed Strix platform
@@ -119,6 +122,49 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     if any(SOCKS_PROXY_MISSING_MODULE_ERROR in message for message in messages):
         return SOCKS_PROXY_HINT
     return None
+
+
+def _suggested_resume_token_limit(report_state: Any) -> str:
+    """Return a resume cap that adds 200M tokens to the persisted budget/usage."""
+    from strix.core.token_budget import normalize_token_limit
+
+    run_record = getattr(report_state, "run_record", None)
+    if not isinstance(run_record, dict):
+        run_record = {}
+
+    try:
+        persisted_limit = normalize_token_limit(run_record.get("token_limit")) or 0
+    except ValueError:
+        logger.debug(
+            "Could not parse persisted token limit for resume hint",
+            exc_info=True,
+        )
+        persisted_limit = 0
+
+    get_total_tokens = getattr(report_state, "get_total_llm_tokens", None)
+    try:
+        tokens_used = (
+            get_total_tokens()
+            if callable(get_total_tokens)
+            else run_record.get("tokens_used", 0)
+        )
+    except Exception:
+        logger.debug("Could not read token usage for resume hint", exc_info=True)
+        tokens_used = run_record.get("tokens_used", 0)
+    if isinstance(tokens_used, bool) or not isinstance(tokens_used, int):
+        tokens_used = 0
+
+    # --token-limit is a total cap, so exceed both the prior cap and recorded usage.
+    suggested_limit = max(persisted_limit, tokens_used) + _RESUME_TOKEN_INCREMENT
+    for suffix, divisor in (
+        ("T", 1_000_000_000_000),
+        ("G", 1_000_000_000),
+        ("M", 1_000_000),
+        ("K", 1_000),
+    ):
+        if suggested_limit % divisor == 0:
+            return f"{suggested_limit // divisor}{suffix}"
+    return str(suggested_limit)
 
 
 def _subscription_error_hint(exc: BaseException) -> str | None:
@@ -323,7 +369,8 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
         token_resume_text.append("追加 Token", style="dim")
         token_resume_text.append("  ")
         token_resume_text.append(
-            f"strix --resume {args.run_name} --token-limit 200M",
+            "strix --resume "
+            f"{args.run_name} --token-limit {_suggested_resume_token_limit(report_state)}",
             style="#22c55e",
         )
         panel_parts.extend(["\n", token_resume_text])
