@@ -678,6 +678,27 @@ def _validate_attack_chain(raw: Any) -> list[str]:
     return errors
 
 
+def _validate_required_attack_chain(raw: Any) -> list[str]:
+    """Require a structured entry point for newly filed vulnerability reports."""
+    if not isinstance(raw, list) or not raw:
+        return ["新漏洞报告必须包含至少一个结构化 entry_point 攻击链节点"]
+    has_entry_point = False
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        node_type = str(item.get("type") or item.get("kind") or "")
+        normalized_type = node_type.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized_type in _ENTRY_POINT_TYPES:
+            has_entry_point = True
+            break
+    if not has_entry_point:
+        return [
+            "新漏洞报告的 attack_chain 必须包含顶层结构化 entry_point；"
+            "不能只提供 endpoint 或普通字符串列表"
+        ]
+    return _validate_attack_chain(raw)
+
+
 def _validate_fix_verification(
     locations: list[dict[str, Any]] | None,
     fix_verification: str | None,
@@ -1103,6 +1124,7 @@ async def _do_create(  # noqa: PLR0912
     agent_id: str | None = None,
     agent_name: str | None = None,
     attack_chain: list[dict[str, Any] | str] | None = None,
+    require_attack_chain: bool = False,
     burp_request: str | None = None,
     http_request: str | None = None,
     http_response: str | None = None,
@@ -1147,7 +1169,12 @@ async def _do_create(  # noqa: PLR0912
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
     errors.extend(identifier_errors)
-    errors.extend(_validate_attack_chain(attack_chain))
+    attack_chain_errors = (
+        _validate_required_attack_chain(attack_chain)
+        if require_attack_chain
+        else _validate_attack_chain(attack_chain)
+    )
+    errors.extend(attack_chain_errors)
     errors.extend(
         _validate_raw_http_materials(
             burp_request=burp_request,
@@ -1311,6 +1338,7 @@ async def create_vulnerability_report(
     severity_change_conditions: str,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
+    attack_chain: list[dict[str, Any]],
     endpoint: str | None = None,
     method: str | None = None,
     cve: str | None = None,
@@ -1320,7 +1348,6 @@ async def create_vulnerability_report(
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
-    attack_chain: list[dict[str, Any] | str] | None = None,
     burp_request: str | None = None,
     http_request: str | None = None,
     http_response: str | None = None,
@@ -1344,12 +1371,17 @@ async def create_vulnerability_report(
 
     **攻击链路视图**：
 
-    - 对多步发现填写 ``attack_chain``，节点可通过 ``children`` 构造递归树。
+    - 每个发现都必须填写 ``attack_chain``，单步发现也不能省略入口节点。
+      至少提供一个结构化 ``entry_point``，记录 URL/接口、发现方式、URL 来源、
+      参数来源和实际参数；没有 query 参数或请求体时明确写 ``无``，并说明
+      如何确认请求没有这些参数。节点可通过 ``children`` 构造递归树。
       每个节点记录标签、来源、操作、结果和证据；参数名枚举写入
       ``parameter_tests``，关键正向/负向样本的原始 HTTP 请求/响应写入
       ``http_exchanges``。前端入口、微前端、路由、动态模块、敏感函数和后端
       接口应按实际发现顺序逐层嵌套；节点之间的关系用 ``children`` 表示，
-      不要把多跳来源压缩成“来自前端”之类的描述。
+      不要把多跳来源压缩成“来自前端”之类的描述。若某请求结果泄露了另一个
+      操作所需的对象 ID 或行号，应在子节点中记录提取过程，并链接到后续接口
+      及其实际参数；不要把未验证的后续影响写成已完成攻击链。
 
     **Reporting and severity gate**:
 
@@ -1726,9 +1758,11 @@ async def create_vulnerability_report(
             fix (summary + rationale). Prose/markdown only — the code
             change itself belongs in ``code_locations``. Omit for
             black-box findings.
-        attack_chain: Ordered attack-path nodes. Optional for a single-step
-            finding; use it when the finding depends on a request sequence.
-            For a front-end or micro-frontend chain, use the structured node
+        attack_chain: Required ordered attack-path nodes, including for a
+            single-step finding. Provide at least one structured ``entry_point``
+            with its exact route, actual parameters (write ``无`` when none),
+            discovery method, URL source, and parameter source. For a front-end
+            or multi-step chain, use the structured node
             types ``entry_point``, ``trust_boundary``, ``input_tampering``,
             ``aggregation_point``, ``verification``, and ``blocked``. An
             ``entry_point`` must include the exact URL/interface and
@@ -1750,6 +1784,12 @@ async def create_vulnerability_report(
             cannot be established, mark that node ``unverified`` and describe
             the proof gap. Missing verification or blocking material is rendered
             as ``待补充``.
+            For a request with no query parameters or body, set
+            ``parameters`` to ``无`` and explain in ``parameter_source`` how
+            the raw request confirms their absence; do not leave either field
+            blank. When an exposed object ID or row number becomes an input to
+            a later operation, preserve that transition as a child node and
+            record the downstream route and parameters separately.
             A nested node can use this shape (replace every value with observed
             evidence; do not copy placeholder values):
 
@@ -1830,6 +1870,15 @@ async def create_vulnerability_report(
             A restrictive CSP that blocks inline script execution would
             reduce impact and lower the severity.
         fix_effort: "low"
+        attack_chain:
+            - type: entry_point
+              title: Search endpoint
+              route: GET /search?q=<payload>
+              parameters: ["q"]
+              discovery_method: direct_request
+              url_source: Direct request to the tested route
+              parameter_source: Query string in the captured request
+              evidence: req 1
     """
     (
         http_exchange_ids,
@@ -1877,6 +1926,7 @@ async def create_vulnerability_report(
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
         attack_chain=attack_chain,
+        require_attack_chain=True,
         http_request=http_request,
         http_response=http_response,
         http_exchanges=http_exchanges,

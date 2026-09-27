@@ -245,7 +245,13 @@ def _attack_chain_nodes(report: dict[str, Any]) -> list[tuple[str, str, str]]:
         endpoint = str(report.get("endpoint") or "").strip()
         method = str(report.get("method") or "").strip()
         if endpoint:
-            nodes.append(("入口", f"{method} {endpoint}".strip(), ""))
+            nodes.append(
+                (
+                    "入口",
+                    f"{method} {endpoint}".strip(),
+                    "接口来源方式: 待补充；参数: 待补充；URL来源: 待补充；参数来源: 待补充",
+                )
+            )
     return nodes
 
 
