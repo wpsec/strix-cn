@@ -30,6 +30,9 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已合并�
 - Burp/Caido 流量驱动模式下，不要一次性把整站大量接口流量导给 Strix；按功能点分批测试
 - 对增删改类接口保持谨慎，不建议把高风险破坏性操作直接交给 AI
 - AI 会把任务分发给多个专家代理，复杂扫描通常需要较长时间
+<a href="https://github.com/usestrix/strix"><img src="https://img.shields.io/github/stars/usestrix/strix?style=flat-square" alt="GitHub Stars"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-3b82f6?style=flat-square" alt="License"></a>
+<a href="https://pypi.org/project/strix-agent/"><img src="https://img.shields.io/pypi/v/strix-agent?style=flat-square" alt="PyPI Version"></a>
 
 ## 核心能力
 
@@ -183,85 +186,6 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 .venv/bin/strix --resume <run_name> --token-limit 200M
 ```
 
-### 单请求入口
-
-单个数据包如果目的是让 Strix 深入测试并尝试形成有效漏洞，直接使用常规扫描入口的 `--request`：
-
-```bash
-.venv/bin/strix \
-  --request ./burp-request.txt \
-  --issue "检查该请求涉及的参数是否存在越权、注入或可获得更高权限的利用链" \
-  -n
-```
-
-这条命令会启动完整的 AI 渗透测试链路、Docker sandbox、Caido 代理、子 Agent 和原生漏洞报告。请求文件只是起始证据，Agent 会在授权范围内重放基线、分析相关接口和业务流程、变异参数并验证实际影响，不会停在一次固定探针的响应比较上。未指定 `--target` 时，Strix 从请求的 Scheme、Host 和 Port 自动建立目标；指定 `--target` 或 `--target-list` 时，请求的 Host/Port 必须命中授权目标。
-
-入口边界如下：
-
-| 入口                 | 适用目的                             | 执行引擎           |
-| -------------------- | ------------------------------------ | ------------------ |
-| `--verify --request` | 确定性复测、修复回归、证明已知假设   | 受限验证执行器     |
-| `--request`          | 以单个数据包为入口的完整 AI 渗透测试 | 完整 AI Agent 图   |
-| `--burp-port`        | 从 Burp/Caido 流量采集并测试功能点   | 完整目标级扫描链路 |
-| `--target`           | 常规目标级渗透测试                   | 常规 Agent 图      |
-
-因此，`--verify` 的结果是“复测证据”，不代表它已经完成一次完整的单包测试；想让 AI 自主扩展测试面，应使用常规扫描入口的 `--request`。
-
-常规扫描入口不使用额外的安全模式配置，也不存在 `STRIX_MODE` 或 `--mode`。`--scan-mode quick|standard|deep` 是上游原生的扫描深度配置；`--verify` 是独立的确定性复测命令，不是可持久化的安全模式。
-
-报告产物遵循上游原生结构，仅将用户可见标题和字段翻译为中文：`penetration_test_report.md` 是执行摘要，`vulnerabilities/*.md` 是单漏洞明细，另有 `vulnerabilities.json`、`vulnerabilities.csv` 和 `findings.sarif`。多请求、权限变化或影响扩大的漏洞会在单漏洞报告中追加 `攻击链路` 纵向路径视图；它是报告展示扩展，不改变原生报告字段和判定规则。
-
-运行产物位于 `strix_runs/<run-name>/`，包括 `penetration_test_report.md`、`vulnerabilities/*`、`vulnerabilities.json`、`vulnerabilities.csv`、`run.json` 和 `findings.sarif`。
-
-常规扫描入口会按完整 Agent 图测试目标；单请求只提供上下文，不会改变报告格式、作用域校验或 Agent 工具能力。
-
-### 单个漏洞复测
-
-验证计划由当前配置的 Strix LLM 根据“漏洞描述 + 脱敏请求结构”生成。模型只提出漏洞标签、目标字段、验证能力、探针和判定器，随后由本地校验器检查字段白名单、动作、载荷、请求数量和副作用边界；模型调用失败或意图不完整时直接阻断，不按漏洞名称匹配固定模板，也不猜测请求中不存在的字段。运行前请先完成模型配置，至少设置 STRIX_LLM、LLM_API_KEY，以及兼容网关所需的 LLM_API_BASE。
-
-确认漏洞时报告会提供“可复现 PoC”和已执行探针请求；未复现、阻断或证据不足时会提供“未复现证明”，包括控制请求、探针请求、响应状态码、长度、响应指纹和未满足的判定条件。报告中的原始请求和实际重放请求仍按原样保留，便于在 Burp Repeater 中复核。
-
-需要第二授权身份时，使用 --secondary-request 提供第二个 Burp 请求包；需要受控出站验证时，使用 --canary-url 提供由操作员控制的公网 Canary 地址。模型不能自行指定第二身份请求或出站目标。
-
-当前版本没有 OOB 回调确认能力，Canary 回显只记录为证据不足，不会单凭回显确认服务端请求伪造。
-
-`--verify` 用于复核一个具体漏洞，不启动常规扫描或整站攻击面发现。提供 Burp 的 Raw HTTP / Copy as cURL 请求，以及一句自然语言问题描述，Strix 会先生成验证计划，确认后才启动与常规扫描一致的 Docker sandbox，并通过容器内配置的 Caido 代理发送受限探针请求；计划阶段不会启动容器或发送请求。需要 AI 自主探索测试面时，使用上面的常规扫描入口 `--request`，不要把 `--verify` 当作单包完整扫描入口。
-
-```bash
-# 交互模式：按提示粘贴请求和漏洞描述
-.venv/bin/strix --verify
-
-# 非交互模式：请求文件和描述均由参数提供
-.venv/bin/strix --verify \
-  --request ./burp-request.txt \
-  --issue "疑似 IDOR，修改订单 ID 后可能读取其他用户订单" \
-  -n --yes
-
-# 修复后复测：沿用历史验证计划和探针
-.venv/bin/strix --verify \
-  --baseline <历史运行名> \
-  --request ./burp-request-after-fix.txt \
-  -n --yes
-
-# 跨身份对象边界：额外提供第二个授权身份的同端点请求
-.venv/bin/strix --verify \
-  --request ./primary-request.txt \
-  --secondary-request ./secondary-request.txt \
-  --issue "疑似对象访问边界问题" \
-  -n --yes
-
-# 需要受控出站验证时：只使用操作员控制的 Canary 地址
-.venv/bin/strix --verify \
-  --request ./burp-request.txt \
-  --canary-url https://canary.example/strix-test \
-  --issue "疑似服务端出站请求边界问题" \
-  -n --yes
-```
-
-交互模式中，请求内容以单独一行 `__STRIX_END__` 结束。执行前会展示识别出的漏洞类型、目标字段、验证动作、预计请求数和副作用提示；JSON 请求会递归暴露叶子字段，例如 `body.dataPackage.configList[0].conditionSql`，不需要手工填写参数路径。IDOR/BOLA 等需要第二身份的场景会继续要求提供第二个请求包。Raw 请求缺少 Scheme 时，如果同源 `Origin` 或 `Referer` 已明确给出协议，复测命令会自动采用；否则交互式复测只询问一次使用 `http` 还是 `https`，非交互式复测会直接阻断。
-
-复测结果和可复制的 Burp Repeater 请求保存在 `strix_runs/<run-name>/`，包括 `verification-plan.json`、`verification-result.json`、`verification-evidence.jsonl` 和 `penetration_test_report.md`。执行环境记录为 `docker-sandbox`，复测完成后会清理临时容器；容器启动或执行失败时不会回退到宿主机直连，而是生成证据不足的报告。`--verify` 与 `--target`、`--burp-port` 和 `--resume` 互斥；只能对已获得授权的目标执行。
-
 ## 常见用法
 
 ### 基础扫描
@@ -293,7 +217,7 @@ strix --target "postman://<collection-uuid>?env=<environment-uuid>"
 
 ### Burp/Caido 流量驱动常规渗透测试
 
-`--burp-port` 启动 Burp/Caido 流量驱动的常规扫描，从进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。它不是 `--verify` 的单漏洞复测。
+`--burp-port` 启动 Burp/Caido 流量驱动的常规扫描，从进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。
 
 ```bash
 # 仅使用 Burp/Caido 流量建立测试上下文

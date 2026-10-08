@@ -10,36 +10,20 @@ from strix.report.usage import LLMUsageLedger
 
 
 def test_resolves_common_bare_model_names() -> None:
-    # The live LiteLLM map is fetched over the network (and may fail to, or lag
-    # a release), so price resolution is asserted against a deterministic map
-    # the way ``1ccbae9`` stabilized it; the real map's shape is not the SUT.
-    original = litellm.model_cost
-    litellm.model_cost = {
-        "deepseek/deepseek-v4-flash": {
-            "input_cost_per_token": 1.0,
-            "output_cost_per_token": 2.0,
-        },
-        "xai/grok-4.5": {
-            "input_cost_per_token": 3.0,
-            "output_cost_per_token": 4.0,
-        },
-        "minimax/MiniMax-M3": {
-            "input_cost_per_token": 5.0,
-            "output_cost_per_token": 6.0,
-        },
-    }
-    try:
-        resolve_litellm_model.cache_clear()
-        assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-        assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
-        assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
-        # MiniMax-M3 is sold by several LiteLLM providers at different prices, so
-        # the resolver must not guess from its bare name. A provider-qualified
-        # model remains deterministic.
-        assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
-    finally:
-        litellm.model_cost = original
-        resolve_litellm_model.cache_clear()
+    resolve_litellm_model.cache_clear()
+    assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+    assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+    # LiteLLM prices grok-4.5 identically under xai/, perplexity/xai/ and
+    # openrouter/x-ai/, so the resolver may return any of them; the contract
+    # is a provider-qualified name LiteLLM can price.
+    grok = resolve_litellm_model("grok-4.5")
+    assert grok is not None
+    assert grok.endswith("/grok-4.5")
+    assert grok in litellm.model_cost
+    # MiniMax-M3 is sold by several LiteLLM providers at different prices, so
+    # the resolver must not guess from its bare name. A provider-qualified
+    # model remains deterministic.
+    assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
 
 
 def test_resolver_returns_none_for_unresolvable_model() -> None:

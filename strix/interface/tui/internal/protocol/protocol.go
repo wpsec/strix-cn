@@ -72,7 +72,6 @@ type Snapshot struct {
 	ScopeMode                 string           `json:"scope_mode"`
 	DiffBase                  string           `json:"diff_base"`
 	Model                     string           `json:"model"`
-	ModelWarning              string           `json:"model_warning"`
 	PassiveProxyMode          bool             `json:"passive_proxy_mode"`
 	PassiveProxyPhase         string           `json:"passive_proxy_phase"`
 	ProxyRecentRequestCount   int              `json:"proxy_recent_request_count"`

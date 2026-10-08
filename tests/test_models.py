@@ -1,33 +1,30 @@
-"""Tests for LLM model recommendation helpers."""
+"""Tests for LLM model configuration helpers."""
 
 from __future__ import annotations
 
-import os
-
+import litellm
 import pytest
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
+from agents.models import _openai_shared
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from agents.models.openai_responses import OpenAIResponsesModel
 
+from strix.config import models
 from strix.config.models import (
-    RECOMMENDED_MODEL_NAMES,
     StrixProvider,
-    _configure_anthropic_max_tokens_default,
     _NonStreamingModel,
     _TurnGuardModel,
-    is_anthropic_protocol_base,
-    is_recommended_or_frontier_model,
-    normalize_model_for_endpoint,
+    configure_sdk_model_defaults,
+    model_supports_images,
     request_timeout_extra_args,
+    resolve_api_type,
     routes_through_litellm,
     supports_strict_tool_schemas,
-    validate_provider_route_config,
+    uses_chat_completions_tool_schema,
 )
-from strix.config.settings import LlmSettings, Settings
-
-
-@pytest.mark.parametrize("model_name", RECOMMENDED_MODEL_NAMES)
-def test_recommended_models_are_accepted(model_name: str) -> None:
-    assert is_recommended_or_frontier_model(model_name)
+from strix.config.settings import Settings
+from strix.llm.request_log import RequestLoggingModel
 
 
 def test_request_timeout_extra_args_positive() -> None:
@@ -45,184 +42,6 @@ def test_request_timeout_extra_args_survives_model_settings_json_dump() -> None:
 @pytest.mark.parametrize("value", [None, 0, -1])
 def test_request_timeout_extra_args_disabled(value: float | None) -> None:
     assert request_timeout_extra_args(value) is None
-
-
-def test_recommended_models_are_matched_case_insensitively() -> None:
-    assert is_recommended_or_frontier_model("Vertex_AI/Gemini-3-Pro-Preview")
-
-
-@pytest.mark.parametrize(
-    "model_name",
-    [
-        "gpt-5.5",
-        "chatgpt/gpt-5.4",
-        "litellm/openai/gpt-5.4-pro",
-        "azure_ai/gpt-5.5-pro",
-        "bedrock_mantle/openai.gpt-5.5",
-        "anthropic/claude-opus-5",
-        "anthropic/claude-opus-4-8",
-        "anthropic.claude-opus-4-8",
-        "anthropic/claude-opus-4-7",
-        "anthropic/claude-fable-5",
-        "anthropic/claude-sonnet-5",
-        "vertex_ai/claude-sonnet-5@default",
-        "vertex_ai/claude-sonnet-4-6@default",
-        "any-llm/anthropic/claude-sonnet-4-6",
-        "vertex_ai/gemini-3.1-pro-preview",
-        "openrouter/google/gemini-3.1-pro-preview",
-        "deepseek/deepseek-v4-pro",
-        "deepseek/deepseek-r1-0528",
-        "deepseek/deepseek-reasoner",
-        "dashscope/qwen3-max-2026-01-23",
-        "qwen3.7-max",
-        "dashscope/qwen3.8-max",
-        "moonshot/kimi-k2.6",
-        "kimi-k2.7-code",
-        "moonshot/kimi-k3",
-        "anthropic/claude-fable-5-1",
-        "vertex_ai/claude-fable-5-1@default",
-        "gemini/gemini-3.7-flash",
-        "glm-5.3",
-        "zai/glm-5.3-flash",
-        "openrouter/z-ai/glm-5.3",
-        "novita/zai-org/glm-5.2",
-        "openai/glm-5.3",
-        "openai/zai-org/glm-5.3",
-        "hosted_vllm/glm-5.3",
-        "openai/claude-opus-4-8",
-        "openai/deepseek-v4-pro",
-        "custom-ollama/gpt-5-mini-local",
-        "custom-provider/claude-opus-4-local",
-        "custom-provider/glm-5.3-local",
-    ],
-)
-def test_frontier_model_families_are_accepted(model_name: str) -> None:
-    assert is_recommended_or_frontier_model(model_name)
-
-
-@pytest.mark.parametrize(
-    "model_name",
-    [
-        "",
-        "openai/gpt-4.1",
-        "anthropic/claude-3-5-sonnet-latest",
-        "ollama/llama3.1",
-        "deepseek/deepseek-chat",
-        "xai/grok-4.5",
-        "openrouter/x-ai/grok-4",
-        "mistral/mistral-medium-3-5",
-        "mistral/magistral-medium-latest",
-        "zai/glm-4.7",
-        "openai/glm-4.7",
-        "openrouter/z-ai/glm-5",
-    ],
-)
-def test_non_frontier_models_are_rejected(model_name: str) -> None:
-    assert not is_recommended_or_frontier_model(model_name)
-
-
-def _settings(*, api_key: str | None, api_base: str | None) -> Settings:
-    return Settings(
-        llm=LlmSettings(
-            model="deepseek/deepseek-v4-pro",
-            api_key=api_key,
-            api_base=api_base,
-        )
-    )
-
-
-def test_aliyun_plan_key_rejects_workspace_endpoint() -> None:
-    settings = _settings(
-        api_key="sk-sp-demo",
-        api_base="https://ws-r7decpdut5x0sanx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-    )
-
-    with pytest.raises(ValueError, match="sk-sp-"):
-        validate_provider_route_config(settings)
-
-
-def test_aliyun_workspace_key_rejects_token_plan_endpoint() -> None:
-    settings = _settings(
-        api_key="sk-ws-demo",
-        api_base="https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-    )
-
-    with pytest.raises(ValueError, match="Token Plan"):
-        validate_provider_route_config(settings)
-
-
-def test_aliyun_plan_key_accepts_token_plan_endpoint() -> None:
-    settings = _settings(
-        api_key="sk-sp-demo",
-        api_base="https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-    )
-
-    validate_provider_route_config(settings)
-
-
-def test_aliyun_workspace_key_accepts_workspace_endpoint() -> None:
-    settings = _settings(
-        api_key="sk-ws-demo",
-        api_base="https://ws-r7decpdut5x0sanx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-    )
-
-    validate_provider_route_config(settings)
-
-
-ALIYUN_ANTHROPIC_BASE = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
-ALIYUN_COMPAT_BASE = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-
-
-@pytest.mark.parametrize(
-    "api_base",
-    [
-        ALIYUN_ANTHROPIC_BASE,
-        ALIYUN_ANTHROPIC_BASE + "/",
-        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages",
-        "https://gateway.example.com/api/Anthropic",
-    ],
-)
-def test_anthropic_protocol_base_is_detected(api_base: str) -> None:
-    assert is_anthropic_protocol_base(api_base)
-
-
-@pytest.mark.parametrize(
-    "api_base",
-    [
-        None,
-        "",
-        ALIYUN_COMPAT_BASE,
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "https://api.v1.example.com",
-    ],
-)
-def test_openai_compatible_base_is_not_flagged_as_anthropic(api_base: str | None) -> None:
-    assert not is_anthropic_protocol_base(api_base)
-
-
-def test_bare_model_follows_anthropic_endpoint_protocol() -> None:
-    assert (
-        normalize_model_for_endpoint("qwen3.8-flash", ALIYUN_ANTHROPIC_BASE)
-        == "anthropic/qwen3.8-flash"
-    )
-
-
-@pytest.mark.parametrize(
-    "model_name",
-    ["qwen3.8-flash", "openai/qwen3.8-flash", "litellm/anthropic/qwen3.8-flash", "  "],
-)
-def test_bare_model_on_openai_base_keeps_route(model_name: str) -> None:
-    assert normalize_model_for_endpoint(model_name, ALIYUN_COMPAT_BASE) == model_name
-
-
-@pytest.mark.parametrize("model_name", ["openai/qwen3.8-flash", "anthropic/qwen3.8-flash"])
-def test_explicit_prefix_wins_over_endpoint_protocol(model_name: str) -> None:
-    assert normalize_model_for_endpoint(model_name, ALIYUN_ANTHROPIC_BASE) == model_name
-
-
-@pytest.mark.parametrize("model_name", [None, ""])
-def test_empty_model_name_passes_through(model_name: str | None) -> None:
-    assert normalize_model_for_endpoint(model_name, ALIYUN_ANTHROPIC_BASE) == model_name
 
 
 @pytest.mark.parametrize(
@@ -276,36 +95,119 @@ def test_routes_through_litellm_matches_the_provider(
         # proves the route is not LiteLLM's.
         assert not litellm
         return
-    while isinstance(model, _NonStreamingModel | _TurnGuardModel):
+    while isinstance(model, _NonStreamingModel | _TurnGuardModel | RequestLoggingModel):
         model = model._inner
     assert isinstance(model, LitellmModel) is litellm
 
 
-def test_anthropic_max_tokens_default_respects_operator_env(
+def test_api_type_override_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "gpt-4")
+    monkeypatch.setenv("STRIX_API_TYPE", "chat_completions")
+    assert uses_chat_completions_tool_schema("gpt-4", Settings()) is True
+    monkeypatch.setenv("STRIX_LLM", "openai/gpt-4")
+    monkeypatch.setenv("STRIX_API_TYPE", "responses")
+    assert uses_chat_completions_tool_schema("openai/gpt-4", Settings()) is False
+    monkeypatch.setenv("STRIX_LLM", "anthropic/claude-sonnet-4-5")
+    assert uses_chat_completions_tool_schema("anthropic/claude-sonnet-4-5", Settings()) is True
+
+
+@pytest.mark.parametrize(
+    ("api_type", "expected"),
+    [
+        (None, OpenAIResponsesModel),
+        ("chat_completions", OpenAIChatCompletionsModel),
+        ("responses", OpenAIResponsesModel),
+    ],
+)
+def test_api_type_overrides_the_api_base_route(
+    monkeypatch: pytest.MonkeyPatch, api_type: str | None, expected: type
+) -> None:
+    """gpt-5 is catalogued on /v1/responses, so a base URL alone changes nothing."""
+    monkeypatch.setattr(_openai_shared, "_use_responses_by_default", True)
+    monkeypatch.setattr(_openai_shared, "_default_openai_client", None)
+    monkeypatch.setattr(_openai_shared, "_default_openai_key", None)
+    monkeypatch.setattr(litellm, "api_key", None)
+    monkeypatch.setattr(litellm, "api_base", None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    monkeypatch.setenv("STRIX_LLM", "gpt-5")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_API_BASE", "https://gateway.example/v1")
+    monkeypatch.delenv("STRIX_API_TYPE", raising=False)
+    if api_type is not None:
+        monkeypatch.setenv("STRIX_API_TYPE", api_type)
+    configure_sdk_model_defaults(Settings())
+    model = StrixProvider().get_model("gpt-5")
+    while isinstance(model, _NonStreamingModel | _TurnGuardModel | RequestLoggingModel):
+        model = model._inner
+    assert isinstance(model, expected)
+
+
+def _settings(monkeypatch: pytest.MonkeyPatch, model: str, api_base: str | None) -> Settings:
+    monkeypatch.setenv("STRIX_LLM", model)
+    monkeypatch.delenv("STRIX_API_TYPE", raising=False)
+    for name in ("LLM_API_BASE", "OPENAI_API_BASE", "OPENAI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    if api_base is not None:
+        monkeypatch.setenv("LLM_API_BASE", api_base)
+    return Settings()
+
+
+@pytest.mark.parametrize(
+    "api_base", [None, "https://api.openai.com/v1", "https://gateway.example/v1"]
+)
+def test_resolve_api_type_follows_the_catalog_not_the_base_url(
+    monkeypatch: pytest.MonkeyPatch, api_base: str | None
+) -> None:
+    """Responses when LiteLLM lists /v1/responses for the model, chat completions otherwise."""
+    settings = _settings(monkeypatch, "gpt-5", api_base)
+    for model in ("gpt-5", "gpt-5.6-sol", "openai/gpt-5.4", "gpt-daybreak-blue-latest"):
+        assert resolve_api_type(model, settings) == "responses", model
+        assert uses_chat_completions_tool_schema(model, settings) is False, model
+    for model in ("gpt-4o", "my-private-model"):
+        assert resolve_api_type(model, settings) == "chat_completions", model
+        assert uses_chat_completions_tool_schema(model, settings) is True, model
+
+
+def test_resolve_api_type_explicit_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    _settings(monkeypatch, "gpt-daybreak-blue-latest", "https://gateway.example/v1")
+    monkeypatch.setenv("STRIX_API_TYPE", "chat_completions")
+    assert resolve_api_type("gpt-daybreak-blue-latest", Settings()) == "chat_completions"
+    monkeypatch.setenv("STRIX_API_TYPE", "Responses")
+    assert resolve_api_type("gpt-5", Settings()) == "responses"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("None", "none"), ("HIGH", "high"), (" xhigh ", "xhigh"), ("Max", "max")],
+)
+def test_reasoning_effort_is_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: str
+) -> None:
+    monkeypatch.setenv("STRIX_REASONING_EFFORT", raw)
+    monkeypatch.setenv("STRIX_DEDUPE_REASONING_EFFORT", raw)
+    settings = Settings()
+    assert settings.llm.reasoning_effort == expected
+    assert settings.dedupe.reasoning_effort == expected
+
+
+def test_configure_sdk_api_route_follows_the_given_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS", raising=False)
-    _configure_anthropic_max_tokens_default()
-    assert os.environ["DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS"] == "8192"
+    """A ``model=`` override picks its own route, not ``STRIX_LLM``'s."""
+    routes: list[str] = []
+    monkeypatch.setattr(models, "set_default_openai_api", routes.append)
+    settings = _settings(monkeypatch, "gpt-5", "https://gateway.example/v1")
 
-    monkeypatch.setenv("DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS", "32000")
-    _configure_anthropic_max_tokens_default()
-    assert os.environ["DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS"] == "32000"
+    models.configure_sdk_api_route("gpt-5", settings)
+    models.configure_sdk_api_route("my-private-model", settings)
+
+    assert routes == ["responses", "chat_completions"]
 
 
-def test_turn_guard_scrubs_unparseable_tool_arguments() -> None:
-    broken = {
-        "type": "function_call",
-        "name": "create_note",
-        "arguments": '{"title": "t", "content": "# 截断',
-    }
-    valid = {"type": "function_call", "name": "think", "arguments": '{"thought": "ok"}'}
-    other = {"type": "message", "role": "user", "content": "hi"}
-
-    repaired = _TurnGuardModel._scrub_unparseable_arguments([broken, valid, other])
-
-    assert repaired[0]["arguments"] == "{}"
-    assert broken["arguments"] == '{"title": "t", "content": "# 截断'  # input not mutated
-    assert repaired[1] is valid
-    assert repaired[2] is other
-    assert _TurnGuardModel._scrub_unparseable_arguments("passthrough") == "passthrough"
+def test_image_support_follows_the_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(litellm.model_cost, "acme-text", {})
+    monkeypatch.setitem(litellm.model_cost, "acme-vision", {"supports_vision": True})
+    assert model_supports_images("acme-text") is False
+    assert model_supports_images("litellm/openai/acme-vision") is True
+    assert model_supports_images("acme-unknown-model") is True

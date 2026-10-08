@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import os
 import sys
 from pathlib import Path
 
-from strix.config import apply_config_override, load_settings
+from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.core.paths import RUNS_DIR_NAME, run_dir_for, runtime_state_dir
 from strix.core.token_budget import normalize_token_limit
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
-from strix.interface.seed_request import prepare_seed_request, validate_seed_scope
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
     check_mountable_dir,
@@ -21,6 +19,11 @@ from strix.interface.utils import (
     resolve_workspace_files,
     validate_config_file,
 )
+from strix.report.runs import list_run_summaries
+
+
+# Severities ``--fail-on`` accepts, most severe first.
+FAIL_ON_SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 
 def get_version() -> str:
@@ -74,21 +77,6 @@ def _tcp_port(value: str) -> int:
     return port
 
 
-def _read_target_password(parser: argparse.ArgumentParser) -> str:
-    try:
-        if sys.stdin.isatty():
-            password = getpass.getpass("目标账户密码：")
-        else:
-            password = sys.stdin.readline().rstrip("\r\n")
-    except (EOFError, OSError) as exc:
-        parser.error(f"无法从标准输入读取目标账户密码：{exc}")
-    if not password:
-        parser.error("目标账户密码不能为空。")
-    if "\x00" in password:
-        parser.error("目标账户密码不能包含 NUL 字符。")
-    return password
-
-
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix 多代理网络安全渗透测试工具",
@@ -140,15 +128,9 @@ def parse_arguments() -> argparse.Namespace:
   strix --target example.com --instruction-file ./instructions.txt
   strix --target https://app.com --instruction-file /path/to/detailed_instructions.md
 
-  # 使用已授权登录账户（密码从终端安全读取，不写入命令行和报告）
-  strix --target https://app.com --auth-username '<username>' --auth-password-stdin
-
   # 额外文件放入沙箱 workspace
   strix --target ./my-project --workspace-file ./wordlist.txt
   strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
-
-  # 以单个数据包为入口，启动完整 AI 渗透测试
-  strix --request ./request.txt --issue "检查该参数是否可导致越权或注入" -n
 
 Strix Cloud:
   strix cloud login
@@ -183,7 +165,7 @@ Strix Cloud:
         "（OpenAPI/Swagger .json/.yaml 或 Postman collection 导出），"
         "或 Postman collection id（postman://<collection-uuid>[?env=<environment-uuid>]，"
         "需要 POSTMAN_API_KEY）。本地目录会以可写挂载方式进入沙箱。"
-        "可重复指定。新任务需提供 --target、--target-list、--mount、--burp-port 或 --request 之一。",
+        "可重复指定。新任务需提供 --target、--target-list、--mount 或 --burp-port 之一。",
     )
     parser.add_argument(
         "--target-list",
@@ -209,72 +191,13 @@ Strix Cloud:
     parser.add_argument(
         "--instruction",
         type=str,
-        help="为本次渗透测试补充自定义指令，例如重点漏洞类型、测试方法或关注区域。"
-        "登录凭据请使用 --auth-username 与 --auth-password-stdin，避免泄露到运行记录。",
+        help="为本次渗透测试补充自定义指令，例如重点漏洞类型、测试方法或关注区域。",
     )
 
     parser.add_argument(
         "--instruction-file",
         type=str,
         help="包含详细测试指令的文件路径，适合较长或较复杂的说明。",
-    )
-
-    parser.add_argument(
-        "--request",
-        "--seed-request",
-        dest="verification_request",
-        metavar="PATH",
-        help="--verify 使用的复测请求；常规扫描使用的单请求测试种子（Burp Raw HTTP 或 Copy as cURL）。",
-    )
-    parser.add_argument(
-        "--secondary-request",
-        dest="verification_secondary_request",
-        metavar="PATH",
-        help="--verify 使用的第二授权身份请求文件，用于跨身份对象边界对照。",
-    )
-    parser.add_argument(
-        "--canary-url",
-        dest="verification_canary_url",
-        metavar="URL",
-        help="--verify 使用的操作员控制 Canary 地址，不接受模型自行指定的目标地址。",
-    )
-    parser.add_argument(
-        "--issue",
-        dest="verification_issue",
-        metavar="TEXT|@FILE",
-        help="--verify 的复测描述，或常规扫描单请求测试的漏洞假设；使用 @文件路径可从文件读取。",
-    )
-    parser.add_argument(
-        "--baseline",
-        dest="verification_baseline",
-        metavar="RUN_NAME",
-        help="--verify 使用的历史运行名，用于修复后复测。",
-    )
-    parser.add_argument(
-        "--yes",
-        dest="verification_approve",
-        action="store_true",
-        help="非交互模式确认执行验证计划。",
-    )
-
-    parser.add_argument(
-        "--auth-username",
-        type=str,
-        metavar="USERNAME",
-        help="已授权目标登录账户。必须与 --auth-password-stdin 一起使用；"
-        "账户值不会写入报告或 Agent Prompt。",
-    )
-    parser.add_argument(
-        "--auth-password-stdin",
-        action="store_true",
-        help="从 TTY 隐藏输入或标准输入读取一行目标账户密码。"
-        "密码仅注入本次沙箱内存环境，不写入命令行、运行记录或 Prompt。",
-    )
-    parser.add_argument(
-        "--allow-credential-attacks",
-        action="store_true",
-        help="显式授权本次测试执行弱口令、密码喷洒或登录重试测试。"
-        "默认仅允许使用提供的账户正常登录，不允许口令攻击。",
     )
 
     parser.add_argument(
@@ -285,8 +208,9 @@ Strix Cloud:
         help="Place a file from this machine into the sandbox workspace before the scan "
         "starts, for example a wordlist, an API specification, or notes. Repeat the option "
         "for more files. DEST is the path inside /workspace and defaults to the file name "
-        "(for example '--workspace-file ./wordlist.txt:lists/wordlist.txt'). The file is "
-        "read-only inside the sandbox and lands outside every target directory.",
+        "(for example '--workspace-file ./wordlist.txt:lists/wordlist.txt'). Strix copies "
+        "the file into the sandbox, outside every target directory. The agent can edit the "
+        "copy. The file on this machine does not change.",
     )
 
     parser.add_argument(
@@ -294,6 +218,21 @@ Strix Cloud:
         "--non-interactive",
         action="store_true",
         help="以非交互模式运行（不启动 TUI，任务完成后直接退出）。",
+    )
+
+    parser.add_argument(
+        "--fail-on",
+        dest="fail_on",
+        type=str.lower,
+        choices=FAIL_ON_SEVERITIES,
+        default=None,
+        metavar="SEVERITY",
+        help=(
+            "Headless mode only: exit 2 only when a finding is at or above this severity "
+            "(critical, high, medium, low, info). Lower findings are still written to every "
+            "report artifact. A finding with an unrecognized severity always counts. "
+            "Default: any finding exits 2."
+        ),
     )
 
     parser.add_argument(
@@ -306,13 +245,6 @@ Strix Cloud:
             "扫描模式：quick 用于快速 CI/CD 检查，standard 用于常规测试，"
             "deep 用于深入安全审计（默认）。"
         ),
-    )
-
-    parser.add_argument(
-        "--verify",
-        dest="verify",
-        action="store_true",
-        help="按给定请求和问题描述执行一次确定性漏洞复测。",
     )
 
     parser.add_argument(
@@ -400,76 +332,31 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "-r",
         "--resume",
         type=str,
+        nargs="?",
+        const="",
         metavar="RUN_NAME",
-        help="按历史运行名恢复之前的扫描（即 ./strix_runs/ 下的目录名）。",
+        help=(
+            "按历史运行名恢复扫描（./strix_runs/ 下的目录名），继续恢复代理历史和拓扑；"
+            "不带名称时打开历史运行选择器。"
+        ),
     )
 
     args = parser.parse_args()
     # Startup-resolved state lives alongside the parsed flags. The full schema
     # is established here so downstream code reads attributes directly.
     args.needs_setup = False
+    args.resume_picker = False
     args.targets_info = []
     args.local_sources = []
     args.diff_scope = {"active": False}
     args.run_name = None
     args.workspace_mount = None
     args.workspace_subdir = None
-    args.target_credentials = None
-    args.seed_request = None
-    args.request_hypothesis = None
     if args.config:
         apply_config_override(validate_config_file(args.config))
-
-    unsupported_seed_args = any(
-        (
-            args.verification_secondary_request,
-            args.verification_canary_url,
-            args.verification_baseline,
-        )
-    )
-    if not args.verify and unsupported_seed_args:
-        parser.error("--secondary-request、--canary-url、--baseline 只能用于 --verify。")
-    if not args.verify and args.verification_approve:
-        parser.error("--yes 只能用于 --verify。常规扫描直接执行完整渗透测试。")
-    if not args.verify and args.verification_issue and not args.verification_request:
-        parser.error("常规扫描的 --issue 需要与 --request 一起使用。")
-
-    if args.verify:
-        if args.burp_port is not None:
-            parser.error("--verify 不能与 --burp-port 同时使用。")
-        if args.target or args.target_list or args.mount:
-            parser.error("--verify 使用 --request，不支持 --target/--target-list/--mount。")
-        if args.resume:
-            parser.error("--verify 使用 --baseline 复测，不支持 --resume。")
-        if args.verification_baseline and args.verification_issue:
-            parser.error("使用 --baseline 复测时不需要再次提供 --issue。")
-        if args.verification_issue and args.verification_issue.startswith("@"):
-            issue_path = Path(args.verification_issue[1:]).expanduser()
-            try:
-                args.verification_issue = issue_path.read_text(encoding="utf-8").strip()
-            except (OSError, UnicodeDecodeError) as exc:
-                parser.error(f"读取漏洞描述失败：{exc}")
-        if not args.verification_request:
-            if args.non_interactive:
-                parser.error("--verify 需要 --request <Burp请求文件>。")
-        else:
-            request_path = Path(args.verification_request).expanduser()
-            if not request_path.is_file():
-                parser.error(f"请求文件不存在：{args.verification_request}")
-            args.verification_request = str(request_path)
-        if args.verification_secondary_request:
-            secondary_path = Path(args.verification_secondary_request).expanduser()
-            if not secondary_path.is_file():
-                parser.error(
-                    f"第二身份请求文件不存在：{args.verification_secondary_request}"
-                )
-            args.verification_secondary_request = str(secondary_path)
-        if args.non_interactive and not args.verification_baseline and not args.verification_issue:
-            parser.error("首次 --verify 需要 --issue <问题描述>。")
-        if args.verification_approve and not args.non_interactive:
-            parser.error("--yes 只能用于非交互模式。")
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()
@@ -488,18 +375,10 @@ Strix Cloud:
     if args.update:
         sys.exit(0 if self_update() else 1)
 
-    if bool(args.auth_username) != bool(args.auth_password_stdin):
-        parser.error("--auth-username 与 --auth-password-stdin 必须同时使用。")
-    if args.auth_username is not None:
-        username = args.auth_username.strip()
-        if not username:
-            parser.error("--auth-username 不能为空。")
-        args.target_credentials = {
-            "username": username,
-            "password": _read_target_password(parser),
-        }
-        args.auth_username = None
-        args.auth_password_stdin = False
+    if args.fail_on and not args.non_interactive and terminal_attached():
+        # Without a terminal main() switches to headless anyway, so the
+        # flag is only out of place when the TUI would actually open.
+        parser.error("--fail-on only applies to headless runs; add -n/--non-interactive.")
 
     if args.instruction and args.instruction_file:
         parser.error(
@@ -521,57 +400,37 @@ Strix Cloud:
     except ValueError as error:
         parser.error(f"--workspace-file: {error}")
 
-    if not args.verify and args.verification_request:
-        if args.verification_issue and args.verification_issue.startswith("@"):
-            issue_path = Path(args.verification_issue[1:]).expanduser()
-            try:
-                args.verification_issue = issue_path.read_text(encoding="utf-8").strip()
-            except (OSError, UnicodeDecodeError) as exc:
-                parser.error(f"读取漏洞描述失败：{exc}")
-        args.request_hypothesis = args.verification_issue or None
-        try:
-            seed_metadata, seed_file = prepare_seed_request(
-                args.verification_request,
-                args.workspace_files,
-            )
-        except ValueError as error:
-            parser.error(str(error))
-        args.seed_request = seed_metadata
-        args.workspace_files.append(seed_file)
-
-    args.user_explicit_instruction = args.instruction if args.resume else None
+    args.user_explicit_instruction = args.instruction if args.resume is not None else None
     # What the user actually asked for, kept apart from args.instruction because
     # prepare_run prepends the diff-scope preamble to that. This is the text the
     # transcript shows as their opening message.
     args.user_instruction = args.instruction or None
 
-    if args.resume:
+    if args.resume is not None:
         if args.target or args.target_list or args.mount:
             parser.error(
                 "不能将 --resume 与 --target/--target-list/--mount 同时使用。"
                 "--resume 会直接接续上一次运行，包括原始目标列表。"
             )
-        _load_resume_state(args, parser)
-        agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
-        if not agents_path.exists():
-            parser.error(
-                f"--resume {args.resume}：缺少 {agents_path}。"
-                "该运行虽然已落盘，但还没走到首次代理快照阶段，因此没有可恢复的状态。"
-            )
+        if not args.resume.strip():
+            # A bare --resume: main() opens the inline picker of prior runs
+            # before anything launches; headless has nobody to pick, so it
+            # lists them.
+            args.resume = None
+            args.resume_picker = True
+            if args.non_interactive:
+                parser.error(resume_run_list_message("--resume needs a run name in headless mode."))
+            if not list_run_summaries():
+                parser.error(f"--resume: no runs in ./{RUNS_DIR_NAME} to resume")
+            return args
+        try:
+            load_resume_state(args)
+        except ResumeError as exc:
+            parser.error(str(exc))
     else:
         mount_targets = list(args.mount or [])
         if mount_targets:
             args.target = list(args.target or []) + mount_targets
-
-        if args.verify:
-            return args
-
-        if (
-            args.seed_request
-            and not args.target
-            and not args.target_list
-        ):
-            args.target = [args.seed_request["target_origin"]]
 
         if not args.target and not args.target_list and args.burp_port is None:
             if args.non_interactive:
@@ -584,51 +443,68 @@ Strix Cloud:
 
         try:
             build_targets_info(args)
-            if args.seed_request:
-                validate_seed_scope(args.seed_request, args.targets_info)
         except ValueError as e:
             parser.error(str(e))
 
     return args
 
 
-def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """Populate ``args.targets_info`` and friends from a prior run's run.json."""
+def terminal_attached() -> bool:
+    """Whether the TUI can take over the terminal: a tty on both ends, not dumb."""
+    if os.environ.get("TERM", "").strip().lower() == "dumb":
+        return False
+    return all(hasattr(stream, "isatty") and stream.isatty() for stream in (sys.stdin, sys.stdout))
+
+
+class ResumeError(ValueError):
+    """A prior run cannot be resumed as recorded; the message names why."""
+
+
+def resume_run_list_message(lead: str) -> str:
+    """``lead`` followed by the runs that ``--resume <name>`` would accept."""
+    runs = list_run_summaries()
+    if not runs:
+        return f"{lead} There are no runs in ./{RUNS_DIR_NAME}."
+    name_width = max(len(run.run_name) for run in runs)
+    status_width = max(len(run.status) for run in runs)
+    lines = [f"{lead} Runs in ./{RUNS_DIR_NAME}:"]
+    lines.extend(
+        f"  {run.run_name:<{name_width}}  {run.status:<{status_width}}  "
+        f"{run.started_at[:19]:<19}  {run.target}".rstrip()
+        for run in runs
+    )
+    return "\n".join(lines)
+
+
+def load_resume_state(args: argparse.Namespace) -> None:
+    """Populate ``args.targets_info`` and friends from a prior run's run.json.
+
+    Raises :class:`ResumeError` when the run is missing, unreadable, or its
+    recorded workspace is gone.
+    """
     from strix.report.writer import read_run_record
 
     run_dir = run_dir_for(args.resume)
     state_path = run_dir / "run.json"
     if not state_path.exists():
-        parser.error(
+        raise ResumeError(
             f"--resume {args.resume}：找不到对应运行"
             f"（缺少 {state_path}；如需重新开始，请去掉 --resume）"
         )
     try:
         state = read_run_record(run_dir)
     except (RuntimeError, TypeError) as exc:
-        parser.error(f"--resume {args.resume}：run.json 无法读取：{exc}")
-
-    args.seed_request = state.get("seed_request")
-    args.request_hypothesis = state.get("request_hypothesis")
-    if args.seed_request is not None and not isinstance(args.seed_request, dict):
-        parser.error(f"--resume {args.resume}：历史单请求种子元数据无效")
-    if args.seed_request:
-        try:
-            validate_seed_scope(args.seed_request, state.get("targets_info") or [])
-        except ValueError as exc:
-            parser.error(f"--resume {args.resume}：{exc}")
-
-    from strix.core.token_budget import normalize_token_limit
+        raise ResumeError(f"--resume {args.resume}：run.json 无法读取：{exc}") from exc
 
     try:
         persisted_token_limit = normalize_token_limit(state.get("token_limit"))
     except ValueError as exc:
-        parser.error(f"--resume {args.resume}：历史 token_limit 无效：{exc}")
+        raise ResumeError(f"--resume {args.resume}：历史 token_limit 无效：{exc}") from exc
     requested_token_limit = getattr(args, "token_limit", None)
     if requested_token_limit is None:
         args.token_limit = persisted_token_limit
     elif persisted_token_limit is not None and requested_token_limit < persisted_token_limit:
-        parser.error(
+        raise ResumeError(
             "--resume 不允许降低历史 token_limit；"
             "如需追加额度，请显式提供更大的 --token-limit。"
         )
@@ -645,7 +521,7 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         and persisted_burp_port is None
         and not state.get("user_instruction")
     ):
-        parser.error(f"--resume {args.resume}：run.json 中缺少可恢复的目标或指令信息")
+        raise ResumeError(f"--resume {args.resume}：run.json 中缺少可恢复的目标或指令信息")
 
     for target in args.targets_info:
         if not isinstance(target, dict):
@@ -655,7 +531,7 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
             try:
                 check_mountable_dir(Path(details["target_path"]).expanduser())
             except ValueError as exc:
-                parser.error(f"--resume {args.resume}：{exc}")
+                raise ResumeError(f"--resume {args.resume}：{exc}") from exc
             continue
         if target.get("type") != "repository":
             continue
@@ -663,7 +539,7 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         if not cloned:
             continue
         if not Path(cloned).expanduser().exists():
-            parser.error(
+            raise ResumeError(
                 f"--resume {args.resume}：历史克隆目录 {cloned} 不存在。"
                 "它可能在两次运行之间被删除。请使用新的 --run-name 重新克隆，"
                 "或先恢复该目录后再继续。"
@@ -691,18 +567,10 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         try:
             args.workspace_files = resolve_workspace_files(restored)
         except ValueError as error:
-            parser.error(f"--resume {args.resume}: invalid workspace file: {error}")
-    if args.seed_request and not any(
-        workspace_file.get("workspace_path") == args.seed_request.get("workspace_path")
-        for workspace_file in args.workspace_files
-    ):
-        parser.error(
-            f"--resume {args.resume}：历史单请求种子文件不存在或未能恢复，"
-            "无法安全继续该单请求扫描。"
-        )
+            raise ResumeError(f"--resume {args.resume}: invalid workspace file: {error}") from error
     if workspace_mount:
         if not Path(workspace_mount).expanduser().is_dir():
-            parser.error(
+            raise ResumeError(
                 f"--resume {args.resume}：工作目录 {workspace_mount} 不存在。"
                 "请先恢复该目录，或重新开始新的运行。"
             )
@@ -714,3 +582,11 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     persisted_scan_mode = state.get("scan_mode")
     if persisted_scan_mode and args.scan_mode == "deep":
         args.scan_mode = persisted_scan_mode
+    agents_path = runtime_state_dir(run_dir) / "agents.json"
+    if not agents_path.exists():
+        raise ResumeError(
+            f"--resume {args.resume}: missing {agents_path}. The run was "
+            f"persisted but never reached its first agent snapshot — "
+            f"there's nothing to resume from. Pick a fresh --run-name "
+            f"or remove --resume to start over with the same targets."
+        )

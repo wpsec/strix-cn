@@ -135,7 +135,7 @@ func clampVulnerabilityOffset(offset, total, height int) int {
 
 func (m Model) vulnerabilityPageSize() int {
 	_, vulnHeight, _, _ := m.sidebarHeights()
-	return max(1, vulnHeight-2)
+	return max(1, vulnHeight-4)
 }
 
 // vulnerabilityPageItems is how many findings a page step should move by: the
@@ -191,8 +191,8 @@ func (m *Model) keepVulnerabilitySelectionInWindow() {
 func (m Model) modalView() string {
 	switch m.modal {
 	case modalHelp:
-		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(52).Align(lipgloss.Center).Render("Strix Help")
-		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text\nClick     Expand/collapse tool\n\nBurp 被动模式\n  先在目标中完成当前功能点操作\n  完成后发送“开始测试”并暂停采集\n  本轮结束后发送“下一功能点”重新采集\n  全部完成后发送“结束测试”生成总报告")
+		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(56).Align(lipgloss.Center).Render("Strix Help")
+		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text\nClick     Expand/collapse tool\nClick ▾/⤢ Collapse / zoom panel\nClick »/« Hide / show sidebar\n\nBurp 被动模式\n  先在目标中完成当前功能点操作\n  完成后发送“开始测试”并暂停采集\n  本轮结束后发送“下一功能点”重新采集\n  全部完成后发送“结束测试”生成总报告")
 		content := title + "\n\n" + body
 		return lipgloss.NewStyle().Width(56).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
 	case modalQuit:
@@ -204,7 +204,7 @@ func (m Model) modalView() string {
 			name = m.snapshot.Agents[m.selectedAgent].Name
 		}
 		// #stop_agent_dialog: width 30, border round #a3a3a3, title #a3a3a3.
-		return m.confirmView("🛑 Stop '"+name+"'?", 30, mid, mid)
+		return m.confirmView("Stop '"+name+"'?", 30, mid, mid)
 	case modalConfirmMount:
 		return m.mountConfirmView()
 	case modalVulnerability:

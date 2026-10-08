@@ -1477,6 +1477,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
                     "protect_metadata": True,
+                    "read_only": bool(details.get("read_only")),
                 }
             )
 
@@ -1800,20 +1801,21 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 
 def check_docker_connection() -> Any:
-    import docker
-    from docker.errors import DockerException
+    from strix.runtime.docker_connection import DockerConnectionError, connect_docker
 
     try:
-        return docker.from_env()
-    except DockerException as exc:
-        report_error("docker_unavailable", exc)
+        return connect_docker()
+    except DockerConnectionError as exc:
+        report_error("docker_unavailable", exc.cause)
         console = Console()
         error_text = Text()
         error_text.append("Docker 不可用", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("无法连接到 Docker daemon。\n", style="white")
+        error_text.append(f"无法连接 Docker：{exc.endpoint.label}。\n", style="white")
+        error_text.append(f"{exc.detail}\n\n", style="dim red")
         error_text.append(
-            "请确认 Docker Desktop 已安装并正在运行，然后重新执行 strix。\n",
+            "请确认 Docker 已启动。如果当前 shell 的 `docker info` 可用，Strix 会连接同一 daemon；"
+            "否则请设置 DOCKER_HOST。\n",
             style="white",
         )
 
@@ -1825,7 +1827,7 @@ def check_docker_connection() -> Any:
             padding=(1, 2),
         )
         console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+        sys.exit(1)
 
 
 def image_exists(client: Any, image_name: str) -> bool:

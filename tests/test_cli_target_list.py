@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import io
 import json
 import sys
 from typing import TYPE_CHECKING, Any
@@ -71,49 +70,6 @@ def test_parse_arguments_accepts_burp_port(monkeypatch: pytest.MonkeyPatch) -> N
     assert args.burp_port == 8081
 
 
-def test_parse_arguments_reads_target_password_outside_instruction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    password = "not-a-real-secret"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "strix",
-            "--target",
-            "https://example.com",
-            "--auth-username",
-            "authorized-user",
-            "--auth-password-stdin",
-            "-n",
-        ],
-    )
-    monkeypatch.setattr(sys, "stdin", io.StringIO(password + "\n"))
-
-    args = cli_args.parse_arguments()
-
-    assert args.target_credentials == {
-        "username": "authorized-user",
-        "password": password,
-    }
-    assert args.auth_username is None
-    assert args.auth_password_stdin is False
-    assert password not in (args.instruction or "")
-
-
-def test_parse_arguments_requires_complete_target_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["strix", "--target", "https://example.com", "--auth-username", "user", "-n"],
-    )
-
-    with pytest.raises(SystemExit):
-        cli_args.parse_arguments()
-
-
 def test_parse_arguments_accepts_burp_port_without_targets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -123,94 +79,6 @@ def test_parse_arguments_accepts_burp_port_without_targets(
 
     assert args.burp_port == 8081
     assert args.targets_info == []
-
-
-def test_parse_arguments_accepts_single_request_seed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    request_file = tmp_path / "request.txt"
-    request_file.write_text(
-        "POST /api/items HTTP/1.1\n"
-        "Host: app.test:8443\n"
-        "Origin: https://app.test:8443\n"
-        "Content-Type: application/json\n\n"
-        '{"id":"1"}\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "strix",
-            "--request",
-            str(request_file),
-            "--issue",
-            "检查 id 是否存在越权或注入",
-            "-n",
-        ],
-    )
-
-    args = cli_args.parse_arguments()
-
-    assert args.targets_info[0]["details"]["target_url"] == "https://app.test:8443/"
-    assert args.seed_request == {
-        "workspace_path": "/workspace/.strix/seed-request.txt",
-        "target_origin": "https://app.test:8443/",
-        "scheme": "https",
-        "host": "app.test",
-        "port": 8443,
-        "method": "POST",
-        "path": "/api/items",
-        "query_keys": [],
-    }
-    assert args.workspace_files == [
-        {
-            "source_path": str(request_file.resolve()),
-            "workspace_path": "/workspace/.strix/seed-request.txt",
-        }
-    ]
-
-
-def test_single_request_seed_must_match_explicit_target(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    request_file = tmp_path / "request.txt"
-    request_file.write_text(
-        "GET https://seed.test/items HTTP/1.1\nHost: seed.test\n\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "strix",
-            "--target",
-            "https://other.test",
-            "--request",
-            str(request_file),
-            "-n",
-        ],
-    )
-
-    with pytest.raises(SystemExit):
-        cli_args.parse_arguments()
-
-
-def test_scan_accepts_seed_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    request_file = tmp_path / "request.txt"
-    request_file.write_text(
-        "GET https://app.test/items HTTP/1.1\nHost: app.test\n\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["strix", "--request", str(request_file), "-n"],
-    )
-
-    args = cli_args.parse_arguments()
-
-    assert args.targets_info[0]["details"]["target_url"] == "https://app.test/"
 
 
 def test_removed_red_mode_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -23,9 +23,15 @@ strix -n --target ./app --scan-mode quick --scope-mode diff --diff-base origin/m
 
 | 代码 | 含义 |
 |------|------|
-| 0 | 未发现漏洞 |
+| 0 | 未发现漏洞，或没有达到 `--fail-on` 阈值的漏洞 |
 | 1 | 执行错误 |
-| 2 | 发现漏洞 |
+| 2 | 发现达到 `--fail-on` 阈值的漏洞 |
+
+使用 `--fail-on` 设置最低严重级别。低于阈值的漏洞仍会写入报告，但退出码为 `0`；因此流水线通过不代表报告为空。
+
+```bash
+strix -n --target ./app --scan-mode quick --fail-on high
+```
 
 ## GitLab CI
 

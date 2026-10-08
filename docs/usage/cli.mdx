@@ -55,26 +55,14 @@ strix (--target <target> | --target-list <path> | --mount <path> | --burp-port <
   从文件读取较长的测试说明。适合保存详细范围、排除项和交付要求。
 </ParamField>
 
-<ParamField path="--auth-username" type="string">
-  提供已授权的目标登录账户。必须与 `--auth-password-stdin` 一起使用。账户名不会写入报告、Prompt 或运行记录。
-</ParamField>
-
 <ParamField path="--workspace-file" type="string">
   扫描开始前放入沙箱 workspace 的本地文件路径，可重复传入。写 `PATH:DEST` 指定
   `/workspace` 内的目标位置，`DEST` 缺省为文件名。见
   [Workspace files](/usage/instructions#workspace-files)。
 </ParamField>
 
-<ParamField path="--auth-password-stdin" type="boolean">
-  从当前终端的隐藏输入，或从标准输入读取一行目标账户密码。密码只会在本次运行中注入沙箱环境变量，不会进入命令行历史、Prompt、运行记录或总报告。
-</ParamField>
-
-<ParamField path="--allow-credential-attacks" type="boolean">
-  显式授权本次测试执行弱口令、密码喷洒、登录重试等凭据攻击验证。默认只允许使用提供的账户做正常登录，不允许扩展成口令攻击。
-</ParamField>
-
 <ParamField path="--non-interactive, -n" type="boolean">
-  以无头模式运行，不启动 TUI。适用于 CI/CD、服务器任务和批量调用。
+  以无头模式运行，不启动 TUI。适用于 CI/CD、服务器任务和批量调用。未连接终端且提供了目标时，Strix 也会自动切换到无头模式并输出提示。
 </ParamField>
 
 <ParamField path="--scan-mode, -m" type="string" default="deep">
@@ -87,6 +75,9 @@ strix (--target <target> | --target-list <path> | --mount <path> | --burp-port <
 
 <ParamField path="--diff-base" type="string">
   指定 diff-scope 对比的目标分支或提交，例如 `origin/main`。
+
+<ParamField path="--fail-on" type="string">
+  仅用于无头模式（需加 `-n`）。达到该严重级别的漏洞会使进程以 `2` 退出，可选 `critical`、`high`、`medium`、`low` 或 `info`。较低级别仍会写入报告；无法识别严重级别的漏洞始终计入失败。省略此参数时，发现任意漏洞都会以 `2` 退出。
 </ParamField>
 
 <ParamField path="--config" type="string">
@@ -136,9 +127,11 @@ strix --burp-port 8081
 # Burp 被动扫描 + 显式限制目标主机
 strix --target https://example.com --burp-port 8081
 
-# API spec + live target（OpenAPI / Swagger / Postman collection）
-strix --target ./openapi.yaml --target https://api.example.com
-strix --target ./collection.postman_collection.json --target https://api.example.com
+# CI/CD 模式，仅在发现高危或严重漏洞时失败
+strix -n --target ./ --scan-mode quick --fail-on high
+
+# 限制费用和每个代理的轮数
+strix --target https://example.com --max-budget 25 --max-turns 300
 
 # Postman collection 通过 id 实时拉取
 export POSTMAN_API_KEY="PMAK-..."
@@ -152,9 +145,6 @@ strix --mount ./huge-monorepo --instruction "Review the changed auth flow"
 
 # 自定义指令
 strix --target api.example.com --instruction "重点测试 IDOR、认证绕过和业务逻辑缺陷"
-
-# 使用已授权登录账户（运行时安全读取密码）
-strix --target https://app.example.com --auth-username '<username>' --auth-password-stdin
 
 # 针对指定基线强制启用 diff-scope
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
@@ -183,6 +173,6 @@ strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yam
 
 | 代码 | 含义 |
 |------|------|
-| 0 | 扫描正常结束。交互模式始终返回 `0`；无头模式下表示未发现漏洞 |
+| 0 | 扫描正常结束。交互模式始终返回 `0`；无头模式下表示未发现漏洞或没有达到 `--fail-on` 阈值的漏洞 |
 | 1 | 启动前或运行过程中发生致命错误，例如环境变量缺失、Docker 不可用、配置非法或未处理异常 |
-| 2 | 发现漏洞（仅无头模式） |
+| 2 | 发现漏洞（仅无头模式；使用 `--fail-on` 时表示发现达到阈值的漏洞） |

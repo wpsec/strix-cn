@@ -51,7 +51,7 @@ func renderDependencyReport(args map[string]any, result any) string {
 	field("目标", StringValue(args["target"]))
 	section := func(label, value string) {
 		if value != "" {
-			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
+			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + renderAssistantMarkdown(value))
 		}
 	}
 	section("漏洞描述", StringValue(args["description"]))

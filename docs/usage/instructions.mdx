@@ -51,19 +51,6 @@ strix --target https://api.example.com \
   --instruction "请求头需要带上 X-API-Key，占位值由运行环境提供。重点测试限流绕过、签名校验和重放攻击。"
 ```
 
-## 目标登录凭据
-
-如果本次测试需要使用已授权的登录账户，请使用专门参数，而不是把凭据写进说明：
-
-```bash
-strix --target https://app.com \
-  --auth-username '<username>' \
-  --auth-password-stdin \
-  --instruction "登录后重点测试订单、用户资料和管理后台的越权问题"
-```
-
-`--auth-password-stdin` 会在当前终端安全读取密码，或从标准输入读取一行密码。Strix 只会把它注入本次沙箱的内存环境变量，不会写入 Prompt、日志、运行记录或总报告。
-
 ## 说明文件示例
 
 ```markdown instructions.md
@@ -103,7 +90,7 @@ strix --target https://app.com \
 
 适用于所有 workspace 文件的规则：
 
-- 文件在沙箱内只读。
+- Strix 会把文件复制到沙箱。agent 可以修改沙箱内的副本，主机上的原文件不会改变。
 - 目标位置必须留在 `/workspace` 内。
 - 目标位置不得落在被扫描目录内部，因为那些文件来自被测目标本身；这样的文件会被跳过并记录警告。
 - 两个文件不能占用同一个目标位置。

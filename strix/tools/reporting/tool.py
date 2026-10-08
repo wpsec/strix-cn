@@ -1095,6 +1095,87 @@ def _do_update(
     }
 
 
+def _do_delete(
+    *,
+    report_id: str,
+    delete_reason: str,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Withdraw a report an agent filed and has since disproved.
+
+    Deletion is for a finding that is not a vulnerability at all. A finding
+    that is real but weaker than filed is revised, not deleted.
+    """
+    report_id = (report_id or "").strip()
+    delete_reason = (delete_reason or "").strip()
+    if not report_id or not delete_reason:
+        missing = "report_id" if not report_id else "delete_reason"
+        return {
+            "success": False,
+            "error": (
+                f"{missing} cannot be empty - name the report you are withdrawing and state "
+                "what disproved it"
+            ),
+        }
+
+    from strix.report.state import ReportRollbackError, get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return {
+            "success": False,
+            "error": "Report state unavailable - no reports have been filed yet",
+        }
+
+    try:
+        deleted = report_state.delete_vulnerability_report(
+            report_id,
+            delete_reason=delete_reason,
+            deleted_by_agent_id=agent_id,
+            deleted_by_agent_name=agent_name,
+        )
+    except Exception as e:
+        logger.exception("delete_vulnerability_report persistence failed")
+        if isinstance(e, ReportRollbackError):
+            outcome = (
+                f"{e.cause!s}. The report is still on file, but its on-disk indexes could "
+                "not be rewritten and may be stale until the next report is saved"
+            )
+        else:
+            outcome = f"{e!s}. The report is still on file"
+        return {
+            "success": False,
+            "error": f"Failed to delete report '{report_id}': {outcome}; retry the deletion.",
+            "report_id": report_id,
+        }
+    if deleted is None:
+        return {
+            "success": False,
+            "error": f"Report with id '{report_id}' not found",
+            "report_id": report_id,
+        }
+
+    logger.info(
+        "Vulnerability report %s deleted by %s: %s",
+        report_id,
+        agent_name or agent_id or "an agent",
+        delete_reason[:200],
+    )
+    return {
+        "success": True,
+        "action": "deleted",
+        "message": (
+            f"Report '{report_id}' ({deleted.get('title')}) is withdrawn and no longer "
+            "counts as a finding of this scan. Do not file it again unless new evidence "
+            "proves it."
+        ),
+        "report_id": report_id,
+        "title": deleted.get("title"),
+        "severity": deleted.get("severity"),
+    }
+
+
 async def _do_create(  # noqa: PLR0912
     *,
     title: str,
@@ -1443,11 +1524,11 @@ async def create_vulnerability_report(
       "Techniques" that read like an engineering runbook rather than a
       client deliverable.
     - **Use markdown in every text field**: ``**bold**`` for emphasis,
-      ``inline code`` for identifiers/values/parameters, and fenced
-      code blocks (```` ```language ````) for any code/payload/HTTP
+      ``inline code`` for identifiers/values/parameters, and
+      language-tagged fenced code blocks for any code/payload/HTTP
       excerpt. Never leave code bare/unformatted. When referencing a
-      file, annotate the fence, e.g.
-      ```` ```python title=app.py startLineNumber=42 endLineNumber=50 ````.
+      file, annotate the opening fence with
+      ``title=app.py startLineNumber=42 endLineNumber=50`` after the language.
     - Field discipline: ``poc_description`` is steps only — NO code (all
       code goes in ``poc_script_code``); ``burp_request`` is the raw HTTP
       request only, without Markdown fences; ``remediation_steps`` is prose
@@ -1577,6 +1658,57 @@ async def create_vulnerability_report(
     - **Crypto / Config**: CWE-798 Hard-coded Credentials, CWE-327
       Broken / Risky Crypto, CWE-311 Missing Encryption, CWE-916 Weak
       Password Hashing.
+
+    Example (abbreviated — mirror this structure)::
+
+        title: "Reflected XSS in /search q parameter"
+        description:
+            The **`q`** parameter of `/search` reflects user input into
+            the HTML response without encoding, allowing script
+            injection.
+        technical_analysis:
+            The handler interpolates `q` directly into the page body:
+
+            ```python title=views.py startLineNumber=42 endLineNumber=44
+            html = f"<h2>Results for {q}</h2>"
+            return HttpResponse(html)
+            ```
+
+            No output encoding is applied, so `<script>` executes.
+        poc_description:
+            1. Navigate to `/search?q=<payload>`.
+            2. Observe the payload executes in the victim's browser.
+        poc_script_code:
+            ```
+            GET /search?q=<script>alert(document.domain)</script>
+            ```
+        evidence:
+            Response echoes the payload verbatim:
+
+            ```html
+            <h2>Results for <script>alert(document.domain)</script></h2>
+            ```
+        assumptions:
+            Assumes a victim can be induced to open a crafted link.
+        remediation_steps:
+            Context-encode all user input rendered into HTML; prefer the
+            template engine's auto-escaping over string interpolation.
+        counterevidence:
+            No output encoding, CSP, or WAF observed on this response;
+            payload executed in a current browser. The parameter is
+            reflected on an unauthenticated route, so no privileged
+            position is required.
+        confidence: "high"
+        severity_change_conditions:
+            A restrictive CSP that blocks inline script execution would
+            reduce impact and lower the severity.
+        fix_effort: "low"
+
+    Nice to have: for code findings, if the checkout has git history, a quick
+    ``git blame`` (quote the paths) on the vulnerable line is worth weaving into
+    ``technical_analysis`` — who last touched it, when, and in which commit, as
+    part of the prose, not a separate section. Skip it if the line is
+    uncommitted or the command fails.
 
     Args:
         title: Specific finding title (e.g.
@@ -2123,6 +2255,48 @@ async def update_vulnerability_report(
     )
     if http_exchange_warning and result.get("success"):
         result["warning"] = http_exchange_warning
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=60)
+async def delete_vulnerability_report(
+    ctx: RunContextWrapper,
+    report_id: str,
+    delete_reason: str,
+) -> str:
+    """Withdraw a vulnerability report that later testing disproved.
+
+    Use this when a finding you filed turns out not to be a vulnerability
+    at all: the exploit only worked because of a mistake in your own test
+    setup (a mixed-up session, a self-inflicted state change, a misread
+    response), the behaviour is documented and intended, or the control
+    you believed was missing is in fact enforced. The report is removed
+    from the scan; it does not stay behind as a zero-severity entry.
+
+    Do NOT use this for a finding that is real but weaker than filed —
+    revise it with ``update_vulnerability_report`` so the severity, the
+    impact and the counterevidence come down together. Do NOT rewrite a
+    report into a "retracted" or "false positive" note either: delete it.
+
+    Only withdraw a report you have re-tested yourself, whoever filed it.
+    Call ``get_report`` first to read what it claims, then state in
+    ``delete_reason`` exactly what disproved it, so the scan history shows
+    who withdrew the finding and why. A withdrawn report cannot be restored; if new
+    evidence later proves the issue, file it again.
+
+    Args:
+        report_id: Id of the report to withdraw (format ``vuln-NNNN``).
+        delete_reason: What disproved the finding, in one or two
+            sentences.
+    """
+    agent_id, agent_name = _caller_identity(ctx)
+    result = await asyncio.to_thread(
+        _do_delete,
+        report_id=report_id,
+        delete_reason=delete_reason,
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
     return json.dumps(result, ensure_ascii=False, default=str)
 
 

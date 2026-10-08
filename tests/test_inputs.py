@@ -70,7 +70,6 @@ def _cache_points(model_name: str) -> Any:
 def test_make_model_settings_enables_prompt_cache_for_bedrock_claude() -> None:
     assert _cache_points("bedrock/global.anthropic.claude-opus-4-8") == [
         {"location": "message", "role": "system"},
-        {"location": "tool_config"},
         {"location": "message", "index": -1},
     ]
 
@@ -217,60 +216,6 @@ def test_build_root_task_web_application_with_instructions() -> None:
     assert "URLs:" in task
     assert "https://app.example.com" in task
     assert "Special instructions: Focus on auth." in task
-
-
-def test_build_root_task_renders_single_request_seed_without_request_contents() -> None:
-    task = build_root_task(
-        {
-            "targets": [
-                {
-                    "type": "web_application",
-                    "details": {"target_url": "https://app.example.com"},
-                }
-            ],
-            "seed_request": {
-                "workspace_path": "/workspace/.strix/seed-request.txt",
-                "scheme": "https",
-                "host": "app.example.com",
-                "port": 443,
-                "method": "POST",
-                "path": "/api/items",
-                "query_keys": ["itemId"],
-                "issue": "ignored outside the root task",
-            },
-            "request_hypothesis": "检查 itemId 是否存在越权",
-        }
-    )
-
-    assert "Focused Request Seed:" in task
-    assert "/workspace/.strix/seed-request.txt" in task
-    assert "POST https://app.example.com:443/api/items" in task
-    assert "itemId" in task
-    assert "检查 itemId 是否存在越权" in task
-    assert "do not stop after one deterministic mutation" in task
-
-
-def test_target_credentials_are_referenced_by_variable_name_only() -> None:
-    config = {
-        "targets": [
-            {
-                "type": "web_application",
-                "original": "https://example.com",
-                "details": {"target_url": "https://example.com"},
-            }
-        ],
-        "credential_auth_available": True,
-        "allow_credential_attacks": False,
-    }
-
-    task = build_root_task(config)
-    context = build_scope_context(config)
-
-    assert "STRIX_TARGET_USERNAME" in task
-    assert "STRIX_TARGET_PASSWORD" in task
-    assert "Do not perform brute force" in task
-    assert context["target_credentials_available"] is True
-    assert context["allow_credential_attacks"] is False
 
 
 def test_build_root_task_workspace_mount_is_not_a_target() -> None:
@@ -562,3 +507,10 @@ def test_user_headers_override_openrouter_attribution() -> None:
     assert headers["X-Title"] == "Custom"
     assert headers["X-Tenant"] == "acme"
     assert headers["HTTP-Referer"] == "https://strix.ai"
+
+
+def test_reasoning_effort_sent_as_configured_and_none_omitted() -> None:
+    assert make_model_settings("none", model_name="gpt-5.6-sol").reasoning is None
+    settings = make_model_settings("high", model_name="gpt-daybreak-blue-latest")
+    assert settings.reasoning is not None
+    assert settings.reasoning.effort == "high"

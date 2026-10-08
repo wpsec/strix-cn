@@ -2,10 +2,13 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/protocol"
 	"github.com/usestrix/strix/tui/internal/render"
 )
@@ -57,6 +60,10 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		m.resizeViewport()
 		m.resizeVulnerabilityViewport()
 		m.syncInputFocus()
+		if title := windowTitle(m.snapshot.Targets); title != m.windowTitle {
+			m.windowTitle = title
+			return setTerminalTitle(title)
+		}
 	case "collection_bootstrap":
 		return m.handleCollectionBootstrap(envelope.Payload)
 	case "collection_delta":
@@ -117,6 +124,26 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// tea.SetWindowTitle only sends OSC 2 (window title); iTerm tabs show the OSC 1
+// icon name, which shells usually set, so send OSC 0 to set both.
+func setTerminalTitle(title string) tea.Cmd {
+	return func() tea.Msg {
+		_, _ = os.Stdout.WriteString(ansi.SetIconNameWindowTitle(title))
+		return nil
+	}
+}
+
+func windowTitle(targets []string) string {
+	switch len(targets) {
+	case 0:
+		return "strix"
+	case 1:
+		return targets[0]
+	default:
+		return fmt.Sprintf("%s +%d", targets[0], len(targets)-1)
+	}
 }
 
 func (m *Model) consumeMessages(messages []protocol.Message, setupMode bool) {

@@ -249,14 +249,17 @@ async def finish_scan(
           remediation steps. End with retest/validation guidance.
 
     - **Formatting — use markdown in every field.** These fields may be
-      rendered into generated reports, so structure them clearly: lead
-      each section with a short ``# 标题`` (for default Chinese output,
-      use headings such as ``# 执行摘要`` / ``# 测试方法`` / ``# 技术分析`` /
-      ``# 修复建议``), use ``**bold**`` for labels/emphasis, ``inline
-      code`` for identifiers/paths/parameters, bullet or numbered lists
-      for enumerations, and fenced code blocks (```` ```language ````)
-      for any code/payload excerpts. Never emit one flat wall of prose
-      or leave code unformatted.
+      rendered into generated reports, so structure them clearly: use
+      ``**bold**`` for labels/emphasis, ``inline code`` for
+      identifiers/paths/parameters, bullet or numbered lists for
+      enumerations, and fenced code blocks (```` ```language ````) for
+      any code/payload excerpts. Never emit one flat wall of prose or
+      leave code unformatted.
+     - **Each field is a section body, not a document.** The report adds
+       the section title ("Executive Summary", "Methodology", ...) itself,
+       so do NOT start a field with a heading such as ``# Executive
+       Summary`` — it would print twice. Sub-headings (``##``) inside a
+       field are fine.
     - If **zero** vulnerabilities were found, say so plainly and
       characterize the posture positively; ``technical_analysis`` should
       summarize the areas tested and confirm no issues, and
@@ -265,8 +268,6 @@ async def finish_scan(
     Example (abbreviated — mirror this structure, not the wording)::
 
         executive_summary:
-            # 执行摘要
-
             An external assessment of the **Acme Customer Portal**
             identified multiple weaknesses that could lead to
             unauthorized access to customer data.
@@ -282,8 +283,6 @@ async def finish_scan(
             - Potential exposure of customer records across tenants.
 
         methodology:
-            # 测试方法
-
             Conducted per the **OWASP WSTG**.
 
             **Engagement type:** Gray-box external test.
@@ -293,8 +292,6 @@ async def finish_scan(
             and tenant-isolation testing, input/SSRF testing.
 
         technical_analysis:
-            # 技术分析
-
             **Severity model** reflects exploitability x impact.
 
             1. **SSRF in URL preview** (Critical) — insufficient
@@ -306,8 +303,6 @@ async def finish_scan(
             no deny-by-default egress policy.
 
         recommendations:
-            # 修复建议
-
             **Immediate**
             1. Remediate SSRF: enforce a destination allowlist,
                deny-by-default, re-validate on every redirect hop.

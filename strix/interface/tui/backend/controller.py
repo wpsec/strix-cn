@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
-from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.token_budget import normalize_token_limit
 from strix.interface.tui.backend.live_view import TuiLiveView
@@ -171,11 +170,6 @@ class TuiController:
         ]
         self.notify_changed()
 
-    def begin_preparation(self) -> None:
-        """Mark a directly-launched run as preparing behind the live TUI."""
-        self.scan_state = "preparing"
-        self.notify_changed()
-
     def fail_preparation(self, detail: str) -> None:
         self.scan_state = "failed"
         self.error = detail
@@ -212,11 +206,6 @@ class TuiController:
         if not isinstance(latest_status_code, int):
             latest_status_code = None
         passive_proxy_mode = self._is_passive_proxy_mode()
-        model_warning = ""
-        if model and not is_recommended_or_frontier_model(model):
-            model_warning = (
-                f"{model} is not a recommended frontier model. Pentest quality could be degraded."
-            )
         state = {
             "setup_mode": self.setup_mode,
             "scan_started": self.scan_started,
@@ -235,7 +224,6 @@ class TuiController:
             "scope_mode": self.scope_mode,
             "diff_base": terminal_projection(self.diff_base, max_string=256),
             "model": terminal_projection(model, max_string=256),
-            "model_warning": terminal_projection(model_warning, max_string=512),
             "passive_proxy_mode": passive_proxy_mode,
             "passive_proxy_phase": self._passive_proxy_phase(),
             "proxy_recent_request_count": int(

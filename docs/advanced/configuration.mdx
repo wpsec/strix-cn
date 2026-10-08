@@ -19,6 +19,12 @@ description: "Strix 的环境变量与配置文件说明"
   自定义 API base URL。也接受 `OPENAI_API_BASE`、`LITELLM_BASE_URL` 或 `OLLAMA_API_BASE`。
 </ParamField>
 
+<ParamField path="STRIX_API_TYPE" type="string">
+  Select the OpenAI API path for the model: `responses` or `chat_completions`.
+  By default, a custom `LLM_API_BASE` uses chat completions. Set this variable
+  when your gateway requires the other API. Also accepts `STRIX_FORCE_API`.
+</ParamField>
+
 <ParamField path="LLM_EXTRA_HEADERS" type="string">
   额外附加到每次 LLM 请求上的 HTTP 头，格式为 JSON 对象，例如 `{"X-Feature-Key":"value","X-Tenant":"acme"}`。适用于要求额外路由头、租户头或计费头的 OpenAI-compatible 网关。
 </ParamField>
@@ -31,6 +37,11 @@ description: "Strix 的环境变量与配置文件说明"
   LLM 请求超时时间，单位为秒。
 </ParamField>
 
+<ParamField path="LLM_PREFLIGHT_TIMEOUT" default="30" type="integer">
+  Seconds the startup connection check waits for the model to answer before
+  failing with `LLM CONNECTION FAILED`. Scan requests use `LLM_TIMEOUT`.
+</ParamField>
+
 <ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
   LLM API 短暂失败时的最大重试次数。
 </ParamField>
@@ -41,6 +52,14 @@ description: "Strix 的环境变量与配置文件说明"
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
   上下文压缩操作的超时时间，单位为秒。
+</ParamField>
+
+<ParamField path="STRIX_OPENROUTER_STICKY_SESSIONS" default="false" type="boolean">
+  为每个 agent 的 OpenRouter 请求附带独立 `session_id`，让该 agent 的请求保持路由到同一上游 Provider，并复用跨轮次 Prompt 缓存。未设置时由 OpenRouter 自由路由。
+</ParamField>
+
+<ParamField path="STRIX_CACHE_BLOCK_TOKENS" default="128" type="integer">
+  Provider 的 Prompt 缓存块大小。只有缓存 Token 比上一轮至少少该值且 Prompt 没有缩短时，运行报告才记为缓存未命中。缓存块较小的 Provider 可调低此值。
 </ParamField>
 
 ## 模型画像（可选）
@@ -152,7 +171,7 @@ strix_runs/<run_name>/events.jsonl
 </ParamField>
 
 <ParamField path="DOCKER_HOST" type="string">
-  Docker daemon socket 路径，适用于远程 Docker 或自定义运行环境。
+  Docker daemon 地址，例如 `unix:///var/run/docker.sock` 或 `tcp://10.0.0.5:2375`。未设置时，Strix 按 Docker CLI 的选择连接：优先使用当前 Docker context，其次使用默认 socket。Docker Desktop、OrbStack 和 Colima 通常会注册自己的 context。
 </ParamField>
 
 <ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">

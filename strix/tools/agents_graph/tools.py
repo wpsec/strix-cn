@@ -13,7 +13,7 @@ from typing import Any, Literal, get_args
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agent_naming import normalize_agent_name
-from strix.core.agents import Status, coordinator_from_context
+from strix.core.agents import ACTIVE_STATUSES, Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
 from strix.core.token_budget import normalize_task_estimate, normalize_token_priority
@@ -22,7 +22,7 @@ from strix.runtime.proxy_coverage import assign_proxy_coverage, unresolved_proxy
 from strix.skills import validate_requested_skills
 
 
-_ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting", "budget_paused"})
+_ACTIVE_STATUSES: frozenset[str] = ACTIVE_STATUSES
 
 
 logger = logging.getLogger(__name__)
@@ -309,8 +309,8 @@ async def wait_for_agents(  # noqa: PLR0911
     **This tool is only for waiting on other agents.** Two things it is
     NOT for:
 
-    - **Talking to the user.** Use ``respond_to_user``, which delivers
-      your message and hands control back in one call.
+    - **Waiting for the user.** Write your reply as plain text, then call
+      ``wait_for_user`` to hand control back.
     - **Waiting for a long-running command.** This tool does not watch
       processes at all — it sleeps until a *message* arrives, so it
       burns the full timeout even if your command finished a second
@@ -942,13 +942,13 @@ async def stop_agent(
         )
 
     current_status = statuses[target_agent_id]
-    if current_status not in _ACTIVE_STATUSES:
+    if current_status not in ACTIVE_STATUSES:
         return json.dumps(
             {
                 "success": False,
                 "error": (
                     f"Agent {target_agent_id} is already '{current_status}'; "
-                    "stop_agent only acts on running/waiting agents — use "
+                    "stop_agent only acts on running/waiting/paused agents — use "
                     "view_agent_graph to find still-active descendants and "
                     "stop them individually, or send_message_to_agent if you "
                     "want to wake this one with new instructions"

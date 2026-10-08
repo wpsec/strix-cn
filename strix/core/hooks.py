@@ -14,6 +14,7 @@ from strix.core.token_budget import (
     normalize_token_limit,
     normalize_token_priority,
 )
+from strix.core.agents import BudgetPolicy, coordinator_from_context
 from strix.report.state import get_global_report_state
 
 
@@ -27,6 +28,26 @@ logger = logging.getLogger(__name__)
 
 
 LLM_TURN_KEY = "llm_turn"
+
+# ``BudgetPolicy`` decides what happens when the accumulated LLM cost reaches
+# ``max_budget_usd``.
+#
+# ``stop``: the agents are warned as the limit approaches, sub-agents are cut at
+# a reserve so the root can write its report, and the scan ends at the limit.
+#
+# ``pause``: the agents are never told a limit exists. Every agent parks right
+# before its next LLM call once the limit is reached (or an operator pauses the
+# scan), keeping its session, context and sandbox alive, and continues with that
+# same call when the operator raises the limit or resumes.
+__all__ = [
+    "LLM_TURN_KEY",
+    "BudgetExceededError",
+    "BudgetPausedError",
+    "BudgetPolicy",
+    "ReportUsageHooks",
+    "SubagentBudgetReservedError",
+    "recomputed_budget_flags",
+]
 
 _STAGE_LABELS: tuple[str, ...] = ("NOTICE", "URGENT", "CRITICAL")
 _TURN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
@@ -53,7 +74,20 @@ class TokenReserveExceededError(SubagentBudgetReservedError):
 
 
 class BudgetPausedError(RuntimeError):
-    """Raised to park one agent when an interactive scan reaches its budget."""
+    """Raised to park one agent until the scan budget is raised or the pause lifted.
+
+    ``resume_epoch`` is the coordinator's ``resume_epoch`` at the moment the agent
+    decided to park; the agent waits for a resume newer than that.
+    """
+
+    def __init__(self, message: str, *, resume_epoch: int = 0) -> None:
+        super().__init__(message)
+        self.resume_epoch = resume_epoch
+
+
+def _validate_budget(max_budget_usd: float | None) -> None:
+    if max_budget_usd is not None and (not math.isfinite(max_budget_usd) or max_budget_usd <= 0):
+        raise ValueError("max_budget_usd must be a finite number greater than 0")
 
 
 def recomputed_budget_flags(
@@ -61,11 +95,12 @@ def recomputed_budget_flags(
     max_budget_usd: float | None,
     *,
     interactive: bool,
+    budget_policy: BudgetPolicy = "stop",
 ) -> tuple[bool, bool]:
     """Return the (budget_stopped, reserve_stopped) flags a resumed scan should carry."""
     if max_budget_usd is None:
         return False, False
-    if interactive:
+    if interactive or budget_policy == "pause":
         return False, False
     budget_stopped = cost >= max_budget_usd
     reserve_stopped = cost >= max_budget_usd * _SUBAGENT_BUDGET_RESERVE
@@ -137,19 +172,33 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         token_limit: int | None = None,
         max_turns: int | None = None,
         interactive: bool = False,
+        budget_policy: BudgetPolicy = "stop",
     ) -> None:
-        if max_budget_usd is not None and (
-            not math.isfinite(max_budget_usd) or max_budget_usd <= 0
-        ):
-            raise ValueError("max_budget_usd must be a finite number greater than 0")
+        _validate_budget(max_budget_usd)
         if max_turns is not None and max_turns <= 0:
             raise ValueError("max_turns must be a positive integer")
+        if budget_policy not in ("stop", "pause"):
+            raise ValueError(f"unknown budget_policy: {budget_policy!r}")
         self._model = model
         self._max_budget_usd = max_budget_usd
         self._budget_increment = max_budget_usd
         self._token_limit = normalize_token_limit(token_limit)
         self._max_turns = max_turns
         self._interactive = interactive
+        self._budget_policy: BudgetPolicy = budget_policy
+
+    @property
+    def max_budget_usd(self) -> float | None:
+        return self._max_budget_usd
+
+    @property
+    def budget_policy(self) -> BudgetPolicy:
+        return self._budget_policy
+
+    def set_max_budget_usd(self, max_budget_usd: float | None) -> None:
+        """Replace the scan's cost limit; ``None`` removes it."""
+        _validate_budget(max_budget_usd)
+        self._max_budget_usd = max_budget_usd
 
     def extend_budget(self) -> None:
         if self._max_budget_usd is None or self._budget_increment is None:
@@ -163,6 +212,8 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         system_prompt: str | None,  # noqa: ARG002
         input_items: list[TResponseInputItem],
     ) -> None:
+        if self._budget_policy == "pause":
+            self._pause_if_limited(context)
         context.context[LLM_TURN_KEY] = int(context.context.get(LLM_TURN_KEY, 0)) + 1
         try:
             self._maybe_warn_turns(context, input_items)
@@ -203,6 +254,27 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
                 f"Ordinary sub-agent work reached the Token discovery limit: used {used} "
                 f"of {self._token_limit}; the final 20% is reserved for high-risk "
                 "validation and reporting"
+            )
+
+    def _pause_if_limited(self, context: RunContextWrapper[dict[str, Any]]) -> None:
+        """Park the agent before a paid call when the scan is at its limit or paused."""
+        coordinator = coordinator_from_context(context.context)
+        epoch = coordinator.resume_epoch if coordinator is not None else 0
+        if coordinator is not None and coordinator.budget_paused:
+            raise BudgetPausedError(
+                "scan paused; waiting for the operator to resume", resume_epoch=epoch
+            )
+        if self._max_budget_usd is None:
+            return
+        report_state = get_global_report_state()
+        if report_state is None:
+            return
+        cost = report_state.get_total_llm_cost()
+        if cost >= self._max_budget_usd:
+            raise BudgetPausedError(
+                f"Scan budget of ${self._max_budget_usd:.2f} reached (spent ${cost:.4f}); "
+                "pausing until the operator raises the limit",
+                resume_epoch=epoch,
             )
 
     def _maybe_warn_token_budget(
@@ -262,7 +334,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         context: RunContextWrapper[dict[str, Any]],
         input_items: list[TResponseInputItem],
     ) -> None:
-        if self._max_budget_usd is None:
+        if self._max_budget_usd is None or self._budget_policy == "pause":
             return
         report_state = get_global_report_state()
         if report_state is None:
@@ -346,6 +418,10 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
                         f"used {tokens} of {self._token_limit}; the final 20% is reserved "
                         "for high-risk validation and reporting"
                     )
+        if self._budget_policy == "pause":
+            # The finished call is paid for and its tool calls still run for free;
+            # the agent parks before its next call, in ``on_llm_start``.
+            return
 
         if self._max_budget_usd is not None:
             cost = report_state.get_total_llm_cost()

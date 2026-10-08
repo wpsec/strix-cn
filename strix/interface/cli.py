@@ -53,8 +53,6 @@ def _resolve_sandbox_image() -> str:
 
 async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console = Console()
-    target_credentials = getattr(args, "target_credentials", None)
-    args.target_credentials = None
 
     start_text = Text()
     start_text.append("渗透测试已启动", style="bold #22c55e")
@@ -113,10 +111,6 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "burp_port": getattr(args, "burp_port", None),
         "token_limit": getattr(args, "token_limit", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
-        "credential_auth_available": bool(target_credentials),
-        "allow_credential_attacks": bool(getattr(args, "allow_credential_attacks", False)),
-        "seed_request": getattr(args, "seed_request", None),
-        "request_hypothesis": getattr(args, "request_hypothesis", None),
     }
 
     report_state = ReportState(args.run_name)
@@ -141,10 +135,32 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         console.print(vuln_panel)
         console.print()
 
+    def display_vulnerability_deleted(report: dict[str, Any]) -> None:
+        report_id = str(report.get("id", "unknown"))
+        deletion = report.get("deletion")
+        deletion = deletion if isinstance(deletion, dict) else {}
+        deleted_by = deletion.get("agent_name") or deletion.get("agent_id") or "agent"
+        text = Text()
+        text.append("Withdrawn: ", style="bold")
+        text.append(f"{report.get('title', '')}\n\n")
+        text.append(f"Deleted by {deleted_by}. ", style="dim")
+        text.append(str(deletion.get("reason") or ""))
+        console.print(
+            Panel(
+                text,
+                title=f"[bold yellow]{report_id.upper()} (withdrawn)",
+                title_align="left",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
     report_state.vulnerability_found_callback = display_vulnerability
     report_state.vulnerability_updated_callback = lambda report: display_vulnerability(
         report, updated=True
     )
+    report_state.vulnerability_deleted_callback = display_vulnerability_deleted
 
     def cleanup_on_exit() -> None:
         report_state.cleanup()
@@ -225,11 +241,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     token_limit=getattr(args, "token_limit", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
                     status_sink=_note_startup_phase,
-                    target_credentials=target_credentials,
                 )
             finally:
-                if target_credentials is not None:
-                    target_credentials.clear()
                 stop_updates.set()
                 update_thread.join(timeout=1)
                 with contextlib.suppress(Exception):

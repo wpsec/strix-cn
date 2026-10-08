@@ -126,8 +126,9 @@ func (m Model) statusVisible() bool {
 }
 
 func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight int) {
-	showSidebar = m.width >= 120
-	if showSidebar {
+	showSidebar = m.width >= 120 && !m.sidebarHidden
+	switch {
+	case showSidebar:
 		// A very wide terminal made the sidebar grow without bound, so every
 		// fixed-width panel inside it looked padded out with excessive blank
 		// space. Keep the desktop sidebar readable, but give the proxy stats
@@ -135,7 +136,9 @@ func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight i
 		// a label line followed by a mostly empty row.
 		sidebarWidth = min(max(32, m.width/5), 36)
 		chatWidth = m.width - sidebarWidth - 1
-	} else {
+	case m.railVisible():
+		chatWidth = m.width - sidebarRailWidth - 1
+	default:
 		chatWidth = m.width
 	}
 	statusH := 0
