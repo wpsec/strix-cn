@@ -1,16 +1,16 @@
 # Strix-cn
 
-Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已合并上游 `v1.6.2`，默认中文体验，优先解决国内模型接入、Burp / Caido 工作流、受限网络兼容，以及本地源码扫描落地问题。
+Strix 开源 AI 渗透测试工具的中文维护分支，当前基于上游 `v1.7.0`。保留简体中文体验、Burp 被动代理工作流和 `--token-limit`，其余功能与上游保持一致。
 
 - 上游项目：[https://github.com/usestrix/strix](https://github.com/usestrix/strix)
 - 当前分支：[https://github.com/wpsec/strix-cn](https://github.com/wpsec/strix-cn)
 
 ## 分支目标
 
-- 完整吸收上游当前发布版的功能、修复和新架构
+- 跟进上游当前发布版的功能、修复和架构
 - 保留 `strix-cn` 既有的中文文档、中文提示和中文报告输出
-- 保留 Burp / Caido 流量驱动的常规渗透测试工作流与本地模型、兼容网关适配
-- 保留本地开发者熟悉的 CLI 入口、常用参数和恢复路径
+- 保留 Burp 被动代理采集工作流与整次扫描的 Token 限额
+- 除上述保留项外，功能以对应上游版本为基线
 
 ## 当前版本重点
 
@@ -20,6 +20,7 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已合并�
 - `LLM_API_BASE` 指向 Anthropic 协议端点时，裸模型名自动按 `/v1/messages` 路由
 - 交互界面为上游 Go / Bubble Tea TUI；本地 Viewer 内置，无需额外前端安装
 - 支持 `LLM_EXTRA_HEADERS`、`LLM_DISABLE_STREAMING`、`STRIX_REASONING_EFFORT=max`
+- 支持 `--token-limit` 设置整次扫描的 Token 上限，并在恢复时提高累计上限
 - Web Search 支持 Exa 与 Perplexity，可通过配置选择 Provider；Exa 支持搜索结果摘要和页面全文抓取
 - 支持通过 Vercel AI Gateway 接入多个模型 Provider
 - 默认沙箱镜像基线 `ghcr.io/usestrix/strix-sandbox:1.3.0`；本地目录统一走挂载模式
@@ -27,7 +28,7 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已合并�
 ## 使用注意
 
 - 只能在你拥有或获得明确书面授权的目标上运行
-- Burp/Caido 流量驱动模式下，不要一次性把整站大量接口流量导给 Strix；按功能点分批测试
+- Burp 被动代理模式下，按功能点分批采集流量，再逐批发起测试
 - 对增删改类接口保持谨慎，不建议把高风险破坏性操作直接交给 AI
 - AI 会把任务分发给多个专家代理，复杂扫描通常需要较长时间
 <a href="https://github.com/usestrix/strix"><img src="https://img.shields.io/github/stars/usestrix/strix?style=flat-square" alt="GitHub Stars"></a>
@@ -37,9 +38,9 @@ Strix 开源 AI 渗透测试工具的中文维护分支。当前分支已合并�
 ## 核心能力
 
 - 多代理渗透测试：侦察、利用、验证和报告并行协作
-- Web、代码库、API 契约、域名、IP、Burp/Caido 流量驱动测试支持
+- Web、代码库、API 契约、域名、IP，以及 Burp 被动代理采集
 - 真实 PoC 验证：报告包含可复现步骤和证据
-- Burp / Caido 联动：适合“采集一个功能点，再开始测试”的工作流
+- Burp 被动代理：按功能点采集流量，再开始测试
 - 中文交付体验：CLI、TUI、README、关键 docs、报告默认中文
 - 本地兼容优先：支持 OpenAI-compatible 网关、本地模型和代理环境
 
@@ -69,7 +70,7 @@ source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e .
 
-# 如果要直接在源码仓库里使用交互式 TUI / Burp/Caido 流量入口
+# 如果要直接在源码仓库里使用交互式 TUI / Burp 被动代理入口
 # macOS 可先安装 Go
 brew install go
 
@@ -176,13 +177,13 @@ export ALL_PROXY="socks5://127.0.0.1:7897"
 # Web 应用扫描
 .venv/bin/strix --target https://example.com
 
-# Burp/Caido 流量驱动常规渗透测试
+# Burp 被动代理采集
 .venv/bin/strix --burp-port 8081
 
 # Token 限制
 .venv/bin/strix --token-limit 100M --target https://example.com
 
-# 将已经在测试的任务，token上线重新标定
+# 恢复任务并提高累计 Token 上限
 .venv/bin/strix --resume <run_name> --token-limit 200M
 ```
 
@@ -215,12 +216,12 @@ export POSTMAN_API_KEY="PMAK-..."
 strix --target "postman://<collection-uuid>?env=<environment-uuid>"
 ```
 
-### Burp/Caido 流量驱动常规渗透测试
+### Burp 被动代理模式
 
-`--burp-port` 启动 Burp/Caido 流量驱动的常规扫描，从进入的请求、响应、会话和功能流程建立测试上下文，再交给完整 Agent 链路进行常规渗透测试。
+`--burp-port` 会在本机启动 Burp 上游代理入口。Strix 被动采集经过 Burp 的请求、响应和会话上下文；采集本身不会立即启动测试。完成一个功能点的操作后，发送 `开始测试`，Strix 才会分析当前批次；测试期间暂停采集。
 
 ```bash
-# 仅使用 Burp/Caido 流量建立测试上下文
+# 启动 Burp 被动代理入口
 strix --burp-port 8081
 
 # 同时显式限制目标主机
@@ -229,13 +230,13 @@ strix --target https://example.com --burp-port 8081
 
 推荐工作流：
 
-1. 在 Burp 中把上游代理指向 `127.0.0.1:8081`
-2. 浏览器继续走 Burp，先手工完成一个完整功能点
-3. 回到 Strix 后在对话框发送 `开始测试`，冻结当前功能点并暂停继续采集
-4. 当前功能点测完后发送 `下一功能点`，重新开启下一轮采集
-5. 全部功能点完成后发送 `结束测试`，生成总报告
+1. 在 Burp 中将上游代理指向 `127.0.0.1:8081`
+2. 浏览器继续走 Burp，手工完成一个功能点的操作
+3. 在 Strix 中发送 `开始测试`，冻结当前批次并启动分析
+4. 本轮完成后发送 `下一功能点`，重新开启流量采集
+5. 全部功能点完成后发送 `结束测试`，汇总结果并生成报告
 
-这种“单功能采集 -> 开始测试 -> 切换下一功能”的方式，比一次性灌入整站流量更稳定；每个功能点都会进入常规 Agent 渗透测试流程，也更符合当前 `strix-cn` 的 Burp/Caido 工作流。
+按功能点采集和测试，便于控制每轮范围，也避免一次性导入大量无关流量。
 
 <!-- 这是一张图片，ocr 内容为： -->
 
