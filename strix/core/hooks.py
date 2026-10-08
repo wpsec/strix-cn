@@ -55,6 +55,7 @@ _ROOT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 _SUBAGENT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.75, 0.80, 0.85)
 _SUBAGENT_BUDGET_RESERVE = 0.90
 _TOKEN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
+_IMAGE_TOKEN_RESERVATION = 4_096
 
 
 class BudgetExceededError(RuntimeError):
@@ -83,6 +84,40 @@ class BudgetPausedError(RuntimeError):
     def __init__(self, message: str, *, resume_epoch: int = 0) -> None:
         super().__init__(message)
         self.resume_epoch = resume_epoch
+
+
+def _token_budget_text(value: Any) -> tuple[str, int]:
+    """Serialize request text without expanding image payloads into base64."""
+    if isinstance(value, str):
+        return value, 0
+    if isinstance(value, bytes):
+        return "[binary content]", 0
+    if isinstance(value, list | tuple):
+        parts: list[str] = []
+        images = 0
+        for item in value:
+            text, item_images = _token_budget_text(item)
+            if text:
+                parts.append(text)
+            images += item_images
+        return "\n".join(parts), images
+    if isinstance(value, dict):
+        item_type = str(value.get("type") or "").lower()
+        if item_type in {"image", "image_url", "input_image", "output_image"}:
+            return "[image]", 1
+        parts = []
+        images = 0
+        for key, item in value.items():
+            if key in {"data", "b64_json", "id", "call_id"}:
+                continue
+            text, item_images = _token_budget_text(item)
+            if text:
+                parts.append(text)
+            images += item_images
+        return "\n".join(parts), images
+    if isinstance(value, int | float | bool):
+        return str(value), 0
+    return str(value), 0
 
 
 def _validate_budget(max_budget_usd: float | None) -> None:
@@ -186,6 +221,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         self._max_turns = max_turns
         self._interactive = interactive
         self._budget_policy: BudgetPolicy = budget_policy
+        self._token_reservations: dict[str, int] = {}
 
     @property
     def max_budget_usd(self) -> float | None:
@@ -209,7 +245,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         self,
         context: RunContextWrapper[dict[str, Any]],
         agent: Agent[dict[str, Any]],  # noqa: ARG002
-        system_prompt: str | None,  # noqa: ARG002
+        system_prompt: str | None,
         input_items: list[TResponseInputItem],
     ) -> None:
         if self._budget_policy == "pause":
@@ -219,7 +255,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             self._maybe_warn_turns(context, input_items)
             self._maybe_warn_budget(context, input_items)
             self._maybe_warn_token_budget(context, input_items)
-            self._check_token_budget_before_llm(context)
+            self._check_token_budget_before_llm(context, system_prompt, input_items)
         except (TokenLimitExceededError, TokenReserveExceededError):
             raise
         except Exception:
@@ -234,27 +270,95 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
     def _check_token_budget_before_llm(
         self,
         context: RunContextWrapper[dict[str, Any]],
+        system_prompt: str | None,
+        input_items: list[TResponseInputItem],
     ) -> None:
         if self._token_limit is None:
             return
         report_state = get_global_report_state()
         if report_state is None:
             return
-        used = report_state.get_total_llm_tokens()
+        reservation_key = self._reservation_key(context)
+        reserved_elsewhere = sum(self._token_reservations.values()) - self._token_reservations.get(
+            reservation_key, 0
+        )
+        used = report_state.get_total_llm_tokens() + reserved_elsewhere
         if used >= self._token_limit:
             raise TokenLimitExceededError(
-                f"Scan Token limit of {self._token_limit} reached (used {used})"
+                f"Scan Token limit of {self._token_limit} reached or reserved (used {used})"
             )
         is_root = context.context.get("parent_id") is None
-        if is_root or self._task_priority(context) in {"P0", "P1"}:
-            return
+        is_high_risk = is_root or self._task_priority(context) in {"P0", "P1"}
         reserve_limit = int(self._token_limit * (1 - TOKEN_RESERVE_RATIO))
-        if used >= reserve_limit:
+        if not is_high_risk and used >= reserve_limit:
             raise TokenReserveExceededError(
                 f"Ordinary sub-agent work reached the Token discovery limit: used {used} "
                 f"of {self._token_limit}; the final 20% is reserved for high-risk "
                 "validation and reporting"
             )
+
+        request_reservation = self._estimate_request_tokens(system_prompt, input_items)
+        projected = used + request_reservation
+        if projected > self._token_limit:
+            raise TokenLimitExceededError(
+                f"The next LLM request is estimated to need {request_reservation} Tokens; "
+                f"only {self._token_limit - used} remain under the scan limit"
+            )
+        if not is_high_risk and projected > reserve_limit:
+            raise TokenReserveExceededError(
+                "The next ordinary sub-agent request would consume the final 20% reserved "
+                "for high-risk validation and reporting"
+            )
+        self._token_reservations[reservation_key] = request_reservation
+
+    def _estimate_request_tokens(
+        self,
+        system_prompt: str | None,
+        input_items: list[TResponseInputItem],
+    ) -> int:
+        """Reserve prompt, tool-schema overhead, and the model's output window."""
+        try:
+            from strix.llm.context_budget import count_tokens, output_limit
+        except Exception:
+            logger.exception("could not load Token reservation estimators")
+            input_text, image_count = _token_budget_text(input_items)
+            prompt = "\n".join((system_prompt or "", input_text))
+            return (
+                len(prompt.encode("utf-8"))
+                + image_count * _IMAGE_TOKEN_RESERVATION
+                + DEFAULT_TOKEN_ESTIMATE_PER_REQUEST * 3
+            )
+
+        input_text, image_count = _token_budget_text(input_items)
+        prompt = "\n".join((system_prompt or "", input_text))
+        try:
+            prompt_tokens = count_tokens(self._model, prompt)
+        except Exception:
+            logger.exception("could not count prompt Tokens for the next LLM request")
+            prompt_tokens = len(prompt.encode("utf-8"))
+        try:
+            max_output_tokens = output_limit(self._model)
+        except Exception:
+            logger.exception("could not resolve the model output Token limit")
+            max_output_tokens = DEFAULT_TOKEN_ESTIMATE_PER_REQUEST * 2
+        return (
+            prompt_tokens
+            + image_count * _IMAGE_TOKEN_RESERVATION
+            + DEFAULT_TOKEN_ESTIMATE_PER_REQUEST
+            + max_output_tokens
+        )
+
+    @staticmethod
+    def _reservation_key(context: RunContextWrapper[dict[str, Any]]) -> str:
+        context_data = context.context if isinstance(context.context, dict) else {}
+        agent_id = context_data.get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            return agent_id
+        return f"context:{id(context)}"
+
+    def release_token_reservation(self, agent_id: str) -> None:
+        """Release a pending estimate after an LLM call or its run cycle ends."""
+        self._token_reservations.pop(agent_id, None)
 
     def _pause_if_limited(self, context: RunContextWrapper[dict[str, Any]]) -> None:
         """Park the agent before a paid call when the scan is at its limit or paused."""
@@ -380,8 +484,10 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         agent: Agent[dict[str, Any]],
         response: ModelResponse,
     ) -> None:
+        reservation_key = self._reservation_key(context)
         report_state = get_global_report_state()
         if report_state is None:
+            self._token_reservations.pop(reservation_key, None)
             return
 
         ctx = context.context if isinstance(context.context, dict) else {}
@@ -402,20 +508,26 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             )
         except Exception:
             logger.exception("failed to record SDK usage for agent %s", agent_id)
+        finally:
+            self._token_reservations.pop(reservation_key, None)
 
         if self._token_limit is not None:
             tokens = report_state.get_total_llm_tokens()
-            if tokens >= self._token_limit:
+            pending = sum(self._token_reservations.values())
+            projected = tokens + pending
+            if projected >= self._token_limit:
                 raise TokenLimitExceededError(
-                    f"Scan Token limit of {self._token_limit} reached (used {tokens})"
+                    f"Scan Token limit of {self._token_limit} reached or reserved "
+                    f"(used {tokens}, reserved {pending})"
                 )
             is_root = ctx.get("parent_id") is None
             if not is_root and self._task_priority(context) not in {"P0", "P1"}:
                 reserve_limit = int(self._token_limit * (1 - TOKEN_RESERVE_RATIO))
-                if tokens >= reserve_limit:
+                if projected >= reserve_limit:
                     raise TokenReserveExceededError(
                         f"Ordinary sub-agent work reached the Token discovery limit: "
-                        f"used {tokens} of {self._token_limit}; the final 20% is reserved "
+                        f"used or reserved {projected} of {self._token_limit}; "
+                        "the final 20% is reserved "
                         "for high-risk validation and reporting"
                     )
         if self._budget_policy == "pause":

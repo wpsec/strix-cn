@@ -961,6 +961,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             return None
         else:
             return cast("RunResultBase | None", stream)
+        finally:
+            release_reservation = getattr(hooks, "release_token_reservation", None)
+            if callable(release_reservation):
+                release_reservation(agent_id)
 
 
 async def _agent_status(coordinator: AgentCoordinator, agent_id: str) -> Status | None:

@@ -909,12 +909,14 @@ class ReportState:
         coverage = self._coverage_by_severity()
         self.update_scan_final_fields(
             executive_summary=(
-                "扫描因配置的 Token 限制耗尽而提前停止。报告仅反映已执行和已落盘的测试，"
+                "扫描因达到配置的 Token 限制，或剩余额度不足以容纳下一次模型请求而提前停止。"
+                "报告仅反映已执行和已落盘的测试，"
                 "未覆盖范围不能据此判断为安全。"
             ),
             methodology=(
                 "本次运行按 P0/P1 优先级执行授权、攻击面、认证授权、严重/高危路径及其验证；"
-                "Token 限制耗尽后停止创建新任务，并在报告中保留未完成和跳过任务。"
+                "达到 Token 限制或剩余额度不足以容纳下一次模型请求后停止创建新任务，"
+                "并在报告中保留未完成和跳过任务。"
             ),
             technical_analysis=(
                 f"当前已落盘漏洞：严重 {coverage['critical']} 个、高危 {coverage['high']} 个、"
