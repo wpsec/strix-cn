@@ -118,6 +118,63 @@ async def test_host_bridge_proxy_rewrites_absolute_form_http_requests(
     assert forwarded.endswith("\r\nbody=1")
     assert client_writer.buffer.decode("latin1").startswith("HTTP/1.1 200 OK")
 
+
+@pytest.mark.asyncio
+async def test_host_bridge_logs_plain_method_without_query_values(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    query_marker = "query-marker-that-must-not-be-logged"
+    client_reader = _reader(
+        f"GET http://127.0.0.1:8088/probe?value={query_marker} HTTP/1.1\r\n"
+        "Host: 127.0.0.1:8088\r\n\r\n".encode()
+    )
+    client_writer = _FakeWriter()
+    remote_reader = _reader(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+    remote_writer = _FakeWriter()
+
+    async def _open_connection(host: str, port: int) -> tuple[asyncio.StreamReader, _FakeWriter]:
+        assert host == "127.0.0.1"
+        assert port == 8088
+        return remote_reader, remote_writer
+
+    monkeypatch.setattr(asyncio, "open_connection", _open_connection)
+    caplog.set_level("INFO", logger=host_bridge_proxy.__name__)
+
+    await host_bridge_proxy._handle_client(client_reader, client_writer)
+
+    forwarded = remote_writer.buffer.decode("latin1")
+    assert forwarded.startswith(f"GET /probe?value={query_marker} HTTP/1.1\r\n")
+    assert "method=GET version=HTTP/1.1" in caplog.text
+    assert "path=/probe" not in caplog.text
+    assert query_marker not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_host_bridge_logs_connect_boundary_without_claiming_inner_method(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client_reader = _reader(b"CONNECT 127.0.0.1:8443 HTTP/1.1\r\nHost: 127.0.0.1:8443\r\n\r\n")
+    client_writer = _FakeWriter()
+    remote_reader = _reader(b"")
+    remote_writer = _FakeWriter()
+
+    async def _open_connection(host: str, port: int) -> tuple[asyncio.StreamReader, _FakeWriter]:
+        assert host == "127.0.0.1"
+        assert port == 8443
+        return remote_reader, remote_writer
+
+    monkeypatch.setattr(asyncio, "open_connection", _open_connection)
+    caplog.set_level("INFO", logger=host_bridge_proxy.__name__)
+
+    await host_bridge_proxy._handle_client(client_reader, client_writer)
+
+    assert "Host bridge received CONNECT" in caplog.text
+    assert "host=127.0.0.1 port=8443 version=HTTP/1.1" in caplog.text
+    assert "inner TLS request lines are not visible at this layer" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_shared_host_bridge_proxy_is_reference_counted(
     monkeypatch: pytest.MonkeyPatch,

@@ -102,7 +102,10 @@ def test_merge_guard_burp_summary_and_stats_stay_chinese() -> None:
         _ReportState(
             burp_workflow_phase="capture",
             proxy_feature_request_count=12,
-            proxy_capture_state=ProxyCaptureState(total_request_count=42),
+            proxy_capture_state=ProxyCaptureState(
+                total_request_count=42,
+                operator_request_count=42,
+            ),
         )
     ).plain
 
@@ -111,4 +114,4 @@ def test_merge_guard_burp_summary_and_stats_stay_chinese() -> None:
     assert "发送“开始测试”" in summary
     assert "工作流: 功能点采集" in stats
     assert "操作: 发送“开始测试”启动当前功能点分析" in stats
-    assert "代理捕获: 累计 42 条" in stats
+    assert "操作员请求 42 条 · 重放请求 0 条 · 未分类 0 条 · 代理历史 42 条" in stats

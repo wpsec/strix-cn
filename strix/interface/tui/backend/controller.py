@@ -8,6 +8,7 @@ import json
 import math
 import webbrowser
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -122,11 +123,11 @@ class TuiController:
             _PASSIVE_PROXY_PHASE_CAPTURE if self._is_passive_proxy_mode() else ""
         )
         self._passive_proxy_capture_baseline_request_id: str | None = None
-        self._passive_proxy_capture_baseline_total_count: int | None = None
+        self._passive_proxy_capture_baseline_operator_count: int | None = None
         self._passive_proxy_capture_baseline_created_at: str | None = None
         self._passive_proxy_capture_baseline_endpoint_counts: dict[str, int] | None = None
         self._passive_proxy_test_boundary_request_id: str | None = None
-        self._passive_proxy_test_boundary_total_count: int | None = None
+        self._passive_proxy_test_boundary_operator_count: int | None = None
         self._passive_proxy_test_boundary_created_at: str | None = None
         self._passive_proxy_test_boundary_endpoint_counts: dict[str, int] | None = None
         self._on_start = on_start
@@ -242,6 +243,43 @@ class TuiController:
                 getattr(proxy_capture_state, "latest_path", None), max_string=256
             ),
             "proxy_latest_status_code": latest_status_code,
+            "proxy_latest_request_id": terminal_projection(
+                getattr(proxy_capture_state, "latest_request_id", None), max_string=64
+            ),
+            "proxy_latest_request_source": terminal_projection(
+                getattr(proxy_capture_state, "latest_request_source", None), max_string=32
+            ),
+            "proxy_latest_request_category": terminal_projection(
+                getattr(proxy_capture_state, "latest_request_category", None), max_string=32
+            ),
+            "proxy_operator_request_count": int(
+                getattr(proxy_capture_state, "operator_request_count", 0) or 0
+            ),
+            "proxy_replay_request_count": int(
+                getattr(proxy_capture_state, "replay_request_count", 0) or 0
+            ),
+            "proxy_unclassified_request_count": int(
+                getattr(proxy_capture_state, "unclassified_request_count", 0) or 0
+            ),
+            "proxy_latest_operator_request_id": terminal_projection(
+                getattr(proxy_capture_state, "latest_operator_request_id", None), max_string=64
+            ),
+            "proxy_latest_operator_request_source": terminal_projection(
+                getattr(proxy_capture_state, "latest_operator_request_source", None),
+                max_string=32,
+            ),
+            "proxy_latest_operator_method": terminal_projection(
+                getattr(proxy_capture_state, "latest_operator_method", None), max_string=32
+            ),
+            "proxy_latest_operator_host": terminal_projection(
+                getattr(proxy_capture_state, "latest_operator_host", None), max_string=256
+            ),
+            "proxy_latest_operator_path": terminal_projection(
+                getattr(proxy_capture_state, "latest_operator_path", None), max_string=256
+            ),
+            "proxy_latest_operator_status_code": getattr(
+                proxy_capture_state, "latest_operator_status_code", None
+            ),
             "proxy_total_request_count": int(
                 getattr(proxy_capture_state, "total_request_count", 0) or 0
             ),
@@ -609,11 +647,11 @@ class TuiController:
     def _proxy_capture_state(self) -> Any:
         return getattr(self.report_state, "proxy_capture_state", None)
 
-    def _proxy_total_request_count(self) -> int:
-        return int(getattr(self._proxy_capture_state(), "total_request_count", 0) or 0)
+    def _proxy_operator_request_count(self) -> int:
+        return int(getattr(self._proxy_capture_state(), "operator_request_count", 0) or 0)
 
-    def _proxy_latest_request_id(self) -> str | None:
-        request_id = getattr(self._proxy_capture_state(), "latest_request_id", None)
+    def _proxy_latest_operator_request_id(self) -> str | None:
+        request_id = getattr(self._proxy_capture_state(), "latest_operator_request_id", None)
         if not isinstance(request_id, str):
             return None
         text = request_id.strip()
@@ -653,43 +691,58 @@ class TuiController:
         capture_state = self._proxy_capture_state()
         if capture_state is None:
             return False
-        if self._proxy_total_request_count() > 0:
+        if self._proxy_operator_request_count() > 0:
             return True
-        if int(getattr(capture_state, "recent_request_count", 0) or 0) > 0:
-            return True
-        return self._proxy_latest_request_id() is not None
+        return self._proxy_latest_operator_request_id() is not None
 
     def _requires_new_proxy_capture_before_test(self) -> bool:
-        return self._passive_proxy_capture_baseline_total_count is not None
+        return self._passive_proxy_capture_baseline_operator_count is not None
 
     def _has_new_proxy_capture(self) -> bool:
-        baseline_total = self._passive_proxy_capture_baseline_total_count
-        if baseline_total is None:
+        baseline_operator = self._passive_proxy_capture_baseline_operator_count
+        if baseline_operator is None:
             return self._has_any_proxy_capture()
-        current_total = self._proxy_total_request_count()
-        if current_total > baseline_total:
+        current_operator = self._proxy_operator_request_count()
+        if current_operator > baseline_operator:
             return True
         baseline_request_id = self._passive_proxy_capture_baseline_request_id
-        current_request_id = self._proxy_latest_request_id()
+        current_request_id = self._proxy_latest_operator_request_id()
         if baseline_request_id is None:
-            return current_request_id is not None and current_total > 0
+            return current_request_id is not None and current_operator > 0
         return current_request_id is not None and current_request_id != baseline_request_id
 
+    def initialize_passive_proxy_capture_baseline(self) -> None:
+        if (
+            self._is_passive_proxy_mode()
+            and self._passive_proxy_capture_baseline_operator_count is None
+        ):
+            self._remember_passive_proxy_capture_baseline()
+
+    def begin_passive_proxy_capture(self) -> None:
+        if not self._is_passive_proxy_mode():
+            return
+        self._passive_proxy_capture_baseline_request_id = None
+        self._passive_proxy_capture_baseline_operator_count = 0
+        self._passive_proxy_capture_baseline_created_at = (
+            datetime.now(UTC) - timedelta(milliseconds=1)
+        ).isoformat(timespec="milliseconds")
+        self._passive_proxy_capture_baseline_endpoint_counts = {}
+
     def _remember_passive_proxy_capture_baseline(self) -> None:
-        self._passive_proxy_capture_baseline_request_id = self._proxy_latest_request_id()
-        self._passive_proxy_capture_baseline_total_count = self._proxy_total_request_count()
+        self._passive_proxy_capture_baseline_request_id = self._proxy_latest_operator_request_id()
+        self._passive_proxy_capture_baseline_operator_count = self._proxy_operator_request_count()
         self._passive_proxy_capture_baseline_created_at = self._proxy_latest_created_at()
         self._passive_proxy_capture_baseline_endpoint_counts = self._proxy_endpoint_request_counts()
 
     def _clear_passive_proxy_capture_baseline(self) -> None:
         self._passive_proxy_capture_baseline_request_id = None
-        self._passive_proxy_capture_baseline_total_count = None
+        self._passive_proxy_capture_baseline_operator_count = None
         self._passive_proxy_capture_baseline_created_at = None
         self._passive_proxy_capture_baseline_endpoint_counts = None
 
     def _remember_passive_proxy_test_boundary(self, *, captured_after: str | None) -> None:
-        self._passive_proxy_test_boundary_request_id = self._proxy_latest_request_id()
-        self._passive_proxy_test_boundary_total_count = self._proxy_total_request_count()
+        self._passive_proxy_test_boundary_request_id = self._proxy_latest_operator_request_id()
+        self._passive_proxy_test_boundary_operator_count = self._proxy_operator_request_count()
         self._passive_proxy_test_boundary_created_at = self._proxy_latest_created_at()
         self._passive_proxy_test_boundary_endpoint_counts = self._proxy_endpoint_request_counts()
         if self.report_state is not None and hasattr(
@@ -702,7 +755,7 @@ class TuiController:
 
     def _clear_passive_proxy_test_boundary(self) -> None:
         self._passive_proxy_test_boundary_request_id = None
-        self._passive_proxy_test_boundary_total_count = None
+        self._passive_proxy_test_boundary_operator_count = None
         self._passive_proxy_test_boundary_created_at = None
         self._passive_proxy_test_boundary_endpoint_counts = None
         if self.report_state is not None and hasattr(
@@ -732,9 +785,9 @@ class TuiController:
             }
         if batch:
             return batch
-        method = getattr(self._proxy_capture_state(), "latest_method", None)
-        host = getattr(self._proxy_capture_state(), "latest_host", None)
-        path = getattr(self._proxy_capture_state(), "latest_path", None)
+        method = getattr(self._proxy_capture_state(), "latest_operator_method", None)
+        host = getattr(self._proxy_capture_state(), "latest_operator_host", None)
+        path = getattr(self._proxy_capture_state(), "latest_operator_path", None)
         if all(isinstance(part, str) and part.strip() for part in (method, host, path)):
             normalized_path = path.strip()
             if not normalized_path.startswith("/"):
@@ -747,8 +800,8 @@ class TuiController:
             self.report_state, "begin_proxy_feature_coverage"
         ):
             return
-        latest_request_id = self._proxy_latest_request_id() or "request"
-        batch_id = f"{latest_request_id}:{self._proxy_total_request_count()}"
+        latest_request_id = self._proxy_latest_operator_request_id() or "request"
+        batch_id = f"{latest_request_id}:{self._proxy_operator_request_count()}"
         self.report_state.begin_proxy_feature_coverage(
             batch_id=batch_id,
             endpoint_request_counts=endpoint_request_counts,

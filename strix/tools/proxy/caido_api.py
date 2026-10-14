@@ -385,6 +385,10 @@ def apply_modifications(
     modifications: dict[str, Any],
     full_url: str,
 ) -> dict[str, Any]:
+    if "method" in modifications:
+        raise ValueError(
+            "repeat_request 不支持修改 HTTP Method。请使用目标 Method 的原始请求作为模板"
+        )
     headers = dict(components["headers"])
     body = components["body"]
     final_url = full_url
@@ -450,6 +454,8 @@ async def replay_send_raw(
         elapsed_ms = int((time.time() - started) * 1000)
         return {
             "session_id": str(session.id),
+            "request_id": None,
+            "request_source": "replay",
             "status": "ERROR",
             "error": (
                 f"Caido replay dispatch did not complete within "
@@ -461,15 +467,26 @@ async def replay_send_raw(
             "response_raw": None,
         }
     elapsed_ms = int((time.time() - started) * 1000)
-    response = getattr(result.entry, "response", None)
+    entry = getattr(result, "entry", None)
+    replay_request = getattr(entry, "request", None) if entry is not None else None
+    response = getattr(entry, "response", None) if entry is not None else None
     response_raw = getattr(response, "raw", None) if response is not None else None
     return {
         "session_id": str(session.id),
+        "request_id": _string_value(getattr(replay_request, "id", None)),
+        "request_source": "replay",
         "status": result.status,
         "error": result.error,
         "elapsed_ms": elapsed_ms,
         "response_raw": response_raw,
     }
+
+
+def _string_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 async def scope_list(client: CaidoClient) -> Any:
@@ -573,7 +590,10 @@ async def repeat_request(
             headers=modified["headers"],
             body=modified["body"],
         )
-        return await replay_send_raw(client, raw=raw, connection=connection)
+        replay = await replay_send_raw(client, raw=raw, connection=connection)
+        replay["original_method"] = components["method"].upper()
+        replay["sent_method"] = modified["method"].upper()
+        return replay
 
     try:
         return await call_with_client(_run)

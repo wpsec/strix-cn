@@ -12,6 +12,7 @@ import contextlib
 import logging
 import os
 from dataclasses import dataclass
+from itertools import count
 from urllib.parse import urlsplit
 
 
@@ -24,6 +25,7 @@ _LISTEN_PORT_ENV = "STRIX_CAIDO_BRIDGE_PORT"
 
 _SHARED_PROXY: "HostBridgeProxyServer | None" = None
 _SHARED_PROXY_LOCK = asyncio.Lock()
+_CONNECTION_IDS = count(1)
 
 
 @dataclass(slots=True, frozen=True)
@@ -135,6 +137,7 @@ async def _handle_client(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
 ) -> None:
+    connection_id = next(_CONNECTION_IDS)
     try:
         request_line = await client_reader.readline()
         if not request_line:
@@ -142,12 +145,30 @@ async def _handle_client(
         method, target, version = _parse_request_line(request_line)
         headers = await _read_headers(client_reader)
         if method.upper() == "CONNECT":
+            host, port = _split_connect_target(target)
+            logger.info(
+                "Host bridge received CONNECT connection_id=%s host=%s port=%s version=%s; "
+                "inner TLS request lines are not visible at this layer",
+                connection_id,
+                _safe_log_value(host, limit=255),
+                port,
+                _safe_log_value(version, limit=16),
+            )
             await _handle_connect_tunnel(
                 client_reader,
                 client_writer,
                 target=target,
             )
             return
+        parsed = urlsplit(target)
+        host = parsed.hostname or _host_from_headers(headers) or ""
+        logger.info(
+            "Host bridge received request connection_id=%s method=%s version=%s host=%s",
+            connection_id,
+            _safe_log_value(method, limit=16),
+            _safe_log_value(version, limit=16),
+            _safe_log_value(host, limit=255),
+        )
         await _handle_plain_http(
             client_reader,
             client_writer,
@@ -155,6 +176,7 @@ async def _handle_client(
             target=target,
             version=version,
             headers=headers,
+            connection_id=connection_id,
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Host bridge proxy request failed", exc_info=True)
@@ -213,6 +235,7 @@ async def _handle_plain_http(
     target: str,
     version: str,
     headers: list[bytes],
+    connection_id: int | None = None,
 ) -> None:
     parsed = urlsplit(target)
     host = parsed.hostname or _host_from_headers(headers)
@@ -224,6 +247,13 @@ async def _handle_plain_http(
         path = f"{path}?{parsed.query}"
     remote_reader, remote_writer = await asyncio.open_connection(host, port)
     try:
+        logger.info(
+            "Host bridge forwarding request connection_id=%s method=%s version=%s host=%s",
+            connection_id if connection_id is not None else "unknown",
+            _safe_log_value(method, limit=16),
+            _safe_log_value(version, limit=16),
+            _safe_log_value(host, limit=255),
+        )
         remote_writer.write(f"{method} {path} {version}\r\n".encode("latin1"))
         for header in headers:
             if header.lower().startswith(b"proxy-connection:"):
@@ -239,6 +269,10 @@ async def _handle_plain_http(
         with contextlib.suppress(Exception):
             remote_writer.close()
             await remote_writer.wait_closed()
+
+
+def _safe_log_value(value: object, *, limit: int) -> str:
+    return "".join(character for character in str(value) if character.isprintable())[:limit]
 
 
 def _split_connect_target(target: str) -> tuple[str, int]:

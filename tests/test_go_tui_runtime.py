@@ -993,6 +993,13 @@ async def test_sync_proxy_capture_state_updates_report_state_from_caido_ui(
                 latest_path="/api/orders",
                 latest_status_code=200,
                 total_request_count=19,
+                operator_request_count=4,
+                replay_request_count=15,
+                latest_operator_request_id="req-4",
+                latest_operator_method="GET",
+                latest_operator_host="app.example.com",
+                latest_operator_path="/api/profile",
+                endpoint_request_counts=(("GET app.example.com/api/profile", 4),),
             )
 
         async def aclose(self) -> None:
@@ -1002,6 +1009,7 @@ async def test_sync_proxy_capture_state_updates_report_state_from_caido_ui(
     runtime_args.burp_port = 8081
     runtime = GoTuiRuntime(runtime_args)
     runtime.report_state = _FakeReportState()
+    runtime.controller.set_runtime(report_state=runtime.report_state)
 
     monkeypatch.setattr(go_tui, "ProxyCapturePoller", _FakePoller)
 
@@ -1012,6 +1020,10 @@ async def test_sync_proxy_capture_state_updates_report_state_from_caido_ui(
     assert runtime.report_state.proxy_capture_state.recent_request_count == 5
     assert runtime.report_state.proxy_capture_state.latest_host == "app.example.com"
     assert runtime.report_state.proxy_capture_state.total_request_count == 19
+    assert runtime.controller._passive_proxy_capture_baseline_operator_count == 4
+    assert runtime.controller._passive_proxy_capture_baseline_endpoint_counts == {
+        "GET app.example.com/api/profile": 4
+    }
 
 
 @pytest.mark.asyncio

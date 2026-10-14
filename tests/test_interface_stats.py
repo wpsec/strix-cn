@@ -56,22 +56,38 @@ def test_stats_show_recent_proxy_capture_summary() -> None:
         proxy_capture_state=ProxyCaptureState(
             recent_request_count=10,
             recent_request_has_more=True,
+            latest_request_id="replay-35",
             latest_method="POST",
             latest_host="app-sit.example.com",
             latest_path="/api/levels/current",
             latest_status_code=200,
             total_request_count=37,
+            latest_request_source="replay",
+            latest_request_category="replay",
+            latest_operator_request_id="operator-2",
+            latest_operator_request_source="intercept",
+            latest_operator_method="GET",
+            latest_operator_host="app-sit.example.com",
+            latest_operator_path="/api/levels/current",
+            latest_operator_status_code=200,
+            operator_request_count=2,
+            replay_request_count=35,
+            unclassified_request_count=0,
         )
     )
 
     live_text = build_live_stats_text(report_state).plain
     tui_text = build_tui_stats_text(report_state).plain
 
-    assert "代理捕获: 累计 37 条" in live_text
-    assert "最近批次: 10+ 条" in live_text
-    assert "最近流量: POST app-sit.example.com/api/levels/current [200]" in live_text
-    assert "代理捕获: 累计 37 条" in tui_text
-    assert "最近批次: 10+ 条" in tui_text
+    assert "代理捕获: 操作员请求 2 条 · 重放请求 35 条 · 未分类 0 条 · 代理历史 37 条" in live_text
+    assert "最近代理记录: replay-35 [source=replay, category=replay, method=POST]" in live_text
+    assert "最近代理历史: 10+ 条" in live_text
+    assert (
+        "最近操作员流量: operator-2 [操作员/intercept] GET "
+        "app-sit.example.com/api/levels/current [200]"
+    ) in live_text
+    assert "操作员请求 2 条 · 重放请求 35 条 · 未分类 0 条 · 代理历史 37 条" in tui_text
+    assert "最近代理历史: 10+ 条" in tui_text
 
 
 def test_tui_stats_show_burp_workflow_phase() -> None:
@@ -79,13 +95,17 @@ def test_tui_stats_show_burp_workflow_phase() -> None:
         _ReportState(
             burp_workflow_phase="capture",
             proxy_feature_request_count=12,
-            proxy_capture_state=ProxyCaptureState(total_request_count=42),
+            proxy_capture_state=ProxyCaptureState(
+                total_request_count=42,
+                operator_request_count=40,
+                replay_request_count=2,
+            ),
         )
     ).plain
 
     assert "工作流: 功能点采集" in text
     assert "操作: 发送“开始测试”启动当前功能点分析" in text
-    assert "代理捕获: 累计 42 条" in text
+    assert "操作员请求 40 条 · 重放请求 2 条 · 未分类 0 条 · 代理历史 42 条" in text
     assert "当前功能: 12 条" in text
 
 

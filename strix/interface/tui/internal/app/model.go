@@ -345,16 +345,19 @@ func (m Model) isPassiveProxyWaiting() bool {
 }
 
 func (m Model) hasPassiveProxyCaptureTraffic() bool {
-	if m.snapshot.ProxyTotalRequestCount > 0 || m.snapshot.ProxyRecentRequestCount > 0 {
+	if m.snapshot.ProxyOperatorRequestCount > 0 {
 		return true
 	}
-	if strings.TrimSpace(m.snapshot.ProxyLatestMethod) != "" {
+	if strings.TrimSpace(m.snapshot.ProxyLatestOperatorID) != "" {
 		return true
 	}
-	if strings.TrimSpace(m.snapshot.ProxyLatestHost) != "" {
+	if strings.TrimSpace(m.snapshot.ProxyLatestOperatorMethod) != "" {
 		return true
 	}
-	return strings.TrimSpace(m.snapshot.ProxyLatestPath) != ""
+	if strings.TrimSpace(m.snapshot.ProxyLatestOperatorHost) != "" {
+		return true
+	}
+	return strings.TrimSpace(m.snapshot.ProxyLatestOperatorPath) != ""
 }
 
 func (m *Model) syncLiveInputPlaceholder() {

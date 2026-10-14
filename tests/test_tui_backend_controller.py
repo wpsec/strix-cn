@@ -49,12 +49,23 @@ class PassiveProxyReportState:
         recent_request_count: int = 1,
         recent_request_has_more: bool = False,
         latest_request_id: str | None = "req-1",
+        latest_request_source: str | None = "intercept",
+        latest_request_category: str | None = "operator",
         latest_request_created_at: str | None = "2026-08-11T10:36:42+08:00",
         latest_method: str | None = "GET",
         latest_host: str | None = "app.example.com",
         latest_path: str | None = "/api/orders",
         latest_status_code: int | None = 200,
         total_request_count: int = 1,
+        operator_request_count: int | None = None,
+        replay_request_count: int = 0,
+        unclassified_request_count: int = 0,
+        latest_operator_request_id: str | None = None,
+        latest_operator_request_source: str | None = "intercept",
+        latest_operator_method: str | None = None,
+        latest_operator_host: str | None = None,
+        latest_operator_path: str | None = None,
+        latest_operator_status_code: int | None = None,
         endpoint_request_counts: tuple[tuple[str, int], ...] | None = None,
     ) -> None:
         self.run_record = {"status": "running"}
@@ -74,6 +85,9 @@ class PassiveProxyReportState:
             f"{(latest_method or 'GET').upper()} "
             f"{latest_host or 'app.example.com'}{latest_path or '/api/orders'}"
         )
+        operator_count = (
+            total_request_count if operator_request_count is None else operator_request_count
+        )
         self.proxy_capture_state = ProxyCaptureState(
             recent_request_count=recent_request_count,
             recent_request_has_more=recent_request_has_more,
@@ -83,9 +97,28 @@ class PassiveProxyReportState:
             latest_host=latest_host,
             latest_path=latest_path,
             latest_status_code=latest_status_code,
+            latest_request_source=latest_request_source,
+            latest_request_category=latest_request_category,
+            latest_operator_request_id=(
+                latest_operator_request_id
+                if latest_operator_request_id is not None
+                else latest_request_id
+            ),
+            latest_operator_request_source=latest_operator_request_source,
+            latest_operator_method=latest_operator_method or latest_method,
+            latest_operator_host=latest_operator_host or latest_host,
+            latest_operator_path=latest_operator_path or latest_path,
+            latest_operator_status_code=(
+                latest_operator_status_code
+                if latest_operator_status_code is not None
+                else latest_status_code
+            ),
             total_request_count=total_request_count,
+            operator_request_count=operator_count,
+            replay_request_count=replay_request_count,
+            unclassified_request_count=unclassified_request_count,
             endpoint_request_counts=endpoint_request_counts
-            or ((default_endpoint, total_request_count),),
+            or ((default_endpoint, operator_count),),
         )
 
     def get_total_llm_usage(self) -> dict[str, int]:
@@ -271,6 +304,13 @@ def test_snapshot_exposes_proxy_capture_summary_fields() -> None:
     assert snapshot["proxy_latest_host"] == "app.example.com"
     assert snapshot["proxy_latest_path"] == "/api/login"
     assert snapshot["proxy_latest_status_code"] == 403
+    assert snapshot["proxy_latest_request_id"] == "req-31"
+    assert snapshot["proxy_latest_request_source"] == "intercept"
+    assert snapshot["proxy_latest_request_category"] == "operator"
+    assert snapshot["proxy_operator_request_count"] == 31
+    assert snapshot["proxy_replay_request_count"] == 0
+    assert snapshot["proxy_latest_operator_request_id"] == "req-31"
+    assert snapshot["proxy_latest_operator_method"] == "POST"
     assert snapshot["proxy_total_request_count"] == 31
 
 
@@ -931,6 +971,13 @@ async def test_passive_proxy_start_test_requires_new_traffic_after_next_feature(
         latest_path="/api/orders/confirm",
         latest_status_code=200,
         total_request_count=5,
+        operator_request_count=5,
+        latest_operator_request_id="req-5",
+        latest_operator_method="POST",
+        latest_operator_host="app.example.com",
+        latest_operator_path="/api/orders/confirm",
+        latest_operator_status_code=200,
+        endpoint_request_counts=(("POST app.example.com/api/orders/confirm", 5),),
     )
 
     resumed = await controller.handle(
@@ -941,6 +988,101 @@ async def test_passive_proxy_start_test_requires_new_traffic_after_next_feature(
     assert resumed == {"sent": True, "handled": True, "agent_id": "root"}
     assert controller.snapshot()["passive_proxy_phase"] == "testing"
     assert coordinator.calls[0][0] == "root"
+
+
+@pytest.mark.asyncio
+async def test_passive_proxy_replays_do_not_advance_operator_capture_batch() -> None:
+    runtime_args = args()
+    runtime_args.burp_port = 8081
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def send(self, agent_id: str, payload: dict[str, str]) -> bool:
+            self.calls.append((agent_id, payload))
+            return True
+
+    old_endpoint = "GET app.example.com/api/profile"
+    report_state = PassiveProxyReportState(
+        recent_request_count=7,
+        latest_request_id="replay-7",
+        latest_request_source="replay",
+        latest_request_category="replay",
+        latest_method="POST",
+        latest_operator_request_id="operator-2",
+        latest_operator_method="GET",
+        operator_request_count=2,
+        replay_request_count=5,
+        total_request_count=7,
+        endpoint_request_counts=((old_endpoint, 2),),
+    )
+    coordinator = Coordinator()
+    controller = TuiController(runtime_args, coordinator=coordinator, report_state=report_state)
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    controller.initialize_passive_proxy_capture_baseline()
+    controller.live_view.upsert_agent("root", name="Root Agent", status="waiting")
+
+    replay_only = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+    assert replay_only == {"sent": False, "handled": True, "ignored": True}
+    assert "下一功能点的新流量" in controller.snapshot()["messages"][-1]["text"]
+
+    report_state.proxy_capture_state = ProxyCaptureState(
+        recent_request_count=10,
+        latest_request_id="replay-10",
+        latest_request_source="replay",
+        latest_request_category="replay",
+        latest_method="POST",
+        latest_host="app.example.com",
+        latest_path="/api/profile",
+        latest_operator_request_id="operator-2",
+        latest_operator_request_source="intercept",
+        latest_operator_method="GET",
+        latest_operator_host="app.example.com",
+        latest_operator_path="/api/profile",
+        operator_request_count=2,
+        replay_request_count=8,
+        total_request_count=10,
+        endpoint_request_counts=((old_endpoint, 2),),
+    )
+    replay_batch = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+    assert replay_batch == {"sent": False, "handled": True, "ignored": True}
+
+    new_endpoint = "POST app.example.com/api/orders/confirm"
+    report_state.proxy_capture_state = ProxyCaptureState(
+        recent_request_count=11,
+        latest_request_id="operator-3",
+        latest_request_source="intercept",
+        latest_method="POST",
+        latest_host="app.example.com",
+        latest_path="/api/orders/confirm",
+        latest_operator_request_id="operator-3",
+        latest_operator_request_source="intercept",
+        latest_operator_method="POST",
+        latest_operator_host="app.example.com",
+        latest_operator_path="/api/orders/confirm",
+        operator_request_count=3,
+        replay_request_count=8,
+        total_request_count=11,
+        endpoint_request_counts=((old_endpoint, 2), (new_endpoint, 1)),
+    )
+    started = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "开始测试"},
+    )
+
+    assert started == {"sent": True, "handled": True, "agent_id": "root"}
+    frozen_tasks = coordinator.calls[0][1]["content"]
+    assert "冻结 endpoint 清单" in frozen_tasks
+    assert "1 项" in frozen_tasks
+    assert new_endpoint in frozen_tasks
+    assert old_endpoint not in frozen_tasks
 
 
 @pytest.mark.asyncio

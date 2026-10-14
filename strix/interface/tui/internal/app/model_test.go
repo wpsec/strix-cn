@@ -394,18 +394,29 @@ func TestPassiveProxyWaitingRestoresCaptureGuidance(t *testing.T) {
 	model.showSplash = false
 
 	runningState := protocol.Snapshot{
-		SetupMode:                 false,
-		ScanStarted:               true,
-		ScanState:                 "running",
-		PassiveProxyMode:          true,
-		PassiveProxyPhase:         "capture",
-		CaidoURL:                  "http://127.0.0.1:61270",
-		ProxyRecentRequestCount:   6,
-		ProxyRecentRequestHasMore: true,
-		ProxyLatestMethod:         "POST",
-		ProxyLatestHost:           "app.example.com",
-		ProxyLatestPath:           "/api/orders/submit",
-		ProxyTotalRequestCount:    18,
+		SetupMode:                  false,
+		ScanStarted:                true,
+		ScanState:                  "running",
+		PassiveProxyMode:           true,
+		PassiveProxyPhase:          "capture",
+		CaidoURL:                   "http://127.0.0.1:61270",
+		ProxyRecentRequestCount:    6,
+		ProxyRecentRequestHasMore:  true,
+		ProxyLatestMethod:          "POST",
+		ProxyLatestHost:            "app.example.com",
+		ProxyLatestPath:            "/api/orders/submit",
+		ProxyLatestRequestID:       "replay-18",
+		ProxyLatestRequestSource:   "replay",
+		ProxyLatestRequestCategory: "replay",
+		ProxyOperatorRequestCount:  2,
+		ProxyReplayRequestCount:    15,
+		ProxyUnclassifiedCount:     1,
+		ProxyLatestOperatorID:      "operator-2",
+		ProxyLatestOperatorSource:  "intercept",
+		ProxyLatestOperatorMethod:  "GET",
+		ProxyLatestOperatorHost:    "app.example.com",
+		ProxyLatestOperatorPath:    "/api/orders/profile",
+		ProxyTotalRequestCount:     18,
 	}
 	model.handleEnvelope(stateEnvelope(t, 1, runningState))
 	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1,
@@ -427,9 +438,13 @@ func TestPassiveProxyWaitingRestoresCaptureGuidance(t *testing.T) {
 	stats := ansi.Strip(model.statsView())
 	for _, want := range []string{
 		"Caido: http://127.0.0.1:61270",
-		"代理捕获: 累计 18 条",
-		"最近批次: 6+ 条",
-		"最近流量: POST app.example.com/api/orders/submit",
+		"操作员请求 2 条",
+		"重放请求 15 条",
+		"未分类 1 条",
+		"代理历史 18 条",
+		"最近代理历史: 6+ 条",
+		"最近代理记录: id=replay-18 source=replay category=replay method=POST",
+		"最近操作员流量: GET app.example.com/api/orders/profile (id=operator-2, source=操作员/intercept)",
 		"模式: Burp 被动代理",
 		"阶段: 当前功能点采集中",
 		"说明: Burp 流量已自动接入 Strix",
@@ -441,18 +456,25 @@ func TestPassiveProxyWaitingRestoresCaptureGuidance(t *testing.T) {
 	}
 }
 
-func TestPassiveProxyWaitingWithoutTrafficShowsZeroCaptureState(t *testing.T) {
+func TestPassiveProxyWaitingWithReplayOnlyHistoryShowsNoOperatorCapture(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 130, 34
 	model.showSplash = false
 
 	runningState := protocol.Snapshot{
-		SetupMode:         false,
-		ScanStarted:       true,
-		ScanState:         "running",
-		PassiveProxyMode:  true,
-		PassiveProxyPhase: "capture",
-		CaidoURL:          "http://127.0.0.1:61270",
+		SetupMode:                  false,
+		ScanStarted:                true,
+		ScanState:                  "running",
+		PassiveProxyMode:           true,
+		PassiveProxyPhase:          "capture",
+		CaidoURL:                   "http://127.0.0.1:61270",
+		ProxyRecentRequestCount:    5,
+		ProxyLatestRequestID:       "replay-5",
+		ProxyLatestRequestSource:   "replay",
+		ProxyLatestRequestCategory: "replay",
+		ProxyLatestMethod:          "POST",
+		ProxyReplayRequestCount:    5,
+		ProxyTotalRequestCount:     5,
 	}
 	model.handleEnvelope(stateEnvelope(t, 1, runningState))
 	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1,
@@ -475,7 +497,11 @@ func TestPassiveProxyWaitingWithoutTrafficShowsZeroCaptureState(t *testing.T) {
 	stats := ansi.Strip(model.statsView())
 	for _, want := range []string{
 		"Caido: http://127.0.0.1:61270",
-		"代理捕获: 暂无流量",
+		"代理捕获: 操作员请求 0 条",
+		"重放请求 5 条",
+		"代理历史 5 条",
+		"最近代理记录: id=replay-5 source=replay category=replay method=POST",
+		"最近代理历史: 5 条",
 		"阶段: 当前功能点采集中",
 		"说明: 等待 Burp 请求进入当前功能点",
 		"操作: 完成操作后发送“开始测试”",
@@ -491,14 +517,24 @@ func TestPassiveProxyPhaseSwitchesToTestingWhileChildAgentRuns(t *testing.T) {
 	model.width, model.height = 130, 34
 	rootID := "root"
 	model.snapshot = protocol.Snapshot{
-		SetupMode:               false,
-		PassiveProxyMode:        true,
-		PassiveProxyPhase:       "testing",
-		ProxyRecentRequestCount: 4,
-		ProxyLatestMethod:       "GET",
-		ProxyLatestHost:         "app.example.com",
-		ProxyLatestPath:         "/api/profile",
-		ProxyTotalRequestCount:  22,
+		SetupMode:                  false,
+		PassiveProxyMode:           true,
+		PassiveProxyPhase:          "testing",
+		ProxyRecentRequestCount:    4,
+		ProxyLatestMethod:          "GET",
+		ProxyLatestHost:            "app.example.com",
+		ProxyLatestPath:            "/api/profile",
+		ProxyLatestRequestID:       "replay-22",
+		ProxyLatestRequestSource:   "replay",
+		ProxyLatestRequestCategory: "replay",
+		ProxyOperatorRequestCount:  2,
+		ProxyReplayRequestCount:    20,
+		ProxyLatestOperatorID:      "operator-2",
+		ProxyLatestOperatorSource:  "intercept",
+		ProxyLatestOperatorMethod:  "GET",
+		ProxyLatestOperatorHost:    "app.example.com",
+		ProxyLatestOperatorPath:    "/api/profile",
+		ProxyTotalRequestCount:     22,
 		Agents: []protocol.Agent{
 			{ID: rootID, Name: "Root", Status: "waiting"},
 			{ID: "mapper", Name: "Mapper", ParentID: &rootID, Status: "running"},
@@ -508,9 +544,11 @@ func TestPassiveProxyPhaseSwitchesToTestingWhileChildAgentRuns(t *testing.T) {
 	stats := ansi.Strip(model.statsView())
 	for _, want := range []string{
 		"阶段: 当前功能点测试中",
-		"代理捕获: 累计 22 条",
-		"最近批次: 4 条",
-		"最近流量: GET app.example.com/api/profile",
+		"操作员请求 2 条",
+		"重放请求 20 条",
+		"代理历史 22 条",
+		"最近代理记录: id=replay-22 source=replay category=replay method=GET",
+		"最近操作员流量: GET app.example.com/api/profile (id=operator-2, source=操作员/intercept)",
 		"代理采集: 已暂停（测试期间流量忽略）",
 		"操作: 等待本轮结束",
 	} {

@@ -39,6 +39,10 @@ def _project(
 class _FakeConnection:
     edges: list[Any]
     page_info: Any
+    next_connection: _FakeConnection | None = None
+
+    async def next(self) -> _FakeConnection | None:
+        return self.next_connection
 
 
 class _FakeRequestBuilder:
@@ -113,6 +117,7 @@ async def test_fetch_proxy_capture_snapshot_selects_strix_project_before_query(
                         method="POST",
                         host="app.example.com",
                         path="/api/orders",
+                        source="intercept",
                     ),
                     response=SimpleNamespace(status_code=201),
                 ),
@@ -129,8 +134,15 @@ async def test_fetch_proxy_capture_snapshot_selects_strix_project_before_query(
 
     async def _request_inventory(
         *_args: Any, **_kwargs: Any
-    ) -> tuple[int, tuple[tuple[str, int], ...]]:
-        return 14, (("POST app.example.com/api/orders", 14),)
+    ) -> proxy_capture._ProxyRequestInventory:
+        return proxy_capture._ProxyRequestInventory(
+            total_request_count=14,
+            operator_request_count=14,
+            replay_request_count=0,
+            unclassified_request_count=0,
+            endpoint_request_counts=(("POST app.example.com/api/orders", 14),),
+            latest_operator_edge=connection.edges[0],
+        )
 
     monkeypatch.setattr(proxy_capture, "_request_inventory", _request_inventory)
 
@@ -153,7 +165,12 @@ async def test_fetch_proxy_capture_snapshot_selects_strix_project_before_query(
     assert snapshot.latest_host == "app.example.com"
     assert snapshot.latest_path == "/api/orders"
     assert snapshot.latest_status_code == 201
+    assert snapshot.latest_request_source == "intercept"
+    assert snapshot.latest_request_category == "operator"
+    assert snapshot.latest_operator_request_id == "req-9"
+    assert snapshot.latest_operator_method == "POST"
     assert snapshot.total_request_count == 14
+    assert snapshot.operator_request_count == 14
     assert snapshot.endpoint_request_counts == (("POST app.example.com/api/orders", 14),)
 
 
@@ -176,8 +193,8 @@ async def test_proxy_capture_poller_reuses_connected_client(
 
     async def _request_inventory(
         *_args: Any, **_kwargs: Any
-    ) -> tuple[int, tuple[tuple[str, int], ...]]:
-        return 0, ()
+    ) -> proxy_capture._ProxyRequestInventory:
+        return proxy_capture._ProxyRequestInventory(0, 0, 0, 0, (), None)
 
     monkeypatch.setattr(proxy_capture, "_request_inventory", _request_inventory)
 
@@ -214,25 +231,73 @@ async def test_fetch_proxy_capture_snapshot_fails_when_strix_project_missing(
 
 
 @pytest.mark.asyncio
-async def test_request_inventory_counts_all_dynamic_endpoints_and_skips_assets() -> None:
-    def edge(method: str, path: str) -> Any:
+async def test_request_inventory_separates_sources_across_pages() -> None:
+    def edge(
+        request_id: str,
+        method: str,
+        path: str,
+        source: str | None,
+    ) -> Any:
         return SimpleNamespace(
             node=SimpleNamespace(
                 request=SimpleNamespace(
+                    id=request_id,
                     method=method,
                     host="dvwa.local",
                     path=path,
+                    source=source,
                 )
             )
         )
 
+    older_page = _FakeConnection(
+        edges=[
+            edge("op-1", "GET", "/vulnerabilities/sqli/", "intercept"),
+            edge("replay-3", "POST", "/vulnerabilities/sqli/", "replay"),
+            edge("replay-4", "POST", "/vulnerabilities/sqli/", "replay"),
+            edge("replay-5", "POST", "/vulnerabilities/sqli/", "replay"),
+            edge("workflow-1", "GET", "/automation/run", "workflow"),
+        ],
+        page_info=SimpleNamespace(has_next_page=False),
+    )
     connection = _FakeConnection(
         edges=[
-            edge("GET", "/vulnerabilities/sqli/"),
-            edge("GET", "/vulnerabilities/sqli/"),
-            edge("POST", "/vulnerabilities/upload/"),
-            edge("GET", "/assets/app.js"),
+            edge("op-2", "GET", "/vulnerabilities/sqli/", "intercept"),
+            edge("replay-1", "POST", "/vulnerabilities/sqli/", "replay"),
+            edge("replay-2", "POST", "/vulnerabilities/sqli/", "replay"),
         ],
+        page_info=SimpleNamespace(has_next_page=True),
+        next_connection=older_page,
+    )
+    client = _FakeClient(
+        _FakeProjectSDK([]),
+        _FakeRequestSDK(_FakeRequestBuilder(connection)),
+    )
+
+    inventory = await proxy_capture._request_inventory(client, page_size=3)
+
+    assert inventory.total_request_count == 8
+    assert inventory.operator_request_count == 2
+    assert inventory.replay_request_count == 5
+    assert inventory.unclassified_request_count == 1
+    assert inventory.latest_operator_edge.node.request.id == "op-2"
+    assert inventory.endpoint_request_counts == (("GET dvwa.local/vulnerabilities/sqli/", 2),)
+
+
+@pytest.mark.asyncio
+async def test_request_inventory_counts_unavailable_source_as_unclassified() -> None:
+    edge = SimpleNamespace(
+        node=SimpleNamespace(
+            request=SimpleNamespace(
+                id="req-1",
+                method="GET",
+                host="dvwa.local",
+                path="/api/orders",
+            )
+        )
+    )
+    connection = _FakeConnection(
+        edges=[edge],
         page_info=SimpleNamespace(has_next_page=False),
     )
     client = _FakeClient(
@@ -240,10 +305,9 @@ async def test_request_inventory_counts_all_dynamic_endpoints_and_skips_assets()
         _FakeRequestSDK(_FakeRequestBuilder(connection)),
     )
 
-    total, endpoint_counts = await proxy_capture._request_inventory(client, page_size=200)
+    inventory = await proxy_capture._request_inventory(client)
 
-    assert total == 4
-    assert endpoint_counts == (
-        ("GET dvwa.local/vulnerabilities/sqli/", 2),
-        ("POST dvwa.local/vulnerabilities/upload/", 1),
-    )
+    assert inventory.operator_request_count == 0
+    assert inventory.replay_request_count == 0
+    assert inventory.unclassified_request_count == 1
+    assert inventory.endpoint_request_counts == ()

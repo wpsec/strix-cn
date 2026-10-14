@@ -29,8 +29,29 @@ class ProxyCaptureSnapshot:
     latest_host: str | None = None
     latest_path: str | None = None
     latest_status_code: int | None = None
+    latest_request_source: str | None = None
+    latest_request_category: str | None = None
+    latest_operator_request_id: str | None = None
+    latest_operator_request_source: str | None = None
+    latest_operator_method: str | None = None
+    latest_operator_host: str | None = None
+    latest_operator_path: str | None = None
+    latest_operator_status_code: int | None = None
     total_request_count: int = 0
+    operator_request_count: int = 0
+    replay_request_count: int = 0
+    unclassified_request_count: int = 0
     endpoint_request_counts: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class _ProxyRequestInventory:
+    total_request_count: int
+    operator_request_count: int
+    replay_request_count: int
+    unclassified_request_count: int
+    endpoint_request_counts: tuple[tuple[str, int], ...]
+    latest_operator_edge: Any | None
 
 
 class ProxyCapturePoller:
@@ -131,7 +152,7 @@ async def _fetch_proxy_capture_snapshot_with_client(
     if scope_id:
         builder = builder.scope(scope_id)
     connection = await builder.execute()
-    total_request_count, endpoint_request_counts = await _request_inventory(
+    inventory = await _request_inventory(
         client,
         scope_id=scope_id,
         page_size=max(1, total_page_size),
@@ -142,6 +163,13 @@ async def _fetch_proxy_capture_snapshot_with_client(
     latest_node = getattr(latest, "node", None) if latest is not None else None
     latest_request = getattr(latest_node, "request", None)
     latest_response = getattr(latest_node, "response", None)
+    latest_operator_node = (
+        getattr(inventory.latest_operator_edge, "node", None)
+        if inventory.latest_operator_edge is not None
+        else None
+    )
+    latest_operator_request = getattr(latest_operator_node, "request", None)
+    latest_operator_response = getattr(latest_operator_node, "response", None)
 
     return ProxyCaptureSnapshot(
         recent_request_count=len(edges),
@@ -154,8 +182,21 @@ async def _fetch_proxy_capture_snapshot_with_client(
         latest_host=_string_or_none(getattr(latest_request, "host", None)),
         latest_path=_string_or_none(getattr(latest_request, "path", None)),
         latest_status_code=_int_or_none(getattr(latest_response, "status_code", None)),
-        total_request_count=total_request_count,
-        endpoint_request_counts=endpoint_request_counts,
+        latest_request_source=_request_source_value(latest_request),
+        latest_request_category=_request_source_category(latest_request),
+        latest_operator_request_id=_string_or_none(getattr(latest_operator_request, "id", None)),
+        latest_operator_request_source=_request_source_value(latest_operator_request),
+        latest_operator_method=_string_or_none(getattr(latest_operator_request, "method", None)),
+        latest_operator_host=_string_or_none(getattr(latest_operator_request, "host", None)),
+        latest_operator_path=_string_or_none(getattr(latest_operator_request, "path", None)),
+        latest_operator_status_code=_int_or_none(
+            getattr(latest_operator_response, "status_code", None)
+        ),
+        total_request_count=inventory.total_request_count,
+        operator_request_count=inventory.operator_request_count,
+        replay_request_count=inventory.replay_request_count,
+        unclassified_request_count=inventory.unclassified_request_count,
+        endpoint_request_counts=inventory.endpoint_request_counts,
     )
 
 
@@ -164,7 +205,7 @@ async def _request_inventory(
     *,
     scope_id: str | None = None,
     page_size: int = 200,
-) -> tuple[int, tuple[tuple[str, int], ...]]:
+) -> _ProxyRequestInventory:
     builder = client.request.list().first(max(1, page_size)).descending("req", "created_at")
     if scope_id:
         builder = builder.scope(scope_id)
@@ -172,8 +213,21 @@ async def _request_inventory(
     connection = await builder.execute()
     edges = list(getattr(connection, "edges", []) or [])
     total = len(edges)
+    operator_count = 0
+    replay_count = 0
+    unclassified_count = 0
     endpoint_counts: dict[str, int] = {}
-    _accumulate_endpoint_counts(endpoint_counts, edges)
+    latest_operator_edge = None
+    operator_count, replay_count, unclassified_count, latest_operator_edge = (
+        _accumulate_request_inventory(
+            endpoint_counts,
+            edges,
+            operator_count=operator_count,
+            replay_count=replay_count,
+            unclassified_count=unclassified_count,
+            latest_operator_edge=latest_operator_edge,
+        )
+    )
 
     while _has_next_page(connection):
         next_page = await connection.next()
@@ -182,9 +236,25 @@ async def _request_inventory(
         connection = next_page
         edges = list(getattr(connection, "edges", []) or [])
         total += len(edges)
-        _accumulate_endpoint_counts(endpoint_counts, edges)
+        operator_count, replay_count, unclassified_count, latest_operator_edge = (
+            _accumulate_request_inventory(
+                endpoint_counts,
+                edges,
+                operator_count=operator_count,
+                replay_count=replay_count,
+                unclassified_count=unclassified_count,
+                latest_operator_edge=latest_operator_edge,
+            )
+        )
 
-    return total, tuple(sorted(endpoint_counts.items()))
+    return _ProxyRequestInventory(
+        total_request_count=total,
+        operator_request_count=operator_count,
+        replay_request_count=replay_count,
+        unclassified_request_count=unclassified_count,
+        endpoint_request_counts=tuple(sorted(endpoint_counts.items())),
+        latest_operator_edge=latest_operator_edge,
+    )
 
 
 async def _count_requests(
@@ -193,14 +263,33 @@ async def _count_requests(
     scope_id: str | None = None,
     page_size: int = 200,
 ) -> int:
-    total, _ = await _request_inventory(client, scope_id=scope_id, page_size=page_size)
-    return total
+    inventory = await _request_inventory(client, scope_id=scope_id, page_size=page_size)
+    return inventory.total_request_count
 
 
-def _accumulate_endpoint_counts(endpoint_counts: dict[str, int], edges: list[Any]) -> None:
+def _accumulate_request_inventory(
+    endpoint_counts: dict[str, int],
+    edges: list[Any],
+    *,
+    operator_count: int,
+    replay_count: int,
+    unclassified_count: int,
+    latest_operator_edge: Any | None,
+) -> tuple[int, int, int, Any | None]:
     for edge in edges:
         node = getattr(edge, "node", None)
         request = getattr(node, "request", None)
+        category = _request_source_category(request)
+        if category == "operator":
+            operator_count += 1
+            if latest_operator_edge is None:
+                latest_operator_edge = edge
+        elif category == "replay":
+            replay_count += 1
+        else:
+            unclassified_count += 1
+        if category != "operator":
+            continue
         method = _clean_endpoint_part(getattr(request, "method", None), max_length=16)
         host = _clean_endpoint_part(getattr(request, "host", None), max_length=255)
         path = _clean_endpoint_part(getattr(request, "path", None), max_length=512)
@@ -210,6 +299,30 @@ def _accumulate_endpoint_counts(endpoint_counts: dict[str, int], edges: list[Any
             path = f"/{path}"
         endpoint = f"{method.upper()} {host}{path}"
         endpoint_counts[endpoint] = endpoint_counts.get(endpoint, 0) + 1
+    return operator_count, replay_count, unclassified_count, latest_operator_edge
+
+
+def _request_source_value(request: Any) -> str | None:
+    if request is None or not hasattr(request, "source"):
+        return None
+    source = getattr(request, "source", None)
+    if source is None:
+        return None
+    value = getattr(source, "value", source)
+    cleaned = _clean_endpoint_part(value, max_length=32).lower()
+    return cleaned or None
+
+
+def _request_source_category(request: Any) -> str:
+    if request is None or not hasattr(request, "source"):
+        return "unclassified"
+    source = _request_source_value(request)
+    # Empty source marks ordinary proxy traffic; feature-generated traffic has an explicit source.
+    if source in {None, "intercept"}:
+        return "operator"
+    if source == "replay":
+        return "replay"
+    return "unclassified"
 
 
 def _clean_endpoint_part(value: Any, *, max_length: int) -> str:

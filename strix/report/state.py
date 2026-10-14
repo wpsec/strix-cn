@@ -54,7 +54,18 @@ class ProxyCaptureState:
     latest_host: str | None = None
     latest_path: str | None = None
     latest_status_code: int | None = None
+    latest_request_source: str | None = None
+    latest_request_category: str | None = None
+    latest_operator_request_id: str | None = None
+    latest_operator_request_source: str | None = None
+    latest_operator_method: str | None = None
+    latest_operator_host: str | None = None
+    latest_operator_path: str | None = None
+    latest_operator_status_code: int | None = None
     total_request_count: int = 0
+    operator_request_count: int = 0
+    replay_request_count: int = 0
+    unclassified_request_count: int = 0
     endpoint_request_counts: tuple[tuple[str, int], ...] = ()
 
 
@@ -363,6 +374,32 @@ class ReportState:
             )
             proxy_capture = data.get("proxy_capture")
             if isinstance(proxy_capture, dict):
+                total_proxy_requests = int(proxy_capture.get("total_request_count") or 0)
+                operator_proxy_requests = int(proxy_capture.get("operator_request_count") or 0)
+                replay_proxy_requests = int(proxy_capture.get("replay_request_count") or 0)
+                unclassified_proxy_requests = int(
+                    proxy_capture.get("unclassified_request_count") or 0
+                )
+                unclassified_proxy_requests += max(
+                    0,
+                    total_proxy_requests
+                    - operator_proxy_requests
+                    - replay_proxy_requests
+                    - unclassified_proxy_requests,
+                )
+                has_source_counts = any(
+                    key in proxy_capture
+                    for key in (
+                        "operator_request_count",
+                        "replay_request_count",
+                        "unclassified_request_count",
+                    )
+                )
+                endpoint_request_counts = (
+                    _endpoint_request_counts(proxy_capture.get("endpoint_request_counts"))
+                    if has_source_counts
+                    else ()
+                )
                 self.proxy_capture_state = ProxyCaptureState(
                     recent_request_count=int(proxy_capture.get("recent_request_count") or 0),
                     recent_request_has_more=bool(proxy_capture.get("recent_request_has_more")),
@@ -374,10 +411,31 @@ class ReportState:
                     latest_host=_string_or_none(proxy_capture.get("latest_host")),
                     latest_path=_string_or_none(proxy_capture.get("latest_path")),
                     latest_status_code=_int_or_none(proxy_capture.get("latest_status_code")),
-                    total_request_count=int(proxy_capture.get("total_request_count") or 0),
-                    endpoint_request_counts=_endpoint_request_counts(
-                        proxy_capture.get("endpoint_request_counts")
+                    latest_request_source=_string_or_none(
+                        proxy_capture.get("latest_request_source")
                     ),
+                    latest_request_category=_string_or_none(
+                        proxy_capture.get("latest_request_category")
+                    ),
+                    latest_operator_request_id=_string_or_none(
+                        proxy_capture.get("latest_operator_request_id")
+                    ),
+                    latest_operator_request_source=_string_or_none(
+                        proxy_capture.get("latest_operator_request_source")
+                    ),
+                    latest_operator_method=_string_or_none(
+                        proxy_capture.get("latest_operator_method")
+                    ),
+                    latest_operator_host=_string_or_none(proxy_capture.get("latest_operator_host")),
+                    latest_operator_path=_string_or_none(proxy_capture.get("latest_operator_path")),
+                    latest_operator_status_code=_int_or_none(
+                        proxy_capture.get("latest_operator_status_code")
+                    ),
+                    total_request_count=total_proxy_requests,
+                    operator_request_count=operator_proxy_requests,
+                    replay_request_count=replay_proxy_requests,
+                    unclassified_request_count=unclassified_proxy_requests,
+                    endpoint_request_counts=endpoint_request_counts,
                 )
             else:
                 self.proxy_capture_state = ProxyCaptureState()
@@ -615,8 +673,7 @@ class ReportState:
                 if key in _LOWERCASE_REPORT_FIELDS:
                     value = value.lower()
                 if not value or (
-                    key in {"burp_request", "http_request", "http_response"}
-                    and not value.strip()
+                    key in {"burp_request", "http_request", "http_response"} and not value.strip()
                 ):
                     continue
             if report.get(key) == value:

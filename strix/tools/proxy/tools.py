@@ -515,6 +515,9 @@ async def repeat_request(
             - ``headers`` — dict of headers to add/update.
             - ``body`` — replace the body string entirely.
             - ``cookies`` — dict of cookies to add/update.
+
+        The HTTP method is inherited from the template. Passing ``method`` is
+        rejected so a requested method change cannot be silently ignored.
         vulnerability_type: Optional finding label used for report correlation.
             It does not authorize or deny the replay.
         impact: Optional impact context used to prioritize the associated finding.
@@ -559,7 +562,17 @@ async def repeat_request(
             headers=modified["headers"],
             body=modified["body"],
         )
-        return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+        replay = await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+        replay["original_method"] = components["method"].upper()
+        replay["sent_method"] = modified["method"].upper()
+        logger.info(
+            "repeat_request dispatched request_id=%s source=%s original_method=%s sent_method=%s",
+            replay.get("request_id"),
+            replay.get("request_source"),
+            replay["original_method"],
+            replay["sent_method"],
+        )
+        return replay
 
     try:
         replay = await _call(client, _do)
@@ -594,6 +607,10 @@ def _format_replay_tool_result(replay: dict[str, Any]) -> str:
         "success": replay["status"] == "DONE",
         "status": replay["status"],
         "session_id": replay["session_id"],
+        "request_id": replay.get("request_id"),
+        "request_source": replay.get("request_source"),
+        "original_method": replay.get("original_method"),
+        "sent_method": replay.get("sent_method"),
         "elapsed_ms": replay["elapsed_ms"],
         "response": response,
     }

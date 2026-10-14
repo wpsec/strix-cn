@@ -181,6 +181,34 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "proxy_latest_host": terminal_projection(state.get("proxy_latest_host"), max_string=128),
         "proxy_latest_path": terminal_projection(state.get("proxy_latest_path"), max_string=128),
         "proxy_latest_status_code": state.get("proxy_latest_status_code"),
+        "proxy_latest_request_id": terminal_projection(
+            state.get("proxy_latest_request_id"), max_string=64
+        ),
+        "proxy_latest_request_source": terminal_projection(
+            state.get("proxy_latest_request_source"), max_string=32
+        ),
+        "proxy_latest_request_category": terminal_projection(
+            state.get("proxy_latest_request_category"), max_string=32
+        ),
+        "proxy_operator_request_count": state.get("proxy_operator_request_count", 0),
+        "proxy_replay_request_count": state.get("proxy_replay_request_count", 0),
+        "proxy_unclassified_request_count": state.get("proxy_unclassified_request_count", 0),
+        "proxy_latest_operator_request_id": terminal_projection(
+            state.get("proxy_latest_operator_request_id"), max_string=64
+        ),
+        "proxy_latest_operator_request_source": terminal_projection(
+            state.get("proxy_latest_operator_request_source"), max_string=32
+        ),
+        "proxy_latest_operator_method": terminal_projection(
+            state.get("proxy_latest_operator_method"), max_string=32
+        ),
+        "proxy_latest_operator_host": terminal_projection(
+            state.get("proxy_latest_operator_host"), max_string=128
+        ),
+        "proxy_latest_operator_path": terminal_projection(
+            state.get("proxy_latest_operator_path"), max_string=128
+        ),
+        "proxy_latest_operator_status_code": state.get("proxy_latest_operator_status_code"),
         "proxy_total_request_count": state.get("proxy_total_request_count", 0),
         "proxy_capture_error": terminal_projection(
             state.get("proxy_capture_error"), max_string=128

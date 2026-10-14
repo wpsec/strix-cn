@@ -481,15 +481,14 @@ func splashPassiveProxySummary() string {
 }
 
 func (m Model) passiveProxyCaptureStatusSummary() string {
-	if m.hasPassiveProxyCaptureTraffic() {
-		if m.snapshot.ProxyTotalRequestCount > 0 {
-			return fmt.Sprintf("累计 %d 条", m.snapshot.ProxyTotalRequestCount)
-		}
-		suffix := ""
-		if m.snapshot.ProxyRecentRequestHasMore {
-			suffix = "+"
-		}
-		return fmt.Sprintf("最近 %d%s 条", m.snapshot.ProxyRecentRequestCount, suffix)
+	if m.snapshot.ProxyTotalRequestCount > 0 || m.hasPassiveProxyCaptureTraffic() {
+		return fmt.Sprintf(
+			"操作员请求 %d 条\n重放请求 %d 条\n未分类 %d 条\n代理历史 %d 条",
+			m.snapshot.ProxyOperatorRequestCount,
+			m.snapshot.ProxyReplayRequestCount,
+			m.snapshot.ProxyUnclassifiedCount,
+			m.snapshot.ProxyTotalRequestCount,
+		)
 	}
 	return "暂无流量"
 }
@@ -771,17 +770,49 @@ func (m Model) statsView() string {
 				if m.snapshot.ProxyRecentRequestHasMore {
 					suffix = "+"
 				}
-				b.WriteString(fmt.Sprintf("\n最近批次: %d%s 条", m.snapshot.ProxyRecentRequestCount, suffix))
+				b.WriteString(fmt.Sprintf("\n最近代理历史: %d%s 条", m.snapshot.ProxyRecentRequestCount, suffix))
+			}
+			if m.snapshot.ProxyLatestRequestID != "" {
+				source := strings.TrimSpace(m.snapshot.ProxyLatestRequestSource)
+				if source == "" {
+					source = "(empty)"
+				}
+				category := strings.TrimSpace(m.snapshot.ProxyLatestRequestCategory)
+				if category == "" {
+					category = "unclassified"
+				}
+				recordSummary := fmt.Sprintf(
+					"id=%s source=%s category=%s",
+					m.snapshot.ProxyLatestRequestID,
+					source,
+					category,
+				)
+				if method := strings.TrimSpace(m.snapshot.ProxyLatestMethod); method != "" {
+					recordSummary += " method=" + method
+				}
+				b.WriteString(fmt.Sprintf(
+					"\n最近代理记录: %s",
+					recordSummary,
+				))
 			}
 			latest := strings.TrimSpace(strings.Join([]string{
-				strings.TrimSpace(m.snapshot.ProxyLatestMethod),
-				strings.TrimSpace(m.snapshot.ProxyLatestHost + m.snapshot.ProxyLatestPath),
+				strings.TrimSpace(m.snapshot.ProxyLatestOperatorMethod),
+				strings.TrimSpace(m.snapshot.ProxyLatestOperatorHost + m.snapshot.ProxyLatestOperatorPath),
 			}, " "))
-			if latest != "" {
-				if m.snapshot.ProxyLatestStatusCode != nil && *m.snapshot.ProxyLatestStatusCode > 0 {
-					latest = fmt.Sprintf("%s [%d]", latest, *m.snapshot.ProxyLatestStatusCode)
+			if latest != "" || m.snapshot.ProxyLatestOperatorID != "" {
+				if m.snapshot.ProxyLatestOperatorStatus != nil && *m.snapshot.ProxyLatestOperatorStatus > 0 {
+					latest = fmt.Sprintf("%s [%d]", latest, *m.snapshot.ProxyLatestOperatorStatus)
 				}
-				b.WriteString("\n最近流量: " + latest)
+				source := "操作员"
+				if m.snapshot.ProxyLatestOperatorSource != "" {
+					source += "/" + m.snapshot.ProxyLatestOperatorSource
+				}
+				b.WriteString(fmt.Sprintf(
+					"\n最近操作员流量: %s (id=%s, source=%s)",
+					latest,
+					m.snapshot.ProxyLatestOperatorID,
+					source,
+				))
 			}
 		}
 		b.WriteString("\n模式: Burp 被动代理")

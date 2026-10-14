@@ -671,6 +671,8 @@ async def test_repeat_request_ignores_null_overlay_fields(
         captured["host"] = getattr(connection, "host", None)
         return {
             "session_id": "sess-null",
+            "request_id": "replay-2",
+            "request_source": "replay",
             "status": "DONE",
             "error": None,
             "elapsed_ms": 12,
@@ -697,10 +699,41 @@ async def test_repeat_request_ignores_null_overlay_fields(
 
     result = json.loads(payload)
     assert result["success"] is True
+    assert result["request_id"] == "replay-2"
+    assert result["request_source"] == "replay"
+    assert result["original_method"] == "POST"
+    assert result["sent_method"] == "POST"
     assert captured["host"] == "app.example.com"
     assert captured["raw"].startswith(b"POST /login?next=%2F HTTP/1.1\r\n")
     assert b"Cookie: sid=abc\r\n" in captured["raw"]
     assert captured["raw"].endswith(b'{"user":"demo"}')
+
+
+async def test_repeat_request_rejects_method_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+
+    async def _get_request_with_client(
+        _client: Any, _request_id: str, *, part: str = "request"
+    ) -> Any:
+        assert part == "request"
+        return _request_result()
+
+    async def _replay_send_raw(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("method overlays must be rejected before replay")
+
+    monkeypatch.setattr(caido_api, "get_request_with_client", _get_request_with_client)
+    monkeypatch.setattr(caido_api, "replay_send_raw", _replay_send_raw)
+
+    payload = await tools.repeat_request.on_invoke_tool(
+        cast("Any", _Ctx({"caido_client": client})),
+        json.dumps({"request_id": "req-1", "modifications": {"method": "POST"}}),
+    )
+
+    result = json.loads(payload)
+    assert result["success"] is False
+    assert "不支持修改 HTTP Method" in result["error"]
 
 
 async def test_standalone_repeat_request_refreshes_cached_client_after_transport_error(
@@ -728,6 +761,8 @@ async def test_standalone_repeat_request_refreshes_cached_client_after_transport
             )
         return {
             "session_id": "sess-2",
+            "request_id": "replay-3",
+            "request_source": "replay",
             "status": "DONE",
             "error": None,
             "elapsed_ms": 9,
@@ -741,6 +776,10 @@ async def test_standalone_repeat_request_refreshes_cached_client_after_transport
     result = await caido_api.repeat_request("req-1")
 
     assert result["status"] == "DONE"
+    assert result["request_id"] == "replay-3"
+    assert result["request_source"] == "replay"
+    assert result["original_method"] == "GET"
+    assert result["sent_method"] == "GET"
     assert replay_calls == ["stale", "fresh"]
     assert caido_api._CLIENT_CACHE["default"] is fresh
     assert stale.closed is True

@@ -222,6 +222,7 @@ class GoTuiRuntime:
 
     def start_scan(self) -> None:
         if self.scan_task is None:
+            self.controller.begin_passive_proxy_capture()
             self.scan_task = asyncio.create_task(self._run_scan())
 
     async def _run_scan(self) -> None:
@@ -381,8 +382,10 @@ class GoTuiRuntime:
             )
             return True
         if snapshot == prior_state and prior_error is None:
+            self.controller.initialize_passive_proxy_capture_baseline()
             return False
         report_state.update_proxy_capture_state(snapshot, error=None)
+        self.controller.initialize_passive_proxy_capture_baseline()
         return True
 
     def _runtime_sync_fingerprint(self) -> str:

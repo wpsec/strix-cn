@@ -451,13 +451,23 @@ def _append_proxy_capture_status(stats_text: Text, report_state: Any) -> None:
     recent_count = max(0, int(getattr(capture, "recent_request_count", 0) or 0))
     has_more = bool(getattr(capture, "recent_request_has_more", False))
     total_count = max(0, int(getattr(capture, "total_request_count", 0) or 0))
+    operator_count = max(0, int(getattr(capture, "operator_request_count", 0) or 0))
+    replay_count = max(0, int(getattr(capture, "replay_request_count", 0) or 0))
+    unclassified_count = max(
+        0,
+        int(getattr(capture, "unclassified_request_count", 0) or 0),
+    )
     feature_count = max(0, int(getattr(report_state, "proxy_feature_request_count", 0) or 0))
     workflow_phase = str(getattr(report_state, "burp_workflow_phase", "") or "").strip()
 
     stats_text.append("\n")
     stats_text.append("代理捕获: ", style="bold white")
     if total_count > 0:
-        stats_text.append(f"累计 {total_count} 条", style="white")
+        stats_text.append(
+            f"操作员请求 {operator_count} 条 · 重放请求 {replay_count} 条 · "
+            f"未分类 {unclassified_count} 条 · 代理历史 {total_count} 条",
+            style="white",
+        )
     elif recent_count <= 0:
         stats_text.append("暂未看到新流量", style="dim white")
         return
@@ -470,24 +480,47 @@ def _append_proxy_capture_status(stats_text: Text, report_state: Any) -> None:
         stats_text.append("当前功能: ", style="bold white")
         stats_text.append(f"{feature_count} 条", style="white")
 
+    latest_request_id = str(getattr(capture, "latest_request_id", "") or "").strip()
+    latest_request_source = str(getattr(capture, "latest_request_source", "") or "(empty)").strip()
+    latest_request_category = str(
+        getattr(capture, "latest_request_category", "") or "unclassified"
+    ).strip()
+    latest_method = str(getattr(capture, "latest_method", "") or "").strip()
+    if latest_request_id:
+        stats_text.append("\n")
+        stats_text.append("最近代理记录: ", style="bold white")
+        method_summary = f", method={latest_method}" if latest_method else ""
+        stats_text.append(
+            f"{latest_request_id} [source={latest_request_source}, "
+            f"category={latest_request_category}{method_summary}]",
+            style="white",
+        )
+
     if recent_count <= 0:
         return
 
     count_suffix = "+" if has_more else ""
     stats_text.append("\n")
-    stats_text.append("最近批次: ", style="bold white")
+    stats_text.append("最近代理历史: ", style="bold white")
     stats_text.append(f"{recent_count}{count_suffix} 条", style="white")
 
-    method = str(getattr(capture, "latest_method", "") or "").strip()
-    host = str(getattr(capture, "latest_host", "") or "").strip()
-    path = str(getattr(capture, "latest_path", "") or "").strip()
-    status_code = getattr(capture, "latest_status_code", None)
+    method = str(getattr(capture, "latest_operator_method", "") or "").strip()
+    host = str(getattr(capture, "latest_operator_host", "") or "").strip()
+    path = str(getattr(capture, "latest_operator_path", "") or "").strip()
+    status_code = getattr(capture, "latest_operator_status_code", None)
+    request_id = str(getattr(capture, "latest_operator_request_id", "") or "").strip()
+    request_source = str(getattr(capture, "latest_operator_request_source", "") or "").strip()
     latest_summary = " ".join(part for part in [method, f"{host}{path}".strip()] if part).strip()
-    if not latest_summary:
+    if not latest_summary and not request_id:
         return
 
     stats_text.append("\n")
-    stats_text.append("最近流量: ", style="bold white")
+    source_label = "操作员"
+    if request_source:
+        source_label += f"/{request_source}"
+    stats_text.append("最近操作员流量: ", style="bold white")
+    if request_id:
+        stats_text.append(f"{request_id} [{source_label}] ", style="dim white")
     stats_text.append(_truncate_text(latest_summary, 88), style="white")
     if isinstance(status_code, int) and status_code > 0:
         stats_text.append(f" [{status_code}]", style="dim white")

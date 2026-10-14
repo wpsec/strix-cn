@@ -36,11 +36,19 @@ def test_caido_url_round_trips_via_run_record(
             latest_host="app.example.com",
             latest_path="/api/login",
             latest_status_code=200,
+            latest_request_source="replay",
+            latest_request_category="replay",
+            latest_operator_request_id="req-2",
+            latest_operator_request_source="intercept",
+            latest_operator_method="GET",
+            latest_operator_host="app.example.com",
+            latest_operator_path="/api/profile",
+            latest_operator_status_code=200,
             total_request_count=27,
-            endpoint_request_counts=(
-                ("GET app.example.com/api/profile", 5),
-                ("POST app.example.com/api/login", 22),
-            ),
+            operator_request_count=2,
+            replay_request_count=25,
+            unclassified_request_count=0,
+            endpoint_request_counts=(("GET app.example.com/api/profile", 2),),
         ),
         persist=True,
     )
@@ -54,9 +62,13 @@ def test_caido_url_round_trips_via_run_record(
     assert payload["proxy_capture"]["latest_request_created_at"] == "2026-08-11T10:36:42+08:00"
     assert payload["proxy_capture"]["recent_request_has_more"] is True
     assert payload["proxy_capture"]["total_request_count"] == 27
+    assert payload["proxy_capture"]["operator_request_count"] == 2
+    assert payload["proxy_capture"]["replay_request_count"] == 25
+    assert payload["proxy_capture"]["latest_request_source"] == "replay"
+    assert payload["proxy_capture"]["latest_request_category"] == "replay"
+    assert payload["proxy_capture"]["latest_operator_request_id"] == "req-2"
     assert payload["proxy_capture"]["endpoint_request_counts"] == [
-        ["GET app.example.com/api/profile", 5],
-        ["POST app.example.com/api/login", 22],
+        ["GET app.example.com/api/profile", 2],
     ]
 
     restored = ReportState(run_name="run")
@@ -71,11 +83,31 @@ def test_caido_url_round_trips_via_run_record(
     assert restored.proxy_capture_state.latest_request_created_at == "2026-08-11T10:36:42+08:00"
     assert restored.proxy_capture_state.recent_request_count == 3
     assert restored.proxy_capture_state.total_request_count == 27
+    assert restored.proxy_capture_state.operator_request_count == 2
+    assert restored.proxy_capture_state.replay_request_count == 25
+    assert restored.proxy_capture_state.latest_request_source == "replay"
+    assert restored.proxy_capture_state.latest_request_category == "replay"
+    assert restored.proxy_capture_state.latest_operator_request_id == "req-2"
     assert restored.proxy_capture_state.endpoint_request_counts == (
-        ("GET app.example.com/api/profile", 5),
-        ("POST app.example.com/api/login", 22),
+        ("GET app.example.com/api/profile", 2),
     )
     assert restored.burp_upstream_unavailable_reason is None
+
+    legacy_payload = dict(payload)
+    legacy_payload["proxy_capture"] = {
+        "total_request_count": 3,
+        "endpoint_request_counts": [["POST app.example.com/api/login", 3]],
+    }
+    (tmp_path / "run" / "run.json").write_text(
+        json.dumps(legacy_payload),
+        encoding="utf-8",
+    )
+    legacy_restored = ReportState(run_name="run")
+    legacy_restored.hydrate_from_run_dir()
+
+    assert legacy_restored.proxy_capture_state.total_request_count == 3
+    assert legacy_restored.proxy_capture_state.unclassified_request_count == 3
+    assert legacy_restored.proxy_capture_state.endpoint_request_counts == ()
 
 
 def test_set_scan_config_clears_stale_caido_url(
